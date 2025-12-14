@@ -1,43 +1,89 @@
+import { useState } from "react";
+
+/* ===== Material UI Icons ===== */
+import DashboardIcon from "@mui/icons-material/Dashboard";
+import EventAvailableIcon from "@mui/icons-material/EventAvailable";
+import BarChartIcon from "@mui/icons-material/BarChart";
+import AssignmentIcon from "@mui/icons-material/Assignment";
+import ScheduleIcon from "@mui/icons-material/Schedule";
+
+import WorkIcon from "@mui/icons-material/Work";
+import EventIcon from "@mui/icons-material/Event";
+import InsightsIcon from "@mui/icons-material/Insights";
+import MenuBookIcon from "@mui/icons-material/MenuBook";
+
+import NotificationsIcon from "@mui/icons-material/Notifications";
+import UploadFileIcon from "@mui/icons-material/UploadFile";
+
+import LinkedInIcon from "@mui/icons-material/LinkedIn";
+import GitHubIcon from "@mui/icons-material/GitHub";
+import CloseIcon from "@mui/icons-material/Close";
+import PersonIcon from "@mui/icons-material/Person";
+import MenuIcon from "@mui/icons-material/Menu";
+
 export default function App() {
+  const [showProfile, setShowProfile] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-cyan-50 p-6">
+    <div className="h-screen w-screen bg-gradient-to-br from-indigo-50 via-white to-cyan-50">
+      <div className="flex h-full">
 
-      {/* Dashboard Shell */}
-      <div className="glass max-w-7xl mx-auto rounded-3xl flex min-h-[90vh]">
+        {/* ================= SIDEBAR ================= */}
+        <aside
+          className={`
+            transition-all duration-300
+            ${sidebarOpen ? "w-72" : "w-20"}
+            p-4 glass border-r border-white/40
+          `}
+        >
+          <div className="flex items-center justify-between mb-8">
+            {sidebarOpen && (
+              <h2 className="text-xl font-semibold text-indigo-600">
+                GVP-MAAA
+              </h2>
+            )}
+            <button
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              className="p-2 rounded-lg hover:bg-white/60"
+            >
+              <MenuIcon fontSize="small" />
+            </button>
+          </div>
 
-        {/* Sidebar */}
-        <aside className="w-64 p-6 border-r border-white/40">
-          <h2 className="text-2xl font-semibold text-indigo-600 mb-8">
-            GVP-MAAA
-          </h2>
+          <SidebarSection title="Academics" open={sidebarOpen}>
+            <MenuItem icon={DashboardIcon} label="Overview" open={sidebarOpen} active />
+            <MenuItem icon={EventAvailableIcon} label="Attendance" open={sidebarOpen} />
+            <MenuItem icon={BarChartIcon} label="Marks" open={sidebarOpen} />
+            <MenuItem icon={AssignmentIcon} label="Assignments" open={sidebarOpen} />
+            <MenuItem icon={ScheduleIcon} label="Timetable" open={sidebarOpen} />
+          </SidebarSection>
 
-          <nav className="space-y-2 text-gray-700">
-            <MenuItem label="Overview" active />
-            <MenuItem label="Attendance" />
-            <MenuItem label="Marks" />
-            <MenuItem label="Assignments" />
-            <MenuItem label="Career Profile" />
-            <MenuItem label="Timetable" />
-          </nav>
+          <SidebarSection title="Career & Growth" open={sidebarOpen}>
+            <MenuItem icon={WorkIcon} label="Placement" open={sidebarOpen} />
+            <MenuItem icon={EventIcon} label="Events" open={sidebarOpen} />
+            <MenuItem icon={InsightsIcon} label="Insights" open={sidebarOpen} />
+            <MenuItem icon={MenuBookIcon} label="Resources" open={sidebarOpen} />
+          </SidebarSection>
+
+          <SidebarSection title="System" open={sidebarOpen}>
+            <MenuItem icon={NotificationsIcon} label="Alerts" open={sidebarOpen} />
+            <MenuItem icon={UploadFileIcon} label="Submissions" open={sidebarOpen} />
+          </SidebarSection>
         </aside>
 
-        {/* Main Area */}
-        <main className="flex-1 p-8 flex gap-6">
+        {/* ================= MAIN ================= */}
+        <main className="flex-1 p-8 flex gap-6 overflow-hidden">
 
-          {/* Academic Overview */}
-          <div className="flex-1">
+          {/* Academic Area */}
+          <div className="flex-1 overflow-y-auto pr-2">
+            <h1 className="text-2xl font-semibold mb-2">
+              Welcome, <span className="text-indigo-600">Mohith</span> 👋
+            </h1>
+            <p className="text-gray-500 mb-8">
+              Here’s your academic overview for this semester
+            </p>
 
-            {/* Welcome */}
-            <div className="mb-8">
-              <h1 className="text-2xl font-semibold">
-                Welcome, <span className="text-indigo-600">Mohith</span> 👋
-              </h1>
-              <p className="text-gray-500">
-                Here’s your academic overview for this semester
-              </p>
-            </div>
-
-            {/* KPI Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
               <KpiCard title="Attendance" value="82%" hint="Good Standing" />
               <KpiCard title="CGPA" value="8.02" hint="Improving" />
@@ -45,36 +91,64 @@ export default function App() {
               <KpiCard title="Career" value="On Track" hint="Internship Ready" />
             </div>
 
-            {/* Placeholder for charts (future AnalyticsAgent) */}
-            <div className="mt-10 bg-white/70 rounded-2xl p-6 text-gray-400 text-center">
-              Attendance & CGPA trends (AnalyticsAgent will render here)
+            <div className="mt-10 glass rounded-2xl p-6 text-gray-400 text-center">
+              Attendance & CGPA trends (AnalyticsAgent)
             </div>
           </div>
 
-          {/* Right Profile Panel */}
-          <StudentProfile />
+          {/* ================= PROFILE ================= */}
+          <div
+            className={`
+              transition-all duration-300
+              ${showProfile ? "w-80" : "w-14"}
+              overflow-hidden
+            `}
+          >
+            {showProfile ? (
+              <StudentProfile onClose={() => setShowProfile(false)} />
+            ) : (
+              <CollapsedProfile onOpen={() => setShowProfile(true)} />
+            )}
+          </div>
         </main>
       </div>
     </div>
-  )
+  );
 }
 
-/* Sidebar Item */
-function MenuItem({ label, active }) {
+/* ================= SIDEBAR HELPERS ================= */
+
+function SidebarSection({ title, open, children }) {
+  return (
+    <div className="mb-6">
+      {open && (
+        <p className="text-xs uppercase text-gray-400 mb-2 tracking-wider">
+          {title}
+        </p>
+      )}
+      <div className="space-y-2">{children}</div>
+    </div>
+  );
+}
+
+function MenuItem({ icon: Icon, label, open, active }) {
   return (
     <div
-      className={`px-4 py-2 rounded-xl cursor-pointer transition
-        ${active
-          ? "bg-indigo-500/10 text-indigo-700 font-medium"
-          : "hover:bg-white/60"}
+      title={!open ? label : ""}
+      className={`
+        flex items-center gap-3 px-3 py-2 rounded-xl cursor-pointer transition
+        ${active ? "bg-indigo-500/10 text-indigo-700" : "hover:bg-white/60"}
+        ${!open && "justify-center"}
       `}
     >
-      {label}
+      <Icon fontSize="small" />
+      {open && <span>{label}</span>}
     </div>
-  )
+  );
 }
 
-/* KPI Card */
+/* ================= KPI CARD ================= */
+
 function KpiCard({ title, value, hint }) {
   return (
     <div className="bg-white/80 backdrop-blur-xl rounded-2xl p-6 neo">
@@ -82,36 +156,68 @@ function KpiCard({ title, value, hint }) {
       <p className="text-3xl font-semibold mt-2">{value}</p>
       <p className="text-sm text-gray-400 mt-1">{hint}</p>
     </div>
-  )
+  );
 }
 
-/* Student Profile Panel */
-function StudentProfile() {
-  return (
-    <div className="w-72 bg-white rounded-2xl p-6 shadow-lg text-center">
+/* ================= PROFILE ================= */
 
-      {/* Avatar */}
-      <div className="w-24 h-24 mx-auto rounded-full bg-indigo-500 text-white flex items-center justify-center text-3xl font-semibold">
-        M
+function StudentProfile({ onClose }) {
+  return (
+    <div className="h-full glass rounded-2xl p-6 flex flex-col justify-between overflow-y-auto">
+
+      <button
+        onClick={onClose}
+        className="self-end p-2 rounded-full hover:bg-white/60"
+      >
+        <CloseIcon fontSize="small" />
+      </button>
+
+      <div className="text-center">
+        <div className="w-24 h-24 mx-auto rounded-full bg-indigo-500 text-white flex items-center justify-center text-3xl font-semibold">
+          M
+        </div>
+
+        <h3 className="mt-4 text-lg font-semibold">Mohith</h3>
+        <p className="text-sm text-gray-500">B.Tech · CSE</p>
+
+        <div className="mt-6 space-y-3 text-sm text-gray-600 text-left">
+          <ProfileRow label="Roll No" value="21XX1A05XX" />
+          <ProfileRow label="Year" value="3rd Year" />
+          <ProfileRow label="Semester" value="Sem 6" />
+          <ProfileRow label="Current Role" value="Student" />
+          <ProfileRow label="Internship" value="Not Started" />
+          <ProfileRow label="Certificates" value="6" />
+        </div>
+
+        <div className="mt-6 flex justify-center gap-4">
+          <IconButton icon={LinkedInIcon} color="bg-blue-600" />
+          <IconButton icon={GitHubIcon} color="bg-gray-800" />
+        </div>
       </div>
 
-      {/* Name */}
-      <h3 className="mt-4 text-lg font-semibold">
-        Mohith
-      </h3>
-      <p className="text-sm text-gray-500">
-        B.Tech · CSE
-      </p>
-
-      {/* Details */}
-      <div className="mt-6 space-y-3 text-sm text-gray-600 text-left">
-        <ProfileRow label="Roll No" value="21XX1A05XX" />
-        <ProfileRow label="Year" value="3rd Year" />
-        <ProfileRow label="Semester" value="Sem 6" />
-        <ProfileRow label="Status" value="Active" />
+      <div className="mt-6 space-y-3">
+        <button className="w-full py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700">
+          View Full Profile
+        </button>
+        <button className="w-full py-2 rounded-xl bg-red-100 text-red-600 hover:bg-red-200">
+          Logout
+        </button>
       </div>
     </div>
-  )
+  );
+}
+
+function CollapsedProfile({ onOpen }) {
+  return (
+    <div className="h-full glass rounded-2xl flex items-center justify-center">
+      <button
+        onClick={onOpen}
+        className="w-10 h-10 rounded-full bg-indigo-500 text-white flex items-center justify-center shadow hover:scale-110 transition"
+      >
+        <PersonIcon fontSize="small" />
+      </button>
+    </div>
+  );
 }
 
 function ProfileRow({ label, value }) {
@@ -120,5 +226,15 @@ function ProfileRow({ label, value }) {
       <span className="text-gray-400">{label}</span>
       <span className="font-medium">{value}</span>
     </div>
-  )
+  );
+}
+
+function IconButton({ icon: Icon, color }) {
+  return (
+    <button
+      className={`w-10 h-10 flex items-center justify-center rounded-full ${color} text-white shadow hover:scale-110 transition`}
+    >
+      <Icon fontSize="small" />
+    </button>
+  );
 }
