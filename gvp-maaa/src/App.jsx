@@ -1,5 +1,11 @@
 import { useState } from "react";
 
+/* ===== Pages ===== */
+import Attendance from "./pages/Attendance";
+import Marks from "./pages/Marks";
+import Timetable from "./pages/Timetable";
+import Assignments from "./pages/Assignments";
+
 /* ===== Material UI Icons ===== */
 import DashboardIcon from "@mui/icons-material/Dashboard";
 import EventAvailableIcon from "@mui/icons-material/EventAvailable";
@@ -24,6 +30,7 @@ import MenuIcon from "@mui/icons-material/Menu";
 export default function App() {
   const [showProfile, setShowProfile] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [activePage, setActivePage] = useState("overview");
 
   return (
     <div className="h-screen w-screen bg-gradient-to-br from-indigo-50 via-white to-cyan-50">
@@ -31,11 +38,9 @@ export default function App() {
 
         {/* ================= SIDEBAR ================= */}
         <aside
-          className={`
-            transition-all duration-300
-            ${sidebarOpen ? "w-72" : "w-20"}
-            p-4 glass border-r border-white/40
-          `}
+          className={`transition-all duration-300 ${
+            sidebarOpen ? "w-72" : "w-20"
+          } p-4 glass border-r border-white/40`}
         >
           <div className="flex items-center justify-between mb-8">
             {sidebarOpen && (
@@ -52,11 +57,41 @@ export default function App() {
           </div>
 
           <SidebarSection title="Academics" open={sidebarOpen}>
-            <MenuItem icon={DashboardIcon} label="Overview" open={sidebarOpen} active />
-            <MenuItem icon={EventAvailableIcon} label="Attendance" open={sidebarOpen} />
-            <MenuItem icon={BarChartIcon} label="Marks" open={sidebarOpen} />
-            <MenuItem icon={AssignmentIcon} label="Assignments" open={sidebarOpen} />
-            <MenuItem icon={ScheduleIcon} label="Timetable" open={sidebarOpen} />
+            <MenuItem
+              icon={DashboardIcon}
+              label="Overview"
+              open={sidebarOpen}
+              active={activePage === "overview"}
+              onClick={() => setActivePage("overview")}
+            />
+            <MenuItem
+              icon={EventAvailableIcon}
+              label="Attendance"
+              open={sidebarOpen}
+              active={activePage === "attendance"}
+              onClick={() => setActivePage("attendance")}
+            />
+            <MenuItem
+              icon={BarChartIcon}
+              label="Marks"
+              open={sidebarOpen}
+              active={activePage === "marks"}
+              onClick={() => setActivePage("marks")}
+            />
+            <MenuItem
+              icon={AssignmentIcon}
+              label="Assignments"
+              open={sidebarOpen}
+              active={activePage === "assignments"}
+              onClick={() => setActivePage("assignments")}
+            />
+            <MenuItem
+              icon={ScheduleIcon}
+              label="Timetable"
+              open={sidebarOpen}
+              active={activePage === "timetable"}
+              onClick={() => setActivePage("timetable")}
+            />
           </SidebarSection>
 
           <SidebarSection title="Career & Growth" open={sidebarOpen}>
@@ -75,34 +110,50 @@ export default function App() {
         {/* ================= MAIN ================= */}
         <main className="flex-1 p-8 flex gap-6 overflow-hidden">
 
-          {/* Academic Area */}
+          {/* ================= CONTENT ================= */}
           <div className="flex-1 overflow-y-auto pr-2">
-            <h1 className="text-2xl font-semibold mb-2">
-              Welcome, <span className="text-indigo-600">Mohith</span> 👋
-            </h1>
-            <p className="text-gray-500 mb-8">
-              Here’s your academic overview for this semester
-            </p>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-              <KpiCard title="Attendance" value="82%" hint="Good Standing" />
-              <KpiCard title="CGPA" value="8.02" hint="Improving" />
-              <KpiCard title="Credits" value="92 / 160" hint="On Track" />
-              <KpiCard title="Career" value="On Track" hint="Internship Ready" />
-            </div>
+            {/* ===== OVERVIEW ===== */}
+            {activePage === "overview" && (
+              <>
+                <h1 className="text-2xl font-semibold mb-2">
+                  Welcome, <span className="text-indigo-600">Mohith</span> 👋
+                </h1>
+                <p className="text-gray-500 mb-8">
+                  Here’s your academic overview for this semester
+                </p>
 
-            <div className="mt-10 glass rounded-2xl p-6 text-gray-400 text-center">
-              Attendance & CGPA trends (AnalyticsAgent)
-            </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                  <KpiCard title="Attendance" value="82%" hint="Good Standing" />
+                  <KpiCard title="CGPA" value="8.02" hint="Improving" />
+                  <KpiCard title="Credits" value="92 / 160" hint="On Track" />
+                  <KpiCard title="Career" value="On Track" hint="Internship Ready" />
+                </div>
+
+                <div className="mt-10 glass rounded-2xl p-6 text-gray-400 text-center">
+                  Attendance & CGPA trends (AnalyticsAgent)
+                </div>
+              </>
+            )}
+
+            {/* ===== ATTENDANCE ===== */}
+            {activePage === "attendance" && <Attendance />}
+
+            {/* ===== MARKS ===== */}
+            {activePage === "marks" && <Marks />}
+
+            {/* ===== ASSIGNMENTS ===== */}
+            {activePage === "assignments" && <Assignments />}
+
+            {/* ===== TIMETABLE (ONLY CHANGE HERE) ===== */}
+            {activePage === "timetable" && <Timetable />}
           </div>
 
-          {/* ================= PROFILE ================= */}
+          {/* ================= PROFILE (UNCHANGED) ================= */}
           <div
-            className={`
-              transition-all duration-300
-              ${showProfile ? "w-80" : "w-14"}
-              overflow-hidden
-            `}
+            className={`transition-all duration-300 ${
+              showProfile ? "w-80" : "w-14"
+            } overflow-hidden`}
           >
             {showProfile ? (
               <StudentProfile onClose={() => setShowProfile(false)} />
@@ -116,7 +167,7 @@ export default function App() {
   );
 }
 
-/* ================= SIDEBAR HELPERS ================= */
+/* ================= HELPERS ================= */
 
 function SidebarSection({ title, open, children }) {
   return (
@@ -131,23 +182,20 @@ function SidebarSection({ title, open, children }) {
   );
 }
 
-function MenuItem({ icon: Icon, label, open, active }) {
+function MenuItem({ icon: Icon, label, open, active, onClick }) {
   return (
     <div
+      onClick={onClick}
       title={!open ? label : ""}
-      className={`
-        flex items-center gap-3 px-3 py-2 rounded-xl cursor-pointer transition
+      className={`flex items-center gap-3 px-3 py-2 rounded-xl cursor-pointer transition
         ${active ? "bg-indigo-500/10 text-indigo-700" : "hover:bg-white/60"}
-        ${!open && "justify-center"}
-      `}
+        ${!open && "justify-center"}`}
     >
       <Icon fontSize="small" />
       {open && <span>{label}</span>}
     </div>
   );
 }
-
-/* ================= KPI CARD ================= */
 
 function KpiCard({ title, value, hint }) {
   return (
@@ -159,12 +207,11 @@ function KpiCard({ title, value, hint }) {
   );
 }
 
-/* ================= PROFILE ================= */
+/* ================= PROFILE (UNCHANGED – YOUR CODE) ================= */
 
 function StudentProfile({ onClose }) {
   return (
     <div className="h-full glass rounded-2xl p-6 flex flex-col justify-between overflow-y-auto">
-
       <button
         onClick={onClose}
         className="self-end p-2 rounded-full hover:bg-white/60"
@@ -176,7 +223,6 @@ function StudentProfile({ onClose }) {
         <div className="w-24 h-24 mx-auto rounded-full bg-indigo-500 text-white flex items-center justify-center text-3xl font-semibold">
           M
         </div>
-
         <h3 className="mt-4 text-lg font-semibold">Mohith</h3>
         <p className="text-sm text-gray-500">B.Tech · CSE</p>
 
