@@ -6,6 +6,7 @@ import Marks from "./pages/Marks";
 import Timetable from "./pages/Timetable";
 import Assignments from "./pages/Assignments";
 import Events from "./pages/Events";
+import Resources from "./pages/Resources";
 
 /* ===== Material UI Icons ===== */
 import DashboardIcon from "@mui/icons-material/Dashboard";
@@ -106,7 +107,13 @@ export default function App() {
             />
 
             <MenuItem icon={InsightsIcon} label="Insights" open={sidebarOpen} />
-            <MenuItem icon={MenuBookIcon} label="Resources" open={sidebarOpen} />
+            <MenuItem
+              icon={MenuBookIcon}
+              label="Resources"
+              open={sidebarOpen}
+              active={activePage === "resources"}
+              onClick={() => setActivePage("resources")}
+            />
           </SidebarSection>
 
           <SidebarSection title="System" open={sidebarOpen}>
@@ -158,6 +165,10 @@ export default function App() {
 
             {/* ===== EVENTS ===== */}
             {activePage === "events" && <Events />}
+
+            {/* ===== RESOURCES ===== */}
+            {activePage === "resources" && <Resources />}
+
           </div>
 
           {/* ================= PROFILE (UNCHANGED) ================= */}
