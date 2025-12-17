@@ -5,6 +5,7 @@ import Attendance from "./pages/Attendance";
 import Marks from "./pages/Marks";
 import Timetable from "./pages/Timetable";
 import Assignments from "./pages/Assignments";
+import Events from "./pages/Events";
 
 /* ===== Material UI Icons ===== */
 import DashboardIcon from "@mui/icons-material/Dashboard";
@@ -96,7 +97,14 @@ export default function App() {
 
           <SidebarSection title="Career & Growth" open={sidebarOpen}>
             <MenuItem icon={WorkIcon} label="Placement" open={sidebarOpen} />
-            <MenuItem icon={EventIcon} label="Events" open={sidebarOpen} />
+            <MenuItem
+              icon={EventIcon}
+              label="Events"
+              open={sidebarOpen}
+              active={activePage === "events"}
+              onClick={() => setActivePage("events")}
+            />
+
             <MenuItem icon={InsightsIcon} label="Insights" open={sidebarOpen} />
             <MenuItem icon={MenuBookIcon} label="Resources" open={sidebarOpen} />
           </SidebarSection>
@@ -147,6 +155,9 @@ export default function App() {
 
             {/* ===== TIMETABLE (ONLY CHANGE HERE) ===== */}
             {activePage === "timetable" && <Timetable />}
+
+            {/* ===== EVENTS ===== */}
+            {activePage === "events" && <Events />}
           </div>
 
           {/* ================= PROFILE (UNCHANGED) ================= */}
