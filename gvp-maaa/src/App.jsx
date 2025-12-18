@@ -8,6 +8,7 @@ import Assignments from "./pages/Assignments";
 import Events from "./pages/Events";
 import Resources from "./pages/Resources";
 import Placement from "./pages/Placement";
+import Insights from "./pages/Insights";
 
 /* ===== Material UI Icons ===== */
 import DashboardIcon from "@mui/icons-material/Dashboard";
@@ -113,7 +114,13 @@ export default function App() {
               onClick={() => setActivePage("events")}
             />
 
-            <MenuItem icon={InsightsIcon} label="Insights" open={sidebarOpen} />
+            <MenuItem
+              icon={MenuBookIcon}
+              label="Insights"
+              open={sidebarOpen}
+              active={activePage === "insights"}
+              onClick={() => setActivePage("insights")}
+            />
             <MenuItem
               icon={MenuBookIcon}
               label="Resources"
@@ -179,6 +186,9 @@ export default function App() {
 
             {/* ===== PLACEMENT ===== */}
             {activePage === "placement" && <Placement />}
+
+            {/* ===== INSIGHTS ===== */}
+            {activePage === "insights" && <Insights />}
 
           </div>
 
