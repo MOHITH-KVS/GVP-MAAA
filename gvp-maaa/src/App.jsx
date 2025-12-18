@@ -7,6 +7,7 @@ import Timetable from "./pages/Timetable";
 import Assignments from "./pages/Assignments";
 import Events from "./pages/Events";
 import Resources from "./pages/Resources";
+import Placement from "./pages/Placement";
 
 /* ===== Material UI Icons ===== */
 import DashboardIcon from "@mui/icons-material/Dashboard";
@@ -97,7 +98,13 @@ export default function App() {
           </SidebarSection>
 
           <SidebarSection title="Career & Growth" open={sidebarOpen}>
-            <MenuItem icon={WorkIcon} label="Placement" open={sidebarOpen} />
+            <MenuItem
+              icon={WorkIcon}
+              label="Placement"
+              open={sidebarOpen}
+              active={activePage === "placement"}
+              onClick={() => setActivePage("placement")}
+            />
             <MenuItem
               icon={EventIcon}
               label="Events"
@@ -114,6 +121,7 @@ export default function App() {
               active={activePage === "resources"}
               onClick={() => setActivePage("resources")}
             />
+
           </SidebarSection>
 
           <SidebarSection title="System" open={sidebarOpen}>
@@ -168,6 +176,9 @@ export default function App() {
 
             {/* ===== RESOURCES ===== */}
             {activePage === "resources" && <Resources />}
+
+            {/* ===== PLACEMENT ===== */}
+            {activePage === "placement" && <Placement />}
 
           </div>
 
