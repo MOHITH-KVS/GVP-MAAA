@@ -10,6 +10,7 @@ import Resources from "./pages/Resources";
 import Placement from "./pages/Placement";
 import Insights from "./pages/Insights";
 import Alerts from "./pages/Alerts";
+import Submissions from "./pages/Submissions";
 
 /* ===== Material UI Icons ===== */
 import DashboardIcon from "@mui/icons-material/Dashboard";
@@ -141,7 +142,13 @@ export default function App() {
               active={activePage === "alerts"}
               onClick={() => setActivePage("alerts")}
             />
-            <MenuItem icon={UploadFileIcon} label="Submissions" open={sidebarOpen} />
+            <MenuItem
+              icon={NotificationsIcon}
+              label="Submissions"
+              open={sidebarOpen}
+              active={activePage === "submissions"}
+              onClick={() => setActivePage("submissions")}
+            />
           </SidebarSection>
         </aside>
 
@@ -200,6 +207,9 @@ export default function App() {
 
             {/* ===== ALERTS ===== */}
             {activePage === "alerts" && <Alerts />}
+
+            {/* ===== SUBMISSIONS ===== */}
+            {activePage === "submissions" && <Submissions />}
 
 
 
