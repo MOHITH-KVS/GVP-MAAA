@@ -9,6 +9,7 @@ import Events from "./pages/Events";
 import Resources from "./pages/Resources";
 import Placement from "./pages/Placement";
 import Insights from "./pages/Insights";
+import Alerts from "./pages/Alerts";
 
 /* ===== Material UI Icons ===== */
 import DashboardIcon from "@mui/icons-material/Dashboard";
@@ -132,7 +133,14 @@ export default function App() {
           </SidebarSection>
 
           <SidebarSection title="System" open={sidebarOpen}>
-            <MenuItem icon={NotificationsIcon} label="Alerts" open={sidebarOpen} />
+
+            <MenuItem
+              icon={NotificationsIcon}
+              label="Alerts"
+              open={sidebarOpen}
+              active={activePage === "alerts"}
+              onClick={() => setActivePage("alerts")}
+            />
             <MenuItem icon={UploadFileIcon} label="Submissions" open={sidebarOpen} />
           </SidebarSection>
         </aside>
@@ -189,6 +197,11 @@ export default function App() {
 
             {/* ===== INSIGHTS ===== */}
             {activePage === "insights" && <Insights />}
+
+            {/* ===== ALERTS ===== */}
+            {activePage === "alerts" && <Alerts />}
+
+
 
           </div>
 
