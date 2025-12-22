@@ -1,5 +1,6 @@
 import { useState } from "react";
-import TeacherOverview from "../pages/Teacher/Overview";
+import Overview from "../pages/Teacher/Overview";
+import Attendance from "../pages/Teacher/Attendance";
 import Logout from "../pages/Logout";
 
 /* ICONS */
@@ -65,7 +66,13 @@ export default function TeacherDashboard() {
                 active={activePage === "overview"}
                 onClick={() => setActivePage("overview")}
               />
-              <MenuItem icon={EventAvailableIcon} label="Attendance" open={sidebarOpen} />
+              <MenuItem
+                icon={EventAvailableIcon}
+                label="Attendance"
+                open={sidebarOpen}
+                active={activePage === "attendance"}
+                onClick={() => setActivePage("attendance")}
+              />
               <MenuItem icon={AssignmentIcon} label="Assignments" open={sidebarOpen} />
               <MenuItem icon={BarChartIcon} label="Marks" open={sidebarOpen} />
             </SidebarSection>
@@ -112,7 +119,8 @@ export default function TeacherDashboard() {
         {/* ================= MAIN ================= */}
         <main className="flex-1 p-8 flex gap-6 overflow-hidden">
           <div className="flex-1 overflow-y-auto pr-2">
-            {activePage === "overview" && <TeacherOverview />}
+            {activePage === "overview" && <Overview />}
+            {activePage === "attendance" && <Attendance />}
           </div>
 
           {/* ================= PROFILE ================= */}
