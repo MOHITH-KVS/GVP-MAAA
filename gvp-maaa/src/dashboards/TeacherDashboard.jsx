@@ -42,7 +42,6 @@ export default function TeacherDashboard() {
             sidebarOpen ? "w-72" : "w-20"
           } p-4 glass border-r border-white/40`}
         >
-          {/* LOGO */}
           <div className="flex items-center justify-between mb-8">
             {sidebarOpen && (
               <h2 className="text-xl font-semibold text-indigo-600">
@@ -58,8 +57,6 @@ export default function TeacherDashboard() {
           </div>
 
           <div className="flex-1 overflow-y-auto">
-
-            {/* ACADEMICS */}
             <SidebarSection title="Academics" open={sidebarOpen}>
               <MenuItem
                 icon={DashboardIcon}
@@ -73,14 +70,12 @@ export default function TeacherDashboard() {
               <MenuItem icon={BarChartIcon} label="Marks" open={sidebarOpen} />
             </SidebarSection>
 
-            {/* TEACHING HUB */}
             <SidebarSection title="Teaching Hub" open={sidebarOpen}>
               <MenuItem icon={FolderIcon} label="Resources" open={sidebarOpen} />
               <MenuItem icon={EventIcon} label="Events" open={sidebarOpen} />
               <MenuItem icon={InsightsIcon} label="Insights" open={sidebarOpen} />
             </SidebarSection>
 
-            {/* QUICK ACTIONS */}
             <div className="mt-6 mb-6">
               {sidebarOpen && (
                 <p className="text-xs uppercase text-gray-400 tracking-wider mb-3">
@@ -89,33 +84,18 @@ export default function TeacherDashboard() {
               )}
 
               <div className="space-y-3">
-                <button
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl
-                    border border-indigo-200 text-indigo-700
-                    bg-indigo-50 hover:bg-indigo-100
-                    transition ${!sidebarOpen && "justify-center"}`}
-                >
+                <button className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition">
                   <UploadFileIcon fontSize="small" />
-                  {sidebarOpen && (
-                    <span className="text-sm font-medium">Upload Resource</span>
-                  )}
+                  {sidebarOpen && <span>Upload Resource</span>}
                 </button>
 
-                <button
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl
-                    border border-amber-200 text-amber-700
-                    bg-amber-50 hover:bg-amber-100
-                    transition ${!sidebarOpen && "justify-center"}`}
-                >
+                <button className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border border-amber-200 text-amber-700 bg-amber-50 hover:bg-amber-100 transition">
                   <CampaignIcon fontSize="small" />
-                  {sidebarOpen && (
-                    <span className="text-sm font-medium">Give Alert</span>
-                  )}
+                  {sidebarOpen && <span>Give Alert</span>}
                 </button>
               </div>
             </div>
 
-            {/* SYSTEM */}
             <SidebarSection title="System" open={sidebarOpen}>
               <MenuItem icon={NotificationsIcon} label="Alerts" open={sidebarOpen} />
               <MenuItem
@@ -126,7 +106,6 @@ export default function TeacherDashboard() {
                 onClick={() => setShowLogout(true)}
               />
             </SidebarSection>
-
           </div>
         </aside>
 
@@ -136,16 +115,35 @@ export default function TeacherDashboard() {
             {activePage === "overview" && <TeacherOverview />}
           </div>
 
-          {/* PROFILE */}
-          <div
-            className={`transition-[width] duration-300 ease-out ${
-              showProfile ? "w-80" : "w-14"
-            } overflow-hidden`}
-          >
-            {showProfile ? (
-              <TeacherProfile onClose={() => setShowProfile(false)} />
-            ) : (
-              <CollapsedProfile onOpen={() => setShowProfile(true)} />
+          {/* ================= PROFILE ================= */}
+           <div
+              className={`
+                relative
+                transition-all duration-300 ease-out
+                ${showProfile ? "w-80" : "w-14"}
+                overflow-visible
+              `}
+            > 
+
+            <div className="absolute inset-y-0 right-0 w-80 overflow-hidden">
+              <div
+                className={`absolute inset-y-0 right-0 w-80 transition-transform duration-300 ease-out ${
+                  showProfile ? "translate-x-0" : "translate-x-full"
+                }`}
+              >
+                <TeacherProfile onClose={() => setShowProfile(false)} />
+              </div>
+            </div>
+
+            {!showProfile && (
+              <div className="absolute inset-y-0 right-4 flex items-center">
+                <button
+                  onClick={() => setShowProfile(true)}
+                  className="w-10 h-10 rounded-full bg-indigo-500 text-white shadow-lg flex items-center justify-center hover:scale-105 transition"
+                >
+                  <PersonIcon fontSize="small" />
+                </button>
+              </div>
             )}
           </div>
         </main>
@@ -158,103 +156,44 @@ export default function TeacherDashboard() {
 
 function TeacherProfile({ onClose }) {
   return (
-    <div
-      className="
-        h-full
-        glass
-        rounded-2xl
-        p-6
-        flex
-        flex-col
-        justify-between
-        will-change-transform
-        transform-gpu
-      "
-    >
-      {/* CLOSE BUTTON */}
-      <button
-        onClick={onClose}
-        className="self-end p-2 rounded-full hover:bg-white/60 transition"
-      >
-        <CloseIcon fontSize="small" />
-      </button>
-
-      {/* PROFILE CONTENT */}
-      <div className="text-center">
-        <div
-          className="
-            w-24 h-24 mx-auto
-            rounded-full
-            bg-indigo-500
-            text-white
-            flex items-center justify-center
-            text-3xl font-semibold
-            select-none
-          "
-        >
-          B
-        </div>
-
-        <h3 className="mt-4 text-lg font-semibold">
-          Bhanu Prasad
-        </h3>
-
-        <p className="text-sm text-gray-500">
-          Associate Professor · CSE
-        </p>
-
-        <div className="mt-6 space-y-3 text-sm text-gray-600 text-left">
-          <ProfileRow label="Qualification" value="Ph.D (Computer Science)" />
-          <ProfileRow label="Experience" value="12 Years" />
-          <ProfileRow label="Subjects Count" value="3" />
-          <ProfileRow label="Subjects" value="DBMS, OS, CN" />
-        </div>
-
-        <div className="mt-6 flex justify-center gap-4">
-          <IconButton icon={LinkedInIcon} color="bg-blue-600" />
-          <IconButton icon={LanguageIcon} color="bg-gray-800" />
-        </div>
-      </div>
-
-      {/* ACTION BUTTONS */}
-      <div className="space-y-3">
+    <div className="h-full rounded-2xl overflow-hidden">
+      <div className="h-full glass p-6 flex flex-col justify-between">
         <button
-          className="
-            w-full py-2 rounded-xl
-            bg-indigo-600 text-white
-            hover:bg-indigo-700
-            transition
-          "
+          onClick={onClose}
+          className="self-end p-2 rounded-full hover:bg-white/60 transition"
         >
-          View Full Profile
+          <CloseIcon fontSize="small" />
         </button>
 
-        <button
-          className="
-            w-full py-2 rounded-xl
-            border border-gray-300
-            text-gray-600
-            hover:bg-gray-50
-            transition
-          "
-        >
-          View Resume
-        </button>
+        <div className="text-center">
+          <div className="w-24 h-24 mx-auto rounded-full bg-indigo-500 text-white flex items-center justify-center text-3xl font-semibold">
+            B
+          </div>
+          <h3 className="mt-4 text-lg font-semibold">Bhanu Prasad</h3>
+          <p className="text-sm text-gray-500">Associate Professor · CSE</p>
+
+          <div className="mt-6 space-y-3 text-sm text-gray-600 text-left">
+            <ProfileRow label="Qualification" value="Ph.D (Computer Science)" />
+            <ProfileRow label="Experience" value="12 Years" />
+            <ProfileRow label="Subjects Count" value="3" />
+            <ProfileRow label="Subjects" value="DBMS, OS, CN" />
+          </div>
+
+          <div className="mt-6 flex justify-center gap-4">
+            <IconButton icon={LinkedInIcon} color="bg-blue-600" />
+            <IconButton icon={LanguageIcon} color="bg-gray-800" />
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          <button className="w-full py-2 rounded-xl bg-indigo-600 text-white">
+            View Full Profile
+          </button>
+          <button className="w-full py-2 rounded-xl border border-gray-300 text-gray-600">
+            View Resume
+          </button>
+        </div>
       </div>
-    </div>
-  );
-}
-
-
-function CollapsedProfile({ onOpen }) {
-  return (
-    <div className="h-full glass flex items-center justify-center">
-      <button
-        onClick={onOpen}
-        className="w-10 h-10 rounded-full bg-indigo-500 text-white"
-      >
-        <PersonIcon fontSize="small" />
-      </button>
     </div>
   );
 }
@@ -264,11 +203,7 @@ function CollapsedProfile({ onOpen }) {
 function SidebarSection({ title, open, children }) {
   return (
     <div className="mb-6">
-      {open && (
-        <p className="text-xs uppercase text-gray-400 mb-2 tracking-wider">
-          {title}
-        </p>
-      )}
+      {open && <p className="text-xs uppercase text-gray-400 mb-2">{title}</p>}
       <div className="space-y-2">{children}</div>
     </div>
   );
@@ -293,16 +228,14 @@ function ProfileRow({ label, value }) {
   return (
     <div className="flex justify-between">
       <span className="text-gray-400">{label}</span>
-      <span className="font-medium text-right">{value}</span>
+      <span className="font-medium">{value}</span>
     </div>
   );
 }
 
 function IconButton({ icon: Icon, color }) {
   return (
-    <button
-      className={`w-10 h-10 flex items-center justify-center rounded-full ${color} text-white`}
-    >
+    <button className={`w-10 h-10 rounded-full ${color} text-white flex items-center justify-center`}>
       <Icon fontSize="small" />
     </button>
   );
