@@ -1,6 +1,7 @@
 import { useState } from "react";
 import Overview from "../pages/Teacher/Overview";
 import Attendance from "../pages/Teacher/Attendance";
+import Assignment from "../pages/Teacher/Assignment";
 import Logout from "../pages/Logout";
 
 /* ICONS */
@@ -73,7 +74,13 @@ export default function TeacherDashboard() {
                 active={activePage === "attendance"}
                 onClick={() => setActivePage("attendance")}
               />
-              <MenuItem icon={AssignmentIcon} label="Assignments" open={sidebarOpen} />
+              <MenuItem
+                icon={AssignmentIcon}
+                label="Assignments"
+                open={sidebarOpen}
+                active={activePage === "assignments"}
+                onClick={() => setActivePage("assignments")}
+              />
               <MenuItem icon={BarChartIcon} label="Marks" open={sidebarOpen} />
             </SidebarSection>
 
@@ -117,22 +124,25 @@ export default function TeacherDashboard() {
         </aside>
 
         {/* ================= MAIN ================= */}
-        <main className="flex-1 p-8 flex gap-6 overflow-hidden">
-          <div className="flex-1 overflow-y-auto pr-2">
+        <main className="flex-1 p-8 flex gap-6 overflow-y-auto">
+
+          {/* ===== MAIN CONTENT ===== */}
+          <div className="flex-1 relative z-10">
             {activePage === "overview" && <Overview />}
             {activePage === "attendance" && <Attendance />}
+            {activePage === "assignments" && <Assignment />}
           </div>
 
           {/* ================= PROFILE ================= */}
-           <div
-              className={`
-                relative
-                transition-all duration-300 ease-out
-                ${showProfile ? "w-80" : "w-14"}
-                overflow-visible
-              `}
-            > 
-
+          <div
+            className={`
+              relative
+              transition-all duration-300 ease-out
+              ${showProfile ? "w-80" : "w-14"}
+              overflow-visible
+              pointer-events-none
+            `}
+          >
             <div className="absolute inset-y-0 right-0 w-80 overflow-hidden">
               <div
                 className={`absolute inset-y-0 right-0 w-80 transition-transform duration-300 ease-out ${
@@ -144,7 +154,7 @@ export default function TeacherDashboard() {
             </div>
 
             {!showProfile && (
-              <div className="absolute inset-y-0 right-4 flex items-center">
+              <div className="absolute inset-y-0 right-4 flex items-center pointer-events-auto">
                 <button
                   onClick={() => setShowProfile(true)}
                   className="w-10 h-10 rounded-full bg-indigo-500 text-white shadow-lg flex items-center justify-center hover:scale-105 transition"
@@ -154,6 +164,7 @@ export default function TeacherDashboard() {
               </div>
             )}
           </div>
+
         </main>
       </div>
     </div>
@@ -164,7 +175,7 @@ export default function TeacherDashboard() {
 
 function TeacherProfile({ onClose }) {
   return (
-    <div className="h-full rounded-2xl overflow-hidden">
+    <div className="h-full rounded-2xl overflow-hidden pointer-events-auto">
       <div className="h-full glass p-6 flex flex-col justify-between">
         <button
           onClick={onClose}
