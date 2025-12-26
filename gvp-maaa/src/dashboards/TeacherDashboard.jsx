@@ -2,6 +2,7 @@ import { useState } from "react";
 import Overview from "../pages/Teacher/Overview";
 import Attendance from "../pages/Teacher/Attendance";
 import Assignment from "../pages/Teacher/Assignment";
+import Marks from "../pages/Teacher/Marks";
 import Logout from "../pages/Logout";
 
 /* ICONS */
@@ -81,7 +82,13 @@ export default function TeacherDashboard() {
                 active={activePage === "assignments"}
                 onClick={() => setActivePage("assignments")}
               />
-              <MenuItem icon={BarChartIcon} label="Marks" open={sidebarOpen} />
+              <MenuItem
+                icon={AssignmentIcon}
+                label="Marks"
+                open={sidebarOpen}
+                active={activePage === "marks"}
+                onClick={() => setActivePage("marks")}
+              />
             </SidebarSection>
 
             <SidebarSection title="Teaching Hub" open={sidebarOpen}>
@@ -131,6 +138,7 @@ export default function TeacherDashboard() {
             {activePage === "overview" && <Overview />}
             {activePage === "attendance" && <Attendance />}
             {activePage === "assignments" && <Assignment />}
+            {activePage === "marks" && <Marks />}
           </div>
 
           {/* ================= PROFILE ================= */}
