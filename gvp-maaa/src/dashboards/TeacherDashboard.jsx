@@ -4,6 +4,7 @@ import Attendance from "../pages/Teacher/Attendance";
 import Assignment from "../pages/Teacher/Assignment";
 import Marks from "../pages/Teacher/Marks";
 import Resources from "../pages/Teacher/Resources";
+import Events from "../pages/Teacher/Events";
 import Logout from "../pages/Logout";
 
 /* ICONS */
@@ -163,6 +164,8 @@ export default function TeacherDashboard() {
             {activePage === "assignments" && <Assignment />}
             {activePage === "marks" && <Marks />}
             {activePage === "resources" && <Resources />}
+            {activePage === "events" && <Events />}
+            {activePage === "insights" && <Insights />}
           </div>
 
           {/* ================= PROFILE ================= */}
