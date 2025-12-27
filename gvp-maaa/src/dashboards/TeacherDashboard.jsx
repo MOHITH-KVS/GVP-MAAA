@@ -3,6 +3,7 @@ import Overview from "../pages/Teacher/Overview";
 import Attendance from "../pages/Teacher/Attendance";
 import Assignment from "../pages/Teacher/Assignment";
 import Marks from "../pages/Teacher/Marks";
+import Resources from "../pages/Teacher/Resources";
 import Logout from "../pages/Logout";
 
 /* ICONS */
@@ -83,7 +84,7 @@ export default function TeacherDashboard() {
                 onClick={() => setActivePage("assignments")}
               />
               <MenuItem
-                icon={AssignmentIcon}
+                icon={BarChartIcon}
                 label="Marks"
                 open={sidebarOpen}
                 active={activePage === "marks"}
@@ -92,9 +93,27 @@ export default function TeacherDashboard() {
             </SidebarSection>
 
             <SidebarSection title="Teaching Hub" open={sidebarOpen}>
-              <MenuItem icon={FolderIcon} label="Resources" open={sidebarOpen} />
-              <MenuItem icon={EventIcon} label="Events" open={sidebarOpen} />
-              <MenuItem icon={InsightsIcon} label="Insights" open={sidebarOpen} />
+              <MenuItem
+                icon={FolderIcon}
+                label="Resources"
+                open={sidebarOpen}
+                active={activePage === "resources"}
+                onClick={() => setActivePage("resources")}
+              />
+              <MenuItem
+                icon={EventIcon}
+                label="Events"
+                open={sidebarOpen}
+                active={activePage === "events"}
+                onClick={() => setActivePage("events")}
+              />
+              <MenuItem
+                icon={InsightsIcon}
+                label="Insights"
+                open={sidebarOpen}
+                active={activePage === "insights"}
+                onClick={() => setActivePage("insights")}
+              />
             </SidebarSection>
 
             <div className="mt-6 mb-6">
@@ -133,12 +152,17 @@ export default function TeacherDashboard() {
         {/* ================= MAIN ================= */}
         <main className="flex-1 p-8 flex gap-6 overflow-y-auto">
 
-          {/* ===== MAIN CONTENT ===== */}
-          <div className="flex-1 relative z-10">
+          {/* ===== MAIN CONTENT (FIXED SAFE PADDING) ===== */}
+          <div
+            className={`flex-1 relative z-10 transition-all ${
+              !showProfile ? "pr-16" : ""
+            }`}
+          >
             {activePage === "overview" && <Overview />}
             {activePage === "attendance" && <Attendance />}
             {activePage === "assignments" && <Assignment />}
             {activePage === "marks" && <Marks />}
+            {activePage === "resources" && <Resources />}
           </div>
 
           {/* ================= PROFILE ================= */}
@@ -172,7 +196,6 @@ export default function TeacherDashboard() {
               </div>
             )}
           </div>
-
         </main>
       </div>
     </div>
@@ -262,7 +285,9 @@ function ProfileRow({ label, value }) {
 
 function IconButton({ icon: Icon, color }) {
   return (
-    <button className={`w-10 h-10 rounded-full ${color} text-white flex items-center justify-center`}>
+    <button
+      className={`w-10 h-10 rounded-full ${color} text-white flex items-center justify-center`}
+    >
       <Icon fontSize="small" />
     </button>
   );
