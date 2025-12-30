@@ -5,6 +5,7 @@ import Assignment from "../pages/Teacher/Assignment";
 import Marks from "../pages/Teacher/Marks";
 import Resources from "../pages/Teacher/Resources";
 import Events from "../pages/Teacher/Events";
+import Insights from "../pages/Teacher/Insights";
 import Logout from "../pages/Logout";
 
 /* ICONS */
