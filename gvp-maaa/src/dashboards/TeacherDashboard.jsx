@@ -6,6 +6,7 @@ import Marks from "../pages/Teacher/Marks";
 import Resources from "../pages/Teacher/Resources";
 import Events from "../pages/Teacher/Events";
 import Insights from "../pages/Teacher/Insights";
+import UploadResourceModal from "../pages/Teacher/UploadResourceModal";
 import Logout from "../pages/Logout";
 
 /* ICONS */
@@ -33,6 +34,8 @@ export default function TeacherDashboard() {
   const [activePage, setActivePage] = useState("overview");
   const [showProfile, setShowProfile] = useState(true);
   const [showLogout, setShowLogout] = useState(false);
+  const [showUploadResource, setShowUploadResource] = useState(false);
+
 
   if (showLogout) {
     return <Logout onBack={() => setShowLogout(false)} />;
@@ -126,10 +129,14 @@ export default function TeacherDashboard() {
               )}
 
               <div className="space-y-3">
-                <button className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition">
-                  <UploadFileIcon fontSize="small" />
-                  {sidebarOpen && <span>Upload Resource</span>}
+                <button
+                    onClick={() => setShowUploadResource(true)}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition"
+                   >
+                    <UploadFileIcon fontSize="small" />
+                    {sidebarOpen && <span>Upload Resource</span>}
                 </button>
+
 
                 <button className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border border-amber-200 text-amber-700 bg-amber-50 hover:bg-amber-100 transition">
                   <CampaignIcon fontSize="small" />
@@ -201,6 +208,12 @@ export default function TeacherDashboard() {
             )}
           </div>
         </main>
+        {/* ================= UPLOAD RESOURCE MODAL ================= */}
+        {showUploadResource && (
+          <UploadResourceModal
+            onClose={() => setShowUploadResource(false)}
+          />
+        )}
       </div>
     </div>
   );
