@@ -192,7 +192,7 @@ export default function UploadResourceModal({ onClose }) {
       {/* ================= SUCCESS OVERLAY ================= */}
       {success && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-emerald-500/10 backdrop-blur-md">
-          <div className="flex flex-col items-center text-center gap-3">
+          <div className="flex flex-col items-center text-center gap-3 animate-uploadSuccess">
             <div className="relative">
               <span className="absolute inset-0 rounded-full bg-green-400/20 animate-ripple" />
               <div className="w-20 h-20 rounded-full border-4 border-green-500 flex items-center justify-center">

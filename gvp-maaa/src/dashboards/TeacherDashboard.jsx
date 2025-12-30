@@ -7,6 +7,7 @@ import Resources from "../pages/Teacher/Resources";
 import Events from "../pages/Teacher/Events";
 import Insights from "../pages/Teacher/Insights";
 import UploadResourceModal from "../pages/Teacher/UploadResourceModal";
+import GiveAlertModal from "../pages/Teacher/GiveAlertModal";
 import Logout from "../pages/Logout";
 
 /* ICONS */
@@ -35,6 +36,7 @@ export default function TeacherDashboard() {
   const [showProfile, setShowProfile] = useState(true);
   const [showLogout, setShowLogout] = useState(false);
   const [showUploadResource, setShowUploadResource] = useState(false);
+  const [showGiveAlert, setShowGiveAlert] = useState(false);
 
 
   if (showLogout) {
@@ -138,10 +140,16 @@ export default function TeacherDashboard() {
                 </button>
 
 
-                <button className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border border-amber-200 text-amber-700 bg-amber-50 hover:bg-amber-100 transition">
+                <button
+                  onClick={() => setShowGiveAlert(true)}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl 
+                            border border-amber-200 text-amber-700 
+                            bg-amber-50 hover:bg-amber-100 transition"
+                 >
                   <CampaignIcon fontSize="small" />
                   {sidebarOpen && <span>Give Alert</span>}
                 </button>
+
               </div>
             </div>
 
@@ -212,6 +220,12 @@ export default function TeacherDashboard() {
         {showUploadResource && (
           <UploadResourceModal
             onClose={() => setShowUploadResource(false)}
+          />
+        )}
+        {/* ================= GIVE ALERT MODAL ================= */}
+        {showGiveAlert && (
+          <GiveAlertModal 
+          onClose={() => setShowGiveAlert(false)} 
           />
         )}
       </div>

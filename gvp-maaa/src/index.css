@@ -12,3 +12,71 @@
     8px 8px 16px rgba(0,0,0,0.08),
     -8px -8px 16px rgba(255,255,255,0.7);
 }
+
+/* ================= UPLOAD RESOURCE SUCCESS ================= */
+
+/* Ripple behind tick */
+@keyframes ripple {
+  0% {
+    transform: scale(0.8);
+    opacity: 0.6;
+  }
+  100% {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+}
+
+.animate-ripple {
+  animation: ripple 1.4s ease-out infinite;
+}
+
+/* Smooth success popup spring */
+@keyframes uploadSuccess {
+  0% {
+    opacity: 0;
+    transform: scale(0.9) translateY(14px);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.04) translateY(-2px);
+  }
+  80% {
+    transform: scale(0.98) translateY(1px);
+  }
+  100% {
+    transform: scale(1) translateY(0);
+  }
+}
+
+.animate-uploadSuccess {
+  animation: uploadSuccess 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+
+
+/* ================= ALERT SUCCESS – SMOOTH SPRING ================= */
+
+@keyframes alertSpringIn {
+  0% {
+    opacity: 0;
+    transform: scale(0.85) translateY(16px);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.05) translateY(-2px);
+  }
+  80% {
+    transform: scale(0.98) translateY(1px);
+  }
+  100% {
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* Use SAME smooth motion for all alert types */
+.animate-alertEmergency,
+.animate-alertAnnouncement,
+.animate-alertInfo {
+  animation: alertSpringIn 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
