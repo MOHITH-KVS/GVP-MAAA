@@ -1,5 +1,6 @@
 import { useState } from "react";
 import Overview from "../pages/Teacher/Overview";
+import Timetable from "../pages/Teacher/Timetable";
 import Attendance from "../pages/Teacher/Attendance";
 import Assignment from "../pages/Teacher/Assignment";
 import Marks from "../pages/Teacher/Marks";
@@ -8,7 +9,9 @@ import Events from "../pages/Teacher/Events";
 import Insights from "../pages/Teacher/Insights";
 import UploadResourceModal from "../pages/Teacher/UploadResourceModal";
 import GiveAlertModal from "../pages/Teacher/GiveAlertModal";
+import Alerts from "../pages/Teacher/Alerts";
 import Logout from "../pages/Logout";
+import TeacherProfilePage from "../pages/Teacher/TeacherProfilePage";
 
 /* ICONS */
 import DashboardIcon from "@mui/icons-material/Dashboard";
@@ -37,11 +40,22 @@ export default function TeacherDashboard() {
   const [showLogout, setShowLogout] = useState(false);
   const [showUploadResource, setShowUploadResource] = useState(false);
   const [showGiveAlert, setShowGiveAlert] = useState(false);
+  const [showFullProfile, setShowFullProfile] = useState(false);
+
 
 
   if (showLogout) {
-    return <Logout onBack={() => setShowLogout(false)} />;
-  }
+  return <Logout onBack={() => setShowLogout(false)} role="teacher" />;
+}
+if (showFullProfile) {
+  return (
+    <TeacherProfilePage
+      onBack={() => setShowFullProfile(false)}
+    />
+  );
+}
+
+
 
   return (
     <div className="h-screen w-screen bg-gradient-to-br from-indigo-50 via-white to-cyan-50">
@@ -75,6 +89,13 @@ export default function TeacherDashboard() {
                 open={sidebarOpen}
                 active={activePage === "overview"}
                 onClick={() => setActivePage("overview")}
+              />
+              <MenuItem
+                icon={DashboardIcon}
+                label="Timetable"
+                open={sidebarOpen}
+                active={activePage === "timetable"}
+                onClick={() => setActivePage("timetable")}
               />
               <MenuItem
                 icon={EventAvailableIcon}
@@ -154,7 +175,14 @@ export default function TeacherDashboard() {
             </div>
 
             <SidebarSection title="System" open={sidebarOpen}>
-              <MenuItem icon={NotificationsIcon} label="Alerts" open={sidebarOpen} />
+              <MenuItem
+                icon={NotificationsIcon}
+                label="Alerts"
+                open={sidebarOpen}
+                active={activePage === "alerts"}
+                onClick={() => setActivePage("alerts")}
+              />
+
               <MenuItem
                 icon={LogoutIcon}
                 label="Logout"
@@ -176,12 +204,14 @@ export default function TeacherDashboard() {
             }`}
           >
             {activePage === "overview" && <Overview />}
+            {activePage === "timetable" && <Timetable />}
             {activePage === "attendance" && <Attendance />}
             {activePage === "assignments" && <Assignment />}
             {activePage === "marks" && <Marks />}
             {activePage === "resources" && <Resources />}
             {activePage === "events" && <Events />}
             {activePage === "insights" && <Insights />}
+            {activePage === "alerts" && <Alerts />}
           </div>
 
           {/* ================= PROFILE ================= */}
@@ -200,20 +230,13 @@ export default function TeacherDashboard() {
                   showProfile ? "translate-x-0" : "translate-x-full"
                 }`}
               >
-                <TeacherProfile onClose={() => setShowProfile(false)} />
+                <TeacherProfile
+                  onClose={() => setShowProfile(false)}
+                  onViewFullProfile={() => setShowFullProfile(true)}
+                />
+
               </div>
             </div>
-
-            {!showProfile && (
-              <div className="absolute inset-y-0 right-4 flex items-center pointer-events-auto">
-                <button
-                  onClick={() => setShowProfile(true)}
-                  className="w-10 h-10 rounded-full bg-indigo-500 text-white shadow-lg flex items-center justify-center hover:scale-105 transition"
-                >
-                  <PersonIcon fontSize="small" />
-                </button>
-              </div>
-            )}
           </div>
         </main>
         {/* ================= UPLOAD RESOURCE MODAL ================= */}
@@ -235,7 +258,7 @@ export default function TeacherDashboard() {
 
 /* ================= PROFILE ================= */
 
-function TeacherProfile({ onClose }) {
+function TeacherProfile({ onClose, onViewFullProfile }) {
   return (
     <div className="h-full rounded-2xl overflow-hidden pointer-events-auto">
       <div className="h-full glass p-6 flex flex-col justify-between">
@@ -267,9 +290,14 @@ function TeacherProfile({ onClose }) {
         </div>
 
         <div className="space-y-3">
-          <button className="w-full py-2 rounded-xl bg-indigo-600 text-white">
+          <button
+            onClick={onViewFullProfile}
+            className="w-full py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition"
+           >
             View Full Profile
           </button>
+
+
           <button className="w-full py-2 rounded-xl border border-gray-300 text-gray-600">
             View Resume
           </button>

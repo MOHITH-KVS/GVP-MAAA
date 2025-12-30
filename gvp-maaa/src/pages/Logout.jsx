@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import LogoutIcon from "@mui/icons-material/Logout";
 
-export default function Logout({ onBack }) {
+export default function Logout({ onBack, role = "student" }) {
   const [visible, setVisible] = useState(false);
 
   // Animate IN
@@ -23,6 +23,24 @@ export default function Logout({ onBack }) {
     }, 300);
   };
 
+  /* ===== ROLE BASED CONTENT (NEW) ===== */
+  const content = {
+    student: {
+      title: "Logged out — for now",
+      desc: "You’ve safely logged out of your dashboard.",
+      quote:
+        "Take a break. Reflect. Every successful student comes back stronger.",
+    },
+    teacher: {
+      title: "Session Ended",
+      desc: "You’ve successfully logged out of the faculty dashboard.",
+      quote:
+        "Thank you for guiding students today. Your impact continues beyond the classroom.",
+    },
+  };
+
+  const { title, desc, quote } = content[role];
+
   return (
     <div
       className={`fixed inset-0 z-50 flex items-center justify-center
@@ -43,32 +61,29 @@ export default function Logout({ onBack }) {
           <LogoutIcon fontSize="large" />
         </div>
 
-        {/* TEXT */}
+        {/* TEXT (DYNAMIC NOW) */}
         <h1 className="text-2xl font-semibold text-slate-800 mb-3">
-          Logged out — for now
+          {title}
         </h1>
 
         <p className="text-slate-600 text-sm leading-relaxed mb-4">
-          You’ve safely logged out of your dashboard.
+          {desc}
         </p>
 
         <p className="text-slate-500 text-sm italic mb-8">
-          Take a break. Reflect.  
-          Every successful student comes back stronger.
+          {quote}
         </p>
 
         {/* ACTIONS */}
         <div className="space-y-3">
-          {/* PRIMARY */}
           <button
             onClick={handleLoginAgain}
             className="w-full py-3 rounded-xl bg-indigo-600 text-white font-medium
-            hover:bg-indigo-700 transition focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            hover:bg-indigo-700 transition"
           >
             🔁 Login Again
           </button>
 
-          {/* SECONDARY */}
           <button
             onClick={handleExit}
             className="w-full py-3 rounded-xl border border-slate-200
@@ -78,7 +93,6 @@ export default function Logout({ onBack }) {
           </button>
         </div>
 
-        {/* FOOTER */}
         <p className="mt-8 text-xs text-slate-400">
           GVP-MAAA · Your academic companion
         </p>
