@@ -2,8 +2,8 @@ import { useState } from "react";
 
 /* ===== ADMIN PAGES ===== */
 import Overview from "../pages/Admin/Overview";
-/*import Students from "../pages/Admin/Students";
-import Teachers from "../pages/Admin/Teachers";
+import Students from "../pages/Admin/Students";
+/*import Teachers from "../pages/Admin/Teachers";
 import Academics from "../pages/Admin/Academics";
 import Timetable from "../pages/Admin/Timetable";
 import Alerts from "../pages/Admin/Alerts";
