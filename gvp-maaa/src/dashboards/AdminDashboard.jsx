@@ -4,8 +4,8 @@ import { useState } from "react";
 import Overview from "../pages/Admin/Overview";
 import Students from "../pages/Admin/Students";
 import Teachers from "../pages/Admin/Teachers";
-/*import Academics from "../pages/Admin/Academics";
-import Timetable from "../pages/Admin/Timetable";
+import Academics from "../pages/Admin/Academics";
+/*import Timetable from "../pages/Admin/Timetable";
 import Alerts from "../pages/Admin/Alerts";
 import Analytics from "../pages/Admin/Analytics";
 import Reports from "../pages/Admin/Reports";
@@ -68,7 +68,7 @@ export default function AdminDashboard() {
             <SidebarSection title="Management" open={sidebarOpen}>
               <MenuItem
                 icon={DashboardIcon}
-                label="Dashboard"
+                label="Overview"
                 open={sidebarOpen}
                 active={activePage === "overview"}
                 onClick={() => setActivePage("overview")}
@@ -134,6 +134,7 @@ export default function AdminDashboard() {
                 onClick={() => setActivePage("reports")}
               />
             </SidebarSection>
+            
 
             <SidebarSection title="System" open={sidebarOpen}>
               <MenuItem
