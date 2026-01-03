@@ -48,8 +48,9 @@ export default function Students() {
 
   const [showAlertModal, setShowAlertModal] = useState(false);
   const [showAddStudent, setShowAddStudent] = useState(false);
-  const [showBulkAdd, setShowBulkAdd] = useState(false);
   const [selectedStudent, setSelectedStudent] = useState(null);
+  const [showDeleteStudent, setShowDeleteStudent] = useState(false);
+
 
   /* ===== FILTER ===== */
   const filtered = students.filter((s) => {
@@ -76,37 +77,46 @@ export default function Students() {
     <div className="space-y-8">
 
       {/* ================= HEADER ================= */}
-      <div className="bg-white p-6 rounded-2xl border flex justify-between items-center">
-        <div>
-          <h1 className="text-2xl font-semibold">Student Management</h1>
-          <p className="text-sm text-gray-500">
-            Monitor performance, risks, and insights
-          </p>
-        </div>
-
-        <div className="flex gap-3 flex-wrap">
-          <button
-            onClick={() => setShowAddStudent(true)}
-            className="px-4 py-2 rounded-lg bg-indigo-600 text-white"
-          >
-            + Add Student
-          </button>
-
-          <button
-            onClick={() => alert("PDF available after DB setup")}
-            className="px-4 py-2 rounded-lg bg-red-600 text-white"
-          >
-            Download At-Risk PDF
-          </button>
-
-          <button
-            onClick={() => setShowAlertModal(true)}
-            className="px-4 py-2 rounded-lg bg-amber-500 text-white"
-          >
-            Alert At-Risk Students
-          </button>
-        </div>
+      <div className="bg-white p-6 rounded-2xl border">
+        <h1 className="text-2xl font-semibold">Student Management</h1>
+        <p className="text-sm text-gray-500">
+          Monitor performance, risks, and insights
+        </p>
       </div>
+
+      {/* ================= ADMIN ACTIONS ================= */}
+      <div className="bg-white p-4 rounded-xl border flex gap-3 flex-wrap">
+        <button
+          onClick={() => setShowAddStudent(true)}
+          className="px-4 py-2 rounded-lg bg-indigo-600 text-white"
+        >
+          + Add Student
+        </button>
+
+        <button
+          onClick={() => alert("Update Students – coming next")}
+          className="px-4 py-2 rounded-lg bg-blue-600 text-white"
+        >
+          🔁 Update Students
+        </button>
+
+        <button
+          onClick={() => setShowDeleteStudent(true)}
+          className="px-4 py-2 rounded-lg bg-red-600 text-white"
+         >
+          🗑 Delete Students
+        </button>
+
+
+        <button
+          onClick={() => setShowAlertModal(true)}
+          className="px-4 py-2 rounded-lg bg-amber-500 text-white"
+        >
+          🔔 Alert At-Risk
+        </button>
+      </div>
+
+
 
       {/* ================= FILTERS ================= */}
       <div className="bg-white p-4 rounded-xl border flex gap-4 flex-wrap">
@@ -179,11 +189,85 @@ export default function Students() {
         </table>
       </div>
 
+            {/* ================= STUDENT ANALYTICS ================= */}
+      <div className="space-y-4">
+
+        <h2 className="text-lg font-semibold">
+          Student Analytics & Insights
+        </h2>
+        <p className="text-sm text-gray-500">
+          Performance distribution, risk analysis, and academic health overview
+        </p>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+
+          {/* Card 1 */}
+          <div className="bg-white rounded-xl border p-4">
+            <h3 className="font-medium mb-1">
+              At-Risk vs Safe Students
+            </h3>
+            <p className="text-xs text-gray-500 mb-3">
+              Overall academic risk distribution
+            </p>
+
+            <div className="h-40 border border-dashed rounded-lg flex items-center justify-center text-sm text-gray-400">
+              📊 Analytics Agent will render chart here
+            </div>
+          </div>
+
+          {/* Card 2 */}
+          <div className="bg-white rounded-xl border p-4">
+            <h3 className="font-medium mb-1">
+              Attendance Distribution
+            </h3>
+            <p className="text-xs text-gray-500 mb-3">
+              Attendance range across students
+            </p>
+
+            <div className="h-40 border border-dashed rounded-lg flex items-center justify-center text-sm text-gray-400">
+              📊 Analytics Agent will render chart here
+            </div>
+          </div>
+
+          {/* Card 3 */}
+          <div className="bg-white rounded-xl border p-4">
+            <h3 className="font-medium mb-1">
+              CGPA Distribution
+            </h3>
+            <p className="text-xs text-gray-500 mb-3">
+              Academic performance breakdown
+            </p>
+
+            <div className="h-40 border border-dashed rounded-lg flex items-center justify-center text-sm text-gray-400">
+              📊 Analytics Agent will render chart here
+            </div>
+          </div>
+
+          {/* Card 4 */}
+          <div className="bg-white rounded-xl border p-4">
+            <h3 className="font-medium mb-1">
+              Section-wise Risk Analysis
+            </h3>
+            <p className="text-xs text-gray-500 mb-3">
+              Risk comparison between sections
+            </p>
+
+            <div className="h-40 border border-dashed rounded-lg flex items-center justify-center text-sm text-gray-400">
+              📊 Analytics Agent will render chart here
+            </div>
+          </div>
+
+        </div>
+      </div>
+
       {/* ================= MODALS ================= */}
       {showAlertModal && <AlertModal count={atRiskCount} onClose={() => setShowAlertModal(false)} />}
       {showAddStudent && <AddStudentModal onAdd={setStudents} onClose={() => setShowAddStudent(false)} />}
-      {showBulkAdd && <BulkAddModal onAdd={setStudents} onClose={() => setShowBulkAdd(false)} />}
       {selectedStudent && <StudentProfile student={selectedStudent} onClose={() => setSelectedStudent(null)} />}
+      {showDeleteStudent && (<DeleteStudentModal students={students} onDelete={setStudents}onClose={() => setShowDeleteStudent(false)}
+  />
+)}
+
     </div>
   );
 }
@@ -191,105 +275,87 @@ export default function Students() {
 function AddStudentModal({ onAdd, onClose }) {
   const [mode, setMode] = useState("single");
 
-  /* ===== SINGLE STUDENT ===== */
-  const [single, setSingle] = useState({
-    roll: "",
-    name: "",
-    year: "3rd Year",
-    section: "A",
-  });
+  /* ===== COMMON ===== */
+  const [step, setStep] = useState("form"); // form | review | success
 
-  /* ===== BULK META ===== */
-  const [bulkMeta, setBulkMeta] = useState({
-    year: "3rd Year",
-    section: "A",
-    batch: "2021",
-    department: "CSE",
-  });
-
-  /* ===== BULK MANUAL LIST ===== */
-  const [bulkStudents, setBulkStudents] = useState([
-    { roll: "", name: "" },
+  /* ===== SINGLE MODE ===== */
+  const [singleList, setSingleList] = useState([
+    { roll: "", name: "", year: "3rd Year", section: "A" },
   ]);
 
-  /* ===== FILE UPLOAD ===== */
+  /* ===== BULK MODE ===== */
   const [file, setFile] = useState(null);
+  const [bulkPreview, setBulkPreview] = useState([]);
 
-  /* ===== ADD SINGLE ===== */
-  const addSingleStudent = () => {
-    if (!single.roll || !single.name) return;
-
-    onAdd((prev) => [
-      ...prev,
-      {
-        id: Date.now(),
-        roll: single.roll,
-        name: single.name,
-        year: single.year,
-        section: single.section,
-        attendance: 0,
-        cgpa: 0,
-        backlogs: 0,
-        alertsSent: 0,
-        lastAlert: "-",
-      },
+  /* ===== ADD SINGLE ROW ===== */
+  const addSingleRow = () => {
+    setSingleList([
+      ...singleList,
+      { roll: "", name: "", year: "3rd Year", section: "A" },
     ]);
-
-    /*
-      🔐 DB FUTURE:
-      POST /students
-      body: single student object
-    */
-
-    onClose();
   };
 
-  /* ===== ADD BULK MANUAL ===== */
-  const addBulkManual = () => {
-    const prepared = bulkStudents
-      .filter((s) => s.roll && s.name)
-      .map((s, i) => ({
-        id: Date.now() + i,
-        roll: s.roll,
-        name: s.name,
-        year: bulkMeta.year,
-        section: bulkMeta.section,
-        attendance: 0,
-        cgpa: 0,
-        backlogs: 0,
-        alertsSent: 0,
-        lastAlert: "-",
-      }));
-
-    if (prepared.length === 0) return;
-
-    onAdd((prev) => [...prev, ...prepared]);
-
-    /*
-      🔐 DB FUTURE:
-      POST /students/bulk
-      body: prepared[]
-    */
-
-    onClose();
+  /* ===== HANDLE SINGLE INPUT ===== */
+  const updateSingle = (index, key, value) => {
+    const copy = [...singleList];
+    copy[index][key] = value;
+    setSingleList(copy);
   };
 
-  /* ===== FILE UPLOAD HANDLER ===== */
+  /* ===== PREPARE SINGLE FOR REVIEW ===== */
+  const reviewSingle = () => {
+    const valid = singleList.filter(s => s.roll && s.name);
+    if (valid.length === 0) return;
+    setSingleList(valid);
+    setStep("review");
+  };
+
+  /* ===== HANDLE FILE UPLOAD (DUMMY PARSE) ===== */
   const handleFileUpload = (e) => {
-    setFile(e.target.files[0]);
+    const uploaded = e.target.files[0];
+    setFile(uploaded);
 
-    /*
-      🔐 DB FUTURE FLOW:
-      1. Upload file → backend
-      2. Backend parses PDF/Excel
-      3. Validate rows
-      4. Insert into DB
-    */
+    // 🔹 Dummy parsed data (replace with backend later)
+    setBulkPreview([
+      { roll: "21CSE101", name: "Ravi Kumar", year: "3rd Year", section: "A" },
+      { roll: "21CSE102", name: "Neha Sharma", year: "3rd Year", section: "A" },
+    ]);
+  };
+
+  /* ===== FINAL PUBLISH ===== */
+  const finalPublish = () => {
+    const prepared =
+      mode === "single"
+        ? singleList.map((s, i) => ({
+            id: Date.now() + i,
+            ...s,
+            attendance: 0,
+            cgpa: 0,
+            backlogs: 0,
+            alertsSent: 0,
+            lastAlert: "-",
+          }))
+        : bulkPreview.map((s, i) => ({
+            id: Date.now() + i,
+            ...s,
+            attendance: 0,
+            cgpa: 0,
+            backlogs: 0,
+            alertsSent: 0,
+            lastAlert: "-",
+          }));
+
+    onAdd(prev => [...prev, ...prepared]);
+    setStep("success");
+
+    setTimeout(() => {
+      onClose();
+    }, 2000);
   };
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-      <div className="bg-white w-full max-w-2xl rounded-2xl p-6 space-y-6">
+      <div className="bg-white w-full max-w-3xl rounded-2xl p-6 space-y-6">
 
         {/* HEADER */}
         <div className="flex justify-between items-center">
@@ -297,194 +363,338 @@ function AddStudentModal({ onAdd, onClose }) {
           <button onClick={onClose}>✕</button>
         </div>
 
-        {/* MODE SELECTOR */}
-        <div className="flex gap-3">
-          <button
-            onClick={() => setMode("single")}
-            className={`px-4 py-2 rounded-lg border ${
-              mode === "single" ? "bg-indigo-600 text-white" : ""
-            }`}
-          >
-            Single Student
-          </button>
-
-          <button
-            onClick={() => setMode("bulk")}
-            className={`px-4 py-2 rounded-lg border ${
-              mode === "bulk" ? "bg-amber-500 text-white" : ""
-            }`}
-          >
-            ⚡ Bulk Students
-          </button>
-        </div>
-
-        {/* ================= SINGLE ================= */}
-        {mode === "single" && (
-          <div className="grid grid-cols-2 gap-3">
-            <input
-              placeholder="Roll No"
-              value={single.roll}
-              onChange={(e) =>
-                setSingle({ ...single, roll: e.target.value })
-              }
-              className="border px-3 py-2 rounded-lg"
-            />
-            <input
-              placeholder="Student Name"
-              value={single.name}
-              onChange={(e) =>
-                setSingle({ ...single, name: e.target.value })
-              }
-              className="border px-3 py-2 rounded-lg"
-            />
-            <select
-              className="border px-3 py-2 rounded-lg"
-              value={single.year}
-              onChange={(e) =>
-                setSingle({ ...single, year: e.target.value })
-              }
+        {/* MODE */}
+        {step === "form" && (
+          <div className="flex gap-3">
+            <button
+              onClick={() => setMode("single")}
+              className={`px-4 py-2 rounded-lg border ${mode === "single" ? "bg-indigo-600 text-white" : ""}`}
             >
-              <option>3rd Year</option>
-              <option>4th Year</option>
-            </select>
-            <select
-              className="border px-3 py-2 rounded-lg"
-              value={single.section}
-              onChange={(e) =>
-                setSingle({ ...single, section: e.target.value })
-              }
+              Single Student
+            </button>
+            <button
+              onClick={() => setMode("bulk")}
+              className={`px-4 py-2 rounded-lg border ${mode === "bulk" ? "bg-amber-500 text-white" : ""}`}
             >
-              <option>A</option>
-              <option>B</option>
-            </select>
+              Bulk Students
+            </button>
           </div>
         )}
 
-        {/* ================= BULK ================= */}
-        {mode === "bulk" && (
-          <div className="space-y-4 bg-amber-50 p-4 rounded-xl border border-amber-200">
+        {/* ================= SINGLE FORM ================= */}
+        {mode === "single" && step === "form" && (
+          <div className="space-y-4">
+            {singleList.map((s, i) => (
+              <div key={i} className="grid grid-cols-4 gap-2">
+                <input
+                  placeholder="Roll"
+                  value={s.roll}
+                  onChange={e => updateSingle(i, "roll", e.target.value)}
+                  className="border px-3 py-2 rounded-lg"
+                />
+                <input
+                  placeholder="Name"
+                  value={s.name}
+                  onChange={e => updateSingle(i, "name", e.target.value)}
+                  className="border px-3 py-2 rounded-lg"
+                />
+                <select
+                  value={s.year}
+                  onChange={e => updateSingle(i, "year", e.target.value)}
+                  className="border px-3 py-2 rounded-lg"
+                >
+                  <option>3rd Year</option>
+                  <option>4th Year</option>
+                </select>
+                <select
+                  value={s.section}
+                  onChange={e => updateSingle(i, "section", e.target.value)}
+                  className="border px-3 py-2 rounded-lg"
+                >
+                  <option>A</option>
+                  <option>B</option>
+                </select>
+              </div>
+            ))}
 
-            <p className="text-sm text-amber-700 font-medium">
-              ⚠ Bulk Mode: Academic details are common. Student names & rolls are individual.
+            <button onClick={addSingleRow} className="text-indigo-600 text-sm">
+              + Add Another Student
+            </button>
+
+            <div className="flex justify-end gap-3">
+              <button onClick={reviewSingle} className="px-4 py-2 bg-indigo-600 text-white rounded-lg">
+                Review Students
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ================= BULK FORM ================= */}
+        {mode === "bulk" && step === "form" && (
+          <div className="space-y-4 border p-4 rounded-xl bg-amber-50">
+            <input type="file" onChange={handleFileUpload} />
+            {file && <p className="text-sm text-green-600">File selected: {file.name}</p>}
+
+            {bulkPreview.length > 0 && (
+              <button
+                onClick={() => setStep("review")}
+                className="px-4 py-2 bg-amber-500 text-white rounded-lg"
+              >
+                Review Uploaded Students
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* ================= REVIEW ================= */}
+        {step === "review" && (
+          <>
+            <table className="w-full text-sm border">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="p-2">Roll</th>
+                  <th className="p-2">Name</th>
+                  <th className="p-2">Year</th>
+                  <th className="p-2">Section</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(mode === "single" ? singleList : bulkPreview).map((s, i) => (
+                  <tr key={i} className="border-t">
+                    <td className="p-2">{s.roll}</td>
+                    <td className="p-2">{s.name}</td>
+                    <td className="p-2">{s.year}</td>
+                    <td className="p-2">{s.section}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <div className="flex justify-end gap-3">
+              <button onClick={() => setStep("form")} className="px-4 py-2 border rounded-lg">
+                Back & Edit
+              </button>
+              <button onClick={finalPublish} className="px-4 py-2 bg-green-600 text-white rounded-lg">
+                Final Publish
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* ================= SUCCESS ================= */}
+        {step === "success" && (
+          <div className="text-center py-10 space-y-3 animate-pulse">
+            <div className="text-4xl">✅</div>
+            <p className="text-lg font-semibold text-green-600">
+              Successfully updated to database
             </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
-            {/* COMMON DETAILS */}
-            <div className="grid grid-cols-2 gap-3">
+function DeleteStudentModal({ students, onDelete, onClose }) {
+  const [mode, setMode] = useState("single"); // single | bulk
+  const [step, setStep] = useState("form"); // form | review | success
+
+  const [year, setYear] = useState("3rd Year");
+  const [section, setSection] = useState("A");
+  const [search, setSearch] = useState("");
+  const [selectedRoll, setSelectedRoll] = useState("");
+
+  /* ===== FILTERED STUDENTS ===== */
+  const filteredStudents = students.filter(
+    (s) =>
+      s.year === year &&
+      s.section === section &&
+      (s.name.toLowerCase().includes(search.toLowerCase()) ||
+        s.roll.toLowerCase().includes(search.toLowerCase()))
+  );
+
+  const selectedStudent = filteredStudents.find(
+    (s) => s.roll === selectedRoll
+  );
+
+  /* ===== FINAL DELETE ===== */
+  const handleFinalDelete = () => {
+    if (mode === "single" && selectedStudent) {
+      onDelete((prev) =>
+        prev.filter((s) => s.roll !== selectedStudent.roll)
+      );
+    }
+
+    if (mode === "bulk") {
+      onDelete((prev) =>
+        prev.filter((s) => !(s.year === year && s.section === section))
+      );
+    }
+
+    setStep("success");
+    setTimeout(onClose, 1800);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+      <div className="bg-white w-full max-w-3xl rounded-2xl p-6 space-y-6 animate-fadeIn">
+
+        {/* HEADER */}
+        <div className="flex justify-between items-center">
+          <h2 className="text-lg font-semibold text-red-600">
+            Delete Students
+          </h2>
+          <button onClick={onClose}>✕</button>
+        </div>
+
+        {/* MODE SELECT */}
+        {step === "form" && (
+          <div className="flex gap-3">
+            <button
+              onClick={() => setMode("single")}
+              className={`px-4 py-2 rounded-lg border ${
+                mode === "single" ? "bg-red-600 text-white" : ""
+              }`}
+            >
+              Single Remove
+            </button>
+            <button
+              onClick={() => setMode("bulk")}
+              className={`px-4 py-2 rounded-lg border ${
+                mode === "bulk" ? "bg-red-500 text-white" : ""
+              }`}
+            >
+              Bulk Remove
+            </button>
+          </div>
+        )}
+
+        {/* ================= FORM ================= */}
+        {step === "form" && (
+          <>
+            {/* FILTERS */}
+            <div className="grid grid-cols-3 gap-3">
               <select
+                value={year}
+                onChange={(e) => setYear(e.target.value)}
                 className="border px-3 py-2 rounded-lg"
-                value={bulkMeta.year}
-                onChange={(e) =>
-                  setBulkMeta({ ...bulkMeta, year: e.target.value })
-                }
               >
                 <option>3rd Year</option>
                 <option>4th Year</option>
               </select>
 
               <select
+                value={section}
+                onChange={(e) => setSection(e.target.value)}
                 className="border px-3 py-2 rounded-lg"
-                value={bulkMeta.section}
-                onChange={(e) =>
-                  setBulkMeta({ ...bulkMeta, section: e.target.value })
-                }
               >
                 <option>A</option>
                 <option>B</option>
               </select>
 
-              <input
-                placeholder="Batch (e.g. 2021)"
-                className="border px-3 py-2 rounded-lg"
-                value={bulkMeta.batch}
-                onChange={(e) =>
-                  setBulkMeta({ ...bulkMeta, batch: e.target.value })
-                }
-              />
-
-              <input
-                placeholder="Department (e.g. CSE)"
-                className="border px-3 py-2 rounded-lg"
-                value={bulkMeta.department}
-                onChange={(e) =>
-                  setBulkMeta({ ...bulkMeta, department: e.target.value })
-                }
-              />
-            </div>
-
-            {/* FILE UPLOAD */}
-            <div className="border border-dashed rounded-lg p-4 bg-white">
-              <p className="text-sm text-gray-600 mb-2">
-                Upload PDF / Excel / CSV (Optional)
-              </p>
-              <input type="file" onChange={handleFileUpload} />
-              {file && (
-                <p className="text-xs text-green-600 mt-1">
-                  File selected: {file.name}
-                </p>
+              {mode === "single" && (
+                <input
+                  placeholder="Search by name or roll"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="border px-3 py-2 rounded-lg"
+                />
               )}
             </div>
 
-            {/* MANUAL ENTRY */}
-            <div className="space-y-2">
-              {bulkStudents.map((s, i) => (
-                <div key={i} className="flex gap-2">
-                  <input
-                    placeholder="Roll No"
-                    value={s.roll}
-                    onChange={(e) => {
-                      const copy = [...bulkStudents];
-                      copy[i].roll = e.target.value;
-                      setBulkStudents(copy);
-                    }}
-                    className="border px-3 py-2 rounded-lg w-1/2"
-                  />
-                  <input
-                    placeholder="Student Name"
-                    value={s.name}
-                    onChange={(e) => {
-                      const copy = [...bulkStudents];
-                      copy[i].name = e.target.value;
-                      setBulkStudents(copy);
-                    }}
-                    className="border px-3 py-2 rounded-lg w-1/2"
-                  />
-                </div>
-              ))}
-            </div>
+            {/* SINGLE LIST */}
+            {mode === "single" && (
+              <select
+                className="border px-3 py-2 rounded-lg w-full"
+                value={selectedRoll}
+                onChange={(e) => setSelectedRoll(e.target.value)}
+              >
+                <option value="">Select Student</option>
+                {filteredStudents.map((s) => (
+                  <option key={s.id} value={s.roll}>
+                    {s.roll} — {s.name}
+                  </option>
+                ))}
+              </select>
+            )}
 
-            <button
-              onClick={() =>
-                setBulkStudents([...bulkStudents, { roll: "", name: "" }])
-              }
-              className="text-sm text-indigo-600"
-            >
-              + Add Another Student
-            </button>
-          </div>
+            {/* BULK INFO */}
+            {mode === "bulk" && (
+              <p className="text-sm text-gray-600">
+                This will remove <b>{filteredStudents.length}</b> students
+                from <b>{year} - Section {section}</b>
+              </p>
+            )}
+
+            {/* ACTIONS */}
+            <div className="flex justify-end gap-3">
+              <button onClick={onClose} className="px-4 py-2 border rounded-lg">
+                Cancel
+              </button>
+              <button
+                disabled={mode === "single" && !selectedStudent}
+                onClick={() => setStep("review")}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg disabled:opacity-50"
+              >
+                Review Delete
+              </button>
+            </div>
+          </>
         )}
 
-        {/* ACTIONS */}
-        <div className="flex justify-end gap-3">
-          <button onClick={onClose} className="px-4 py-2 border rounded-lg">
-            Cancel
-          </button>
+        {/* ================= REVIEW ================= */}
+        {step === "review" && (
+          <>
+            <p className="text-sm text-gray-600">
+              Please recheck the students before confirming removal.
+            </p>
 
-          {mode === "single" ? (
-            <button
-              onClick={addSingleStudent}
-              className="px-4 py-2 bg-indigo-600 text-white rounded-lg"
-            >
-              Add Student
-            </button>
-          ) : (
-            <button
-              onClick={addBulkManual}
-              className="px-4 py-2 bg-amber-500 text-white rounded-lg"
-            >
-              Add Students
-            </button>
-          )}
-        </div>
+            <div className="border rounded-lg max-h-48 overflow-auto">
+              {(mode === "single"
+                ? [selectedStudent]
+                : filteredStudents
+              ).map(
+                (s, i) =>
+                  s && (
+                    <div
+                      key={i}
+                      className="px-3 py-2 border-b text-sm flex justify-between"
+                    >
+                      <span>{s.roll}</span>
+                      <span>{s.name}</span>
+                    </div>
+                  )
+              )}
+            </div>
+
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setStep("form")}
+                className="px-4 py-2 border rounded-lg"
+              >
+                Back & Edit
+              </button>
+              <button
+                onClick={handleFinalDelete}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg"
+              >
+                Confirm Remove
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* ================= SUCCESS ================= */}
+        {step === "success" && (
+          <div className="text-center py-10 space-y-2 animate-fadeIn">
+            <div className="text-2xl font-semibold text-red-600">
+              Students Removed Successfully
+            </div>
+            <p className="text-sm text-gray-500">
+              Records have been updated.
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -522,3 +732,100 @@ function ActionButtons({ onClose, onSubmit, label }) {
     </div>
   );
 }
+
+function StudentProfile({ student, onClose }) {
+  const atRisk = student.attendance < 75 || student.cgpa < 7;
+
+  // Auto-generate domain mail
+  const domainMail = `${student.roll.toLowerCase()}@gvp.edu.in`;
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+      <div className="bg-white w-full max-w-md rounded-2xl p-6 space-y-5">
+
+        {/* HEADER */}
+        <div className="flex justify-between items-center">
+          <h2 className="text-lg font-semibold">Student Details</h2>
+          <button onClick={onClose} className="text-xl">✕</button>
+        </div>
+
+        {/* DETAILS */}
+        <div className="space-y-4 text-sm">
+
+          <Detail label="Name" value={student.name} />
+          <Detail label="Roll No" value={student.roll} />
+          <Detail label="Year" value={student.year} />
+          <Detail label="Section" value={student.section} />
+          <Detail label="Domain Mail ID" value={domainMail} />
+
+          {/* ATTENDANCE PROGRESS */}
+          <div>
+            <div className="flex justify-between mb-1">
+              <span className="text-gray-500">Attendance</span>
+              <span className="font-medium">{student.attendance}%</span>
+            </div>
+            <div className="w-full bg-gray-200 rounded-full h-2">
+              <div
+                className={`h-2 rounded-full ${
+                  student.attendance < 75 ? "bg-red-500" : "bg-green-500"
+                }`}
+                style={{ width: `${student.attendance}%` }}
+              />
+            </div>
+          </div>
+
+          {/* CGPA PROGRESS */}
+          <div>
+            <div className="flex justify-between mb-1">
+              <span className="text-gray-500">CGPA</span>
+              <span className="font-medium">{student.cgpa} / 10</span>
+            </div>
+            <div className="w-full bg-gray-200 rounded-full h-2">
+              <div
+                className={`h-2 rounded-full ${
+                  student.cgpa < 7 ? "bg-red-500" : "bg-indigo-500"
+                }`}
+                style={{ width: `${(student.cgpa / 10) * 100}%` }}
+              />
+            </div>
+          </div>
+
+        </div>
+
+
+        {/* RISK STATUS */}
+        <div className="flex justify-center">
+          {atRisk ? (
+            <span className="px-4 py-1 text-sm rounded-full bg-red-100 text-red-700">
+              🚨 At Risk Student
+            </span>
+          ) : (
+            <span className="px-4 py-1 text-sm rounded-full bg-green-100 text-green-700">
+              ✅ Safe Student
+            </span>
+          )}
+        </div>
+
+        {/* FOOTER */}
+        <div className="flex justify-end">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 bg-indigo-600 text-white rounded-lg"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Detail({ label, value }) {
+  return (
+    <div className="flex justify-between border-b pb-1">
+      <span className="text-gray-500">{label}</span>
+      <span className="font-medium">{value}</span>
+    </div>
+  );
+}
+
