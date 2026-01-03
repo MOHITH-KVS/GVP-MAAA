@@ -85,36 +85,42 @@ export default function Students() {
       </div>
 
       {/* ================= ADMIN ACTIONS ================= */}
-      <div className="bg-white p-4 rounded-xl border flex gap-3 flex-wrap">
+      <div className="bg-white px-4 py-3 rounded-xl border flex gap-3 flex-wrap items-center">
+
+        {/* PRIMARY ACTION */}
         <button
           onClick={() => setShowAddStudent(true)}
-          className="px-4 py-2 rounded-lg bg-indigo-600 text-white"
+          className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700 transition"
         >
           + Add Student
         </button>
 
+        {/* SECONDARY ACTION */}
         <button
           onClick={() => alert("Update Students – coming next")}
-          className="px-4 py-2 rounded-lg bg-blue-600 text-white"
+          className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm hover:bg-gray-50 transition"
         >
-          🔁 Update Students
+          Update Students
         </button>
 
+        {/* DESTRUCTIVE ACTION */}
         <button
           onClick={() => setShowDeleteStudent(true)}
-          className="px-4 py-2 rounded-lg bg-red-600 text-white"
-         >
-          🗑 Delete Students
+          className="px-4 py-2 rounded-lg border border-red-300 text-red-600 text-sm hover:bg-red-50 transition"
+        >
+          Delete Students
         </button>
 
-
+        {/* WARNING / ATTENTION ACTION (push to right) */}
         <button
           onClick={() => setShowAlertModal(true)}
-          className="px-4 py-2 rounded-lg bg-amber-500 text-white"
+          className="ml-auto px-4 py-2 rounded-lg border border-amber-300 text-amber-600 text-sm hover:bg-amber-50 transition"
         >
-          🔔 Alert At-Risk
+          Alert At-Risk
         </button>
+
       </div>
+
 
 
 
