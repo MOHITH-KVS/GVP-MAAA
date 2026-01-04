@@ -50,6 +50,8 @@ export default function Students() {
   const [showAddStudent, setShowAddStudent] = useState(false);
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [showDeleteStudent, setShowDeleteStudent] = useState(false);
+  const [showUpdateStudent, setShowUpdateStudent] = useState(false);
+
 
 
   /* ===== FILTER ===== */
@@ -97,7 +99,7 @@ export default function Students() {
 
         {/* SECONDARY ACTION */}
         <button
-          onClick={() => alert("Update Students – coming next")}
+          onClick={() => setShowUpdateStudent(true)}
           className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm hover:bg-gray-50 transition"
         >
           Update Students
@@ -267,12 +269,12 @@ export default function Students() {
       </div>
 
       {/* ================= MODALS ================= */}
-      {showAlertModal && <AlertModal count={atRiskCount} onClose={() => setShowAlertModal(false)} />}
+      {showAlertModal && (<AlertModal students={students} onClose={() => setShowAlertModal(false)}/>)}
       {showAddStudent && <AddStudentModal onAdd={setStudents} onClose={() => setShowAddStudent(false)} />}
       {selectedStudent && <StudentProfile student={selectedStudent} onClose={() => setSelectedStudent(null)} />}
-      {showDeleteStudent && (<DeleteStudentModal students={students} onDelete={setStudents}onClose={() => setShowDeleteStudent(false)}
-  />
-)}
+      {showDeleteStudent && (<DeleteStudentModal students={students} onDelete={setStudents} onClose={() => setShowDeleteStudent(false)} /> )}
+      {showUpdateStudent && (<UpdateStudentModal students={students} setStudents={setStudents} onClose={() => setShowUpdateStudent(false)}/>)}
+
 
     </div>
   );
@@ -705,6 +707,571 @@ function DeleteStudentModal({ students, onDelete, onClose }) {
     </div>
   );
 }
+
+function UpdateStudentModal({ students, setStudents, onClose }) {
+  const [flow, setFlow] = useState(""); // single | bulk
+  const [step, setStep] = useState("form"); // form | review | success
+  const [submitting, setSubmitting] = useState(false);
+
+
+  /* ===== SINGLE UPDATE ===== */
+  const [filterYear, setFilterYear] = useState("");
+  const [filterSection, setFilterSection] = useState("");
+  const [search, setSearch] = useState("");
+  const [selectedStudentId, setSelectedStudentId] = useState(null);
+
+  const [editFields, setEditFields] = useState({
+    name: false,
+    roll: false,
+    year: false,
+    section: false,
+  });
+
+  const [singleUpdate, setSingleUpdate] = useState({});
+
+  const filteredStudents = students.filter(
+    (s) =>
+      (!filterYear || s.year === filterYear) &&
+      (!filterSection || s.section === filterSection) &&
+      (s.name.toLowerCase().includes(search.toLowerCase()) ||
+        s.roll.toLowerCase().includes(search.toLowerCase()))
+  );
+
+  const selectedStudent = students.find(
+    (s) => s.id === selectedStudentId
+  );
+
+  /* ===== BULK UPDATE ===== */
+  const [bulkFilter, setBulkFilter] = useState({
+    year: "",
+    section: "",
+    newYear: "",
+    newSection: "",
+  });
+
+  const bulkStudents = students.filter(
+    (s) =>
+      s.year === bulkFilter.year &&
+      (!bulkFilter.section || s.section === bulkFilter.section)
+  );
+
+  /* ===== CONFIRM UPDATE ===== */
+  const confirmUpdate = () => {
+  setSubmitting(true);
+
+  setStudents((prev) =>
+    prev.map((s) => {
+      if (flow === "single" && s.id === selectedStudentId) {
+        return {
+          ...s,
+          name: singleUpdate.name ?? s.name,
+          roll: singleUpdate.roll ?? s.roll,
+          year: singleUpdate.year ?? s.year,
+          section: singleUpdate.section ?? s.section,
+        };
+      }
+
+      if (
+        flow === "bulk" &&
+        s.year === bulkFilter.year &&
+        (!bulkFilter.section || s.section === bulkFilter.section)
+      ) {
+        return {
+          ...s,
+          year: bulkFilter.newYear || s.year,
+          section: bulkFilter.newSection || s.section,
+        };
+      }
+
+      return s;
+    })
+  );
+
+  setStep("success");
+  setTimeout(onClose, 2500);
+};
+
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+      <div className="bg-white w-full max-w-3xl rounded-2xl p-6 space-y-6">
+
+        {/* HEADER */}
+        <div className="flex justify-between items-center">
+          <h2 className="text-lg font-semibold">Update Students</h2>
+          <button onClick={onClose}>✕</button>
+        </div>
+
+        {/* FLOW SELECT */}
+        {!flow && (
+          <div className="space-y-4">
+            <p className="font-medium">Choose update type</p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setFlow("single")}
+                className="px-4 py-2 bg-indigo-600 text-white rounded-lg"
+              >
+                Single Student (Correction)
+              </button>
+              <button
+                onClick={() => setFlow("bulk")}
+                className="px-4 py-2 bg-slate-700 text-white rounded-lg"
+              >
+                Bulk Update (Promotion)
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ================= SINGLE UPDATE ================= */}
+        {flow === "single" && step === "form" && (
+          <div className="space-y-4">
+
+            {/* FILTERS */}
+            <div className="grid grid-cols-2 gap-3">
+              <select
+                className="border px-3 py-2 rounded-lg"
+                value={filterYear}
+                onChange={(e) => setFilterYear(e.target.value)}
+              >
+                <option value="">Select Year</option>
+                <option>3rd Year</option>
+                <option>4th Year</option>
+              </select>
+
+              <select
+                className="border px-3 py-2 rounded-lg"
+                value={filterSection}
+                onChange={(e) => setFilterSection(e.target.value)}
+              >
+                <option value="">Select Section (optional)</option>
+                <option>A</option>
+                <option>B</option>
+              </select>
+            </div>
+
+            {/* SEARCH */}
+            <input
+              placeholder="Search by name or roll number"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="border px-3 py-2 rounded-lg w-full"
+            />
+
+            {/* STUDENT LIST */}
+            <div className="max-h-40 overflow-y-auto border rounded-lg text-sm">
+              {filteredStudents.map((s) => (
+                <div
+                  key={s.id}
+                  onClick={() => {
+                    setSelectedStudentId(s.id);
+                    setSingleUpdate(s);
+                  }}
+                  className={`px-3 py-2 cursor-pointer hover:bg-gray-100 ${
+                    selectedStudentId === s.id ? "bg-indigo-50" : ""
+                  }`}
+                >
+                  {s.roll} – {s.name} ({s.year} {s.section})
+                </div>
+              ))}
+
+              {filteredStudents.length === 0 && (
+                <p className="text-center text-gray-400 py-3">
+                  No students found
+                </p>
+              )}
+            </div>
+
+            {/* FIELD SELECT */}
+            {selectedStudent && (
+              <>
+                <p className="font-medium text-sm">
+                  Select fields to update
+                </p>
+
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  {Object.keys(editFields).map((key) => (
+                    <label key={key} className="flex gap-2 items-center">
+                      <input
+                        type="checkbox"
+                        checked={editFields[key]}
+                        onChange={() =>
+                          setEditFields({
+                            ...editFields,
+                            [key]: !editFields[key],
+                          })
+                        }
+                      />
+                      {key.toUpperCase()}
+                    </label>
+                  ))}
+                </div>
+
+                {editFields.name && (
+                  <input
+                    defaultValue={selectedStudent.name}
+                    onChange={(e) =>
+                      setSingleUpdate({ ...singleUpdate, name: e.target.value })
+                    }
+                    className="border px-3 py-2 rounded-lg w-full"
+                  />
+                )}
+                {editFields.roll && (
+                  <input
+                    defaultValue={selectedStudent.roll}
+                    onChange={(e) =>
+                      setSingleUpdate({ ...singleUpdate, roll: e.target.value })
+                    }
+                    className="border px-3 py-2 rounded-lg w-full"
+                  />
+                )}
+                {editFields.year && (
+                  <input
+                    defaultValue={selectedStudent.year}
+                    onChange={(e) =>
+                      setSingleUpdate({ ...singleUpdate, year: e.target.value })
+                    }
+                    className="border px-3 py-2 rounded-lg w-full"
+                  />
+                )}
+                {editFields.section && (
+                  <input
+                    defaultValue={selectedStudent.section}
+                    onChange={(e) =>
+                      setSingleUpdate({
+                        ...singleUpdate,
+                        section: e.target.value,
+                      })
+                    }
+                    className="border px-3 py-2 rounded-lg w-full"
+                  />
+                )}
+
+                <div className="flex justify-end">
+                  <button
+                    onClick={() => setStep("review")}
+                    className="px-4 py-2 bg-indigo-600 text-white rounded-lg"
+                  >
+                    Review Update
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ================= BULK UPDATE ================= */}
+        {flow === "bulk" && step === "form" && (
+          <div className="space-y-4">
+            <select
+              className="border px-3 py-2 rounded-lg w-full"
+              onChange={(e) =>
+                setBulkFilter({ ...bulkFilter, year: e.target.value })
+              }
+            >
+              <option value="">Select Current Year</option>
+              <option>3rd Year</option>
+              <option>4th Year</option>
+            </select>
+
+            <select
+              className="border px-3 py-2 rounded-lg w-full"
+              onChange={(e) =>
+                setBulkFilter({ ...bulkFilter, section: e.target.value })
+              }
+            >
+              <option value="">Select Section (optional)</option>
+              <option>A</option>
+              <option>B</option>
+            </select>
+
+            <input
+              placeholder="Promote to Year"
+              className="border px-3 py-2 rounded-lg w-full"
+              onChange={(e) =>
+                setBulkFilter({ ...bulkFilter, newYear: e.target.value })
+              }
+            />
+
+            <input
+              placeholder="Change Section (optional)"
+              className="border px-3 py-2 rounded-lg w-full"
+              onChange={(e) =>
+                setBulkFilter({ ...bulkFilter, newSection: e.target.value })
+              }
+            />
+
+            {bulkStudents.length > 0 && (
+              <button
+                onClick={() => setStep("review")}
+                className="px-4 py-2 bg-indigo-600 text-white rounded-lg"
+              >
+                Preview {bulkStudents.length} Students
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* ================= REVIEW ================= */}
+        {step === "review" && (
+          <div className="space-y-4">
+            <p className="font-medium">Review Changes</p>
+
+            <div className="max-h-40 overflow-y-auto border rounded-lg text-sm">
+              {(flow === "single" ? [selectedStudent] : bulkStudents).map(
+                (s) => (
+                  <div key={s.id} className="px-3 py-2 border-b">
+                    {s.roll} – {s.name}
+                  </div>
+                )
+              )}
+            </div>
+
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setStep("form")}
+                className="px-4 py-2 border rounded-lg"
+              >
+                Back & Edit
+              </button>
+              <button
+                onClick={confirmUpdate}
+                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition"
+               >
+                Confirm Update
+              </button>
+
+            </div>
+          </div>
+        )}
+        {/* ================= SUCCESS ================= */}
+        {step === "success" && (
+          <div className="text-center py-12 space-y-4">
+            
+            {/* CHECK ICON */}
+            <div className="mx-auto w-16 h-16 rounded-full bg-green-100 flex items-center justify-center animate-bounce">
+              <span className="text-3xl text-green-600">✓</span>
+            </div>
+
+            {/* TEXT */}
+            <h3 className="text-lg font-semibold text-green-700">
+              Successfully Updated
+            </h3>
+
+            <p className="text-sm text-gray-500">
+              Student records have been updated in the system
+            </p>
+
+            {/* LOADING BAR */}
+            <div className="w-full h-1 bg-gray-200 rounded-full overflow-hidden">
+              <div className="h-full bg-green-500 animate-[progress_2s_linear]" />
+            </div>
+
+            <style>
+              {`
+                @keyframes progress {
+                  from { width: 0%; }
+                  to { width: 100%; }
+                }
+              `}
+            </style>
+
+          </div>
+        )}
+
+      </div>
+    </div>
+  );
+}
+
+function AlertModal({ students, onClose }) {
+  const [step, setStep] = useState("list"); // list | review | success
+  const [year, setYear] = useState("All");
+  const [section, setSection] = useState("All");
+  const [search, setSearch] = useState("");
+
+  /* ===== ONLY AT-RISK STUDENTS ===== */
+  const atRiskStudents = students.filter(
+    (s) => s.attendance < 75 || s.cgpa < 7
+  );
+
+  /* ===== FILTERED VIEW ===== */
+  const filtered = atRiskStudents.filter((s) => {
+    return (
+      (year === "All" || s.year === year) &&
+      (section === "All" || s.section === section) &&
+      (s.name.toLowerCase().includes(search.toLowerCase()) ||
+        s.roll.toLowerCase().includes(search.toLowerCase()))
+    );
+  });
+
+  const getReason = (s) => {
+    if (s.attendance < 75 && s.cgpa < 7) return "Low Attendance & CGPA";
+    if (s.attendance < 75) return "Low Attendance";
+    return "Low CGPA";
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+      <div className="bg-white w-full max-w-4xl rounded-2xl p-6 space-y-6">
+
+        {/* HEADER */}
+        <div className="flex justify-between items-center">
+          <h2 className="text-lg font-semibold text-red-600">
+            Alert At-Risk Students
+          </h2>
+          <button onClick={onClose}>✕</button>
+        </div>
+
+        {/* ================= LIST ================= */}
+        {step === "list" && (
+          <>
+            {/* FILTERS */}
+            <div className="flex gap-3 flex-wrap">
+              <select
+                value={year}
+                onChange={(e) => setYear(e.target.value)}
+                className="border px-3 py-2 rounded-lg"
+              >
+                <option>All</option>
+                <option>3rd Year</option>
+                <option>4th Year</option>
+              </select>
+
+              <select
+                value={section}
+                onChange={(e) => setSection(e.target.value)}
+                className="border px-3 py-2 rounded-lg"
+              >
+                <option>All</option>
+                <option>A</option>
+                <option>B</option>
+              </select>
+
+              <input
+                placeholder="Search by name or roll"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="border px-3 py-2 rounded-lg flex-1"
+              />
+            </div>
+
+            {/* TABLE */}
+            {filtered.length === 0 ? (
+              <p className="text-center text-gray-500 py-6">
+                🎉 No at-risk students found
+              </p>
+            ) : (
+              <div className="border rounded-lg overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="p-2 text-left">Roll</th>
+                      <th className="p-2 text-left">Name</th>
+                      <th className="p-2 text-center">Attendance</th>
+                      <th className="p-2 text-center">CGPA</th>
+                      <th className="p-2 text-left">Reason</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filtered.map((s) => (
+                      <tr key={s.id} className="border-t">
+                        <td className="p-2">{s.roll}</td>
+                        <td className="p-2">{s.name}</td>
+                        <td className="p-2 text-center">{s.attendance}%</td>
+                        <td className="p-2 text-center">{s.cgpa}</td>
+                        <td className="p-2 text-red-600">
+                          {getReason(s)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* FOOTER */}
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={onClose}
+                className="px-4 py-2 border rounded-lg"
+              >
+                Cancel
+              </button>
+              <button
+                disabled={filtered.length === 0}
+                onClick={() => setStep("review")}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg disabled:opacity-50"
+              >
+                Send Warning Notification
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* ================= REVIEW ================= */}
+        {step === "review" && (
+          <div className="space-y-4">
+            <p className="font-medium">
+              You are about to send warnings to{" "}
+              <b>{filtered.length}</b> students.
+            </p>
+
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setStep("list")}
+                className="px-4 py-2 border rounded-lg"
+              >
+                Back
+              </button>
+              <button
+                onClick={() => setStep("success")}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg"
+              >
+                Confirm Send
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ================= SUCCESS ================= */}
+        {step === "success" && (
+          <div className="text-center py-12 space-y-4">
+            <div className="mx-auto w-16 h-16 rounded-full bg-green-100 flex items-center justify-center animate-bounce">
+              <span className="text-3xl text-green-600">✓</span>
+            </div>
+
+            <h3 className="text-lg font-semibold text-green-700">
+              Warning Notifications Sent
+            </h3>
+
+            <p className="text-sm text-gray-500">
+              All selected at-risk students have been notified
+            </p>
+
+            <div className="w-full h-1 bg-gray-200 rounded-full overflow-hidden">
+              <div className="h-full bg-green-500 animate-[progress_2s_linear]" />
+            </div>
+
+            <style>
+              {`
+                @keyframes progress {
+                  from { width: 0%; }
+                  to { width: 100%; }
+                }
+              `}
+            </style>
+          </div>
+        )}
+
+      </div>
+    </div>
+  );
+}
+
+
+
+
 
 /* ================= REUSABLE ================= */
 function Modal({ title, children, onClose }) {
