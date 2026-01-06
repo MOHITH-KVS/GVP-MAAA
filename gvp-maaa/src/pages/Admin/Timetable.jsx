@@ -3,6 +3,7 @@ import { useState } from "react";
 export default function Timetable() {
   const [showUpload, setShowUpload] = useState(false);
   const [deleteItem, setDeleteItem] = useState(null);
+  const [deleteReason, setDeleteReason] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
 
   const [timetables, setTimetables] = useState([
@@ -15,6 +16,7 @@ export default function Timetable() {
       semester: "Sem 1",
       audience: "Students",
       date: "12 Jan 2026",
+      fileUrl: "/sample-timetable.pdf",
     },
     {
       id: 2,
@@ -25,20 +27,21 @@ export default function Timetable() {
       semester: "Sem 1",
       audience: "Students & Faculty",
       date: "10 Jan 2026",
+      fileUrl: "/sample-timetable.pdf",
     },
   ]);
 
-  /* ===== DELETE ===== */
+  /* ================= DELETE ================= */
   const confirmDelete = () => {
-    setTimetables((prev) =>
-      prev.filter((t) => t.id !== deleteItem.id)
-    );
+    setTimetables((prev) => prev.filter((t) => t.id !== deleteItem.id));
+    console.log("Delete reason:", deleteReason); // backend audit later
     setDeleteItem(null);
+    setDeleteReason("");
     setSuccessMsg("Timetable deleted successfully");
     setTimeout(() => setSuccessMsg(""), 2000);
   };
 
-  /* ===== UPLOAD SUCCESS ===== */
+  /* ================= UPLOAD SUCCESS ================= */
   const handleUploadSuccess = () => {
     setShowUpload(false);
     setSuccessMsg("Timetable uploaded and published successfully");
@@ -117,6 +120,11 @@ export default function Timetable() {
         </button>
       </div>
 
+      {/* LIST HEADING */}
+      <h2 className="text-lg font-semibold text-slate-800">
+        Published Timetables
+      </h2>
+
       {/* LIST */}
       <div className="bg-white rounded-2xl border overflow-hidden">
         <table className="w-full text-sm">
@@ -144,13 +152,28 @@ export default function Timetable() {
                   </span>
                 </td>
                 <td className="px-4 py-3">{t.date}</td>
-                <td className="px-4 py-3">
+                <td className="px-4 py-3 flex gap-3 items-center">
+                  {/* VIEW PDF */}
                   <button
-                    onClick={() => setDeleteItem(t)}
-                    className="text-red-600 hover:bg-red-50 p-2 rounded-full"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      window.open(t.fileUrl, "_blank");
+                    }}
+                    className="px-3 py-1 text-xs rounded-lg border hover:bg-gray-50"
+                  >
+                    View
+                  </button>
+
+                  {/* DELETE ICON (RED) */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDeleteItem(t);
+                    }}
+                    className="p-2 rounded-full hover:bg-red-50"
                     title="Delete timetable"
                   >
-                    🗑
+                    <span className="text-red-600 text-lg">🗑</span>
                   </button>
                 </td>
               </tr>
@@ -166,19 +189,29 @@ export default function Timetable() {
             <h3 className="text-lg font-semibold text-red-600">
               Delete Timetable
             </h3>
-            <p className="text-sm text-gray-600">
-              Are you sure you want to delete this timetable?
-            </p>
+
+            <textarea
+              rows={3}
+              value={deleteReason}
+              onChange={(e) => setDeleteReason(e.target.value)}
+              placeholder="Enter reason for deletion (mandatory)"
+              className="w-full border px-3 py-2 rounded-lg"
+            />
+
             <div className="flex justify-end gap-3">
               <button
-                onClick={() => setDeleteItem(null)}
+                onClick={() => {
+                  setDeleteItem(null);
+                  setDeleteReason("");
+                }}
                 className="px-4 py-2 border rounded-lg"
               >
                 Cancel
               </button>
               <button
+                disabled={!deleteReason}
                 onClick={confirmDelete}
-                className="px-4 py-2 bg-red-600 text-white rounded-lg"
+                className="px-4 py-2 bg-red-600 text-white rounded-lg disabled:opacity-50"
               >
                 Delete
               </button>
@@ -219,20 +252,6 @@ function UploadModal({ onCancel, onSuccess }) {
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
       <div className="bg-white w-full max-w-md rounded-2xl p-6 space-y-4">
         <h3 className="font-semibold text-lg">Upload Timetable</h3>
-
-        <select className="w-full border px-3 py-2 rounded-lg">
-          <option>Class Timetable</option>
-          <option>Mid Exam Timetable</option>
-          <option>Semester Exam Timetable</option>
-          <option>Review Timetable</option>
-          <option>Event Timetable</option>
-        </select>
-
-        <select className="w-full border px-3 py-2 rounded-lg">
-          <option>Audience: Students</option>
-          <option>Audience: Teachers</option>
-          <option>Audience: Both</option>
-        </select>
 
         <input type="file" accept=".pdf,.xls,.xlsx" />
 
