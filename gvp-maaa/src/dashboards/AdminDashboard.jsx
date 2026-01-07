@@ -6,8 +6,8 @@ import Students from "../pages/Admin/Students";
 import Teachers from "../pages/Admin/Teachers";
 import Academics from "../pages/Admin/Academics";
 import Timetable from "../pages/Admin/Timetable";
-/*import Alerts from "../pages/Admin/Alerts";
-import Analytics from "../pages/Admin/Analytics";
+import Alerts from "../pages/Admin/Alerts";
+/*import Insights from "../pages/Admin/Analytics";
 import Reports from "../pages/Admin/Reports";
 import Settings from "../pages/Admin/Settings";
 import Logout from "../pages/Logout";*/
@@ -120,10 +120,10 @@ export default function AdminDashboard() {
 
               <MenuItem
                 icon={BarChartIcon}
-                label="Analytics"
+                label="Insights"
                 open={sidebarOpen}
-                active={activePage === "analytics"}
-                onClick={() => setActivePage("analytics")}
+                active={activePage === "insights"}
+                onClick={() => setActivePage("insights")}
               />
 
               <MenuItem
@@ -166,7 +166,7 @@ export default function AdminDashboard() {
           {activePage === "academics" && <Academics />}
           {activePage === "timetable" && <Timetable />}
           {activePage === "alerts" && <Alerts />}
-          {activePage === "analytics" && <Analytics />}
+          {activePage === "insights" && <Analytics />}
           {activePage === "reports" && <Reports />}
           {activePage === "settings" && <Settings />}
 
