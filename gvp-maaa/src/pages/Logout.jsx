@@ -37,6 +37,13 @@ export default function Logout({ onBack, role = "student" }) {
       quote:
         "Thank you for guiding students today. Your impact continues beyond the classroom.",
     },
+
+    admin: {
+    title: "Session Ended",
+    desc: "You’ve successfully logged out of the administrative dashboard.",
+    quote:
+      "Thank you for managing and shaping the institution today. Your leadership keeps everything moving forward.",
+    },
   };
 
   const { title, desc, quote } = content[role];

@@ -9,8 +9,8 @@ import Timetable from "../pages/Admin/Timetable";
 import Alerts from "../pages/Admin/Alerts";
 import Insights from "../pages/Admin/Insights";
 import Reports from "../pages/Admin/Reports";
-/*import Settings from "../pages/Admin/Settings";
-import Logout from "../pages/Logout";*/
+import Settings from "../pages/Admin/Settings";
+import Logout from "../pages/Logout";
 
 /* ===== ICONS ===== */
 import DashboardIcon from "@mui/icons-material/Dashboard";
@@ -33,9 +33,15 @@ export default function AdminDashboard() {
   const [showLogout, setShowLogout] = useState(false);
 
   /* ===== LOGOUT FLOW ===== */
-  if (showLogout) {
-    return <Logout onBack={() => setShowLogout(false)} role="admin" />;
-  }
+ if (showLogout) {
+  return (
+    <Logout
+      role="admin"
+      onBack={() => setShowLogout(false)}
+    />
+  );
+}
+
 
   return (
     <div className="h-screen w-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50">
@@ -151,7 +157,7 @@ export default function AdminDashboard() {
                 open={sidebarOpen}
                 danger
                 onClick={() => setShowLogout(true)}
-              />
+             />
             </SidebarSection>
 
           </div>
