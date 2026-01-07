@@ -8,8 +8,8 @@ import Academics from "../pages/Admin/Academics";
 import Timetable from "../pages/Admin/Timetable";
 import Alerts from "../pages/Admin/Alerts";
 import Insights from "../pages/Admin/Insights";
-/*import Reports from "../pages/Admin/Reports";
-import Settings from "../pages/Admin/Settings";
+import Reports from "../pages/Admin/Reports";
+/*import Settings from "../pages/Admin/Settings";
 import Logout from "../pages/Logout";*/
 
 /* ===== ICONS ===== */
