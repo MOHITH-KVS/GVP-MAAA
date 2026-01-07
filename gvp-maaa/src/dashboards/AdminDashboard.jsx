@@ -7,8 +7,8 @@ import Teachers from "../pages/Admin/Teachers";
 import Academics from "../pages/Admin/Academics";
 import Timetable from "../pages/Admin/Timetable";
 import Alerts from "../pages/Admin/Alerts";
-/*import Insights from "../pages/Admin/Analytics";
-import Reports from "../pages/Admin/Reports";
+import Insights from "../pages/Admin/Insights";
+/*import Reports from "../pages/Admin/Reports";
 import Settings from "../pages/Admin/Settings";
 import Logout from "../pages/Logout";*/
 
@@ -166,7 +166,7 @@ export default function AdminDashboard() {
           {activePage === "academics" && <Academics />}
           {activePage === "timetable" && <Timetable />}
           {activePage === "alerts" && <Alerts />}
-          {activePage === "insights" && <Analytics />}
+          {activePage === "insights" && <Insights />}
           {activePage === "reports" && <Reports />}
           {activePage === "settings" && <Settings />}
 
