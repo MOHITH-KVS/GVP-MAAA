@@ -1,6 +1,6 @@
 import { useNavigate } from "react-router-dom";
-import SchoolIcon from "@mui/icons-material/School";
-import PersonIcon from "@mui/icons-material/Person";
+import LocalLibraryIcon from "@mui/icons-material/LocalLibrary";
+import CastForEducationIcon from "@mui/icons-material/CastForEducation";
 import AdminPanelSettingsIcon from "@mui/icons-material/AdminPanelSettings";
 
 export default function RoleSelect() {
@@ -9,15 +9,15 @@ export default function RoleSelect() {
   return (
     <div className="relative min-h-screen w-full flex items-center justify-center overflow-hidden bg-slate-50">
 
-      {/* ===== BACKGROUND DECOR ===== */}
+      {/* BACKGROUND DECOR */}
       <div className="absolute -top-32 -left-32 w-96 h-96 bg-blue-300/30 rounded-full blur-3xl"></div>
       <div className="absolute top-1/4 -right-32 w-96 h-96 bg-indigo-300/30 rounded-full blur-3xl"></div>
       <div className="absolute -bottom-40 left-1/3 w-96 h-96 bg-cyan-300/20 rounded-full blur-3xl"></div>
 
-      {/* Subtle grid overlay */}
+      {/* GRID OVERLAY */}
       <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(0,0,0,0.03)_1px,transparent_1px),linear-gradient(to_bottom,rgba(0,0,0,0.03)_1px,transparent_1px)] bg-[size:40px_40px] pointer-events-none"></div>
 
-      {/* ===== MAIN CONTENT ===== */}
+      {/* MAIN */}
       <div className="relative z-10 w-full max-w-4xl px-6">
 
         {/* HEADER */}
@@ -36,22 +36,25 @@ export default function RoleSelect() {
         {/* ROLE CARDS */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
 
+          {/* STUDENT */}
           <RoleCard
-            icon={SchoolIcon}
+            icon={LocalLibraryIcon}
             title="Student"
             desc="Access courses, attendance, performance and insights."
             gradient="from-blue-500 to-cyan-500"
             onClick={() => navigate("/auth/student/signin")}
           />
 
+          {/* TEACHER */}
           <RoleCard
-            icon={PersonIcon}
+            icon={CastForEducationIcon}
             title="Teacher"
             desc="Manage classes, assignments, alerts and analytics."
             gradient="from-indigo-500 to-purple-500"
             onClick={() => navigate("/auth/teacher/signin")}
           />
 
+          {/* ADMIN */}
           <RoleCard
             icon={AdminPanelSettingsIcon}
             title="Administrator"
@@ -63,7 +66,7 @@ export default function RoleSelect() {
 
         </div>
 
-        {/* FOOTER NOTE (FIXED VISIBILITY) */}
+        {/* FOOTER */}
         <p className="text-center text-sm font-medium text-slate-600 mt-12">
           Administrative access is restricted to authorized personnel only.
         </p>
@@ -78,7 +81,8 @@ function RoleCard({ icon: Icon, title, desc, gradient, onClick, restricted }) {
     <div
       onClick={onClick}
       className="group cursor-pointer bg-white rounded-2xl p-6 border
-                 transition-all duration-300 hover:-translate-y-1 hover:shadow-xl"
+                 transition-all duration-300 hover:-translate-y-1 hover:shadow-xl
+                 hover:ring-2 hover:ring-indigo-200"
     >
       <div
         className={`w-14 h-14 rounded-xl bg-gradient-to-br ${gradient}
