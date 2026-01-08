@@ -1,21 +1,36 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import LogoutIcon from "@mui/icons-material/Logout";
 
 export default function Logout({ onBack, role = "student" }) {
   const [visible, setVisible] = useState(false);
+  const navigate = useNavigate();
 
   // Animate IN
   useEffect(() => {
     setVisible(true);
   }, []);
 
-  // Animate OUT (Login Again)
-  const handleLoginAgain = () => {
-    setVisible(false);
-    setTimeout(onBack, 300);
+  /* ===== ROLE BASED SIGN-IN ROUTES ===== */
+  const roleSignInRoute = {
+    student: "/auth/student/signin",
+    teacher: "/auth/teacher/signin",
+    admin: "/auth/admin/signin",
   };
 
-  // Exit app
+  // Login Again → role-based redirect (NEW, CLEAN)
+  const handleLoginAgain = () => {
+    setVisible(false);
+    setTimeout(() => {
+      if (roleSignInRoute[role]) {
+        navigate(roleSignInRoute[role]);
+      } else if (onBack) {
+        onBack(); // fallback (kept)
+      }
+    }, 300);
+  };
+
+  // Exit app (UNCHANGED)
   const handleExit = () => {
     setVisible(false);
     setTimeout(() => {
@@ -23,7 +38,7 @@ export default function Logout({ onBack, role = "student" }) {
     }, 300);
   };
 
-  /* ===== ROLE BASED CONTENT (NEW) ===== */
+  /* ===== ROLE BASED CONTENT (EXISTING) ===== */
   const content = {
     student: {
       title: "Logged out — for now",
@@ -37,12 +52,11 @@ export default function Logout({ onBack, role = "student" }) {
       quote:
         "Thank you for guiding students today. Your impact continues beyond the classroom.",
     },
-
     admin: {
-    title: "Session Ended",
-    desc: "You’ve successfully logged out of the administrative dashboard.",
-    quote:
-      "Thank you for managing and shaping the institution today. Your leadership keeps everything moving forward.",
+      title: "Session Ended",
+      desc: "You’ve successfully logged out of the administrative dashboard.",
+      quote:
+        "Thank you for managing and shaping the institution today. Your leadership keeps everything moving forward.",
     },
   };
 
@@ -68,7 +82,7 @@ export default function Logout({ onBack, role = "student" }) {
           <LogoutIcon fontSize="large" />
         </div>
 
-        {/* TEXT (DYNAMIC NOW) */}
+        {/* TEXT */}
         <h1 className="text-2xl font-semibold text-slate-800 mb-3">
           {title}
         </h1>

@@ -13,6 +13,11 @@ import TeacherSignIn from "./pages/Authorization/TeacherSignIn";
 import TeacherSignUp from "./pages/Authorization/TeacherSignUp";
 import TeacherAccountSuccess from "./pages/Authorization/TeacherAccountSuccess";
 
+/* ADMIN AUTH */
+import AdminSignIn from "./pages/Authorization/AdminSignIn";
+import AdminAccountSuccess from "./pages/Authorization/AdminAccountSuccess";
+
+
 
 /* ================= DASHBOARDS ================= */
 import StudentDashboard from "./dashboards/StudentDashboard";
@@ -44,7 +49,14 @@ export default function App() {
           element={<TeacherAccountSuccess />}
         />
 
+        {/* ================= ADMIN AUTH ================= */}
+        <Route path="/auth/admin/signin" element={<AdminSignIn />} />
+        <Route
+          path="/auth/admin/success"
+          element={<AdminAccountSuccess />}
+        />
 
+      
         {/* ================= DASHBOARDS ================= */}
         {/* (temporary direct access – backend auth later) */}
         <Route path="/student" element={<StudentDashboard />} />
