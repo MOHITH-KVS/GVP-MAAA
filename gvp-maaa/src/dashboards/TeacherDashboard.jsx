@@ -48,12 +48,8 @@ export default function TeacherDashboard() {
   return <Logout onBack={() => setShowLogout(false)} role="teacher" />;
 }
 if (showFullProfile) {
-  return (
-    <TeacherProfilePage
-      onBack={() => setShowFullProfile(false)}
-    />
-  );
-}
+    return <ViewProfile onClose={() => setShowFullProfile(false)} />;
+  }
 
 
 
@@ -216,28 +212,20 @@ if (showFullProfile) {
 
           {/* ================= PROFILE ================= */}
           <div
-            className={`
-              relative
-              transition-all duration-300 ease-out
-              ${showProfile ? "w-80" : "w-14"}
-              overflow-visible
-              pointer-events-none
-            `}
-          >
-            <div className="absolute inset-y-0 right-0 w-80 overflow-hidden">
-              <div
-                className={`absolute inset-y-0 right-0 w-80 transition-transform duration-300 ease-out ${
-                  showProfile ? "translate-x-0" : "translate-x-full"
-                }`}
-              >
-                <TeacherProfile
-                  onClose={() => setShowProfile(false)}
-                  onViewFullProfile={() => setShowFullProfile(true)}
-                />
+          className={`transition-all duration-300 ${
+            showProfile ? "w-80" : "w-14"
+          } overflow-hidden`}
+        >
+          {showProfile ? (
+            <TeacherProfile
+              onClose={() => setShowProfile(false)}
+              onViewFullProfile={() => setShowFullProfile(true)}
+            />
+          ) : (
+            <CollapsedTeacherProfile onOpen={() => setShowProfile(true)} />
+          )}
+        </div>
 
-              </div>
-            </div>
-          </div>
         </main>
         {/* ================= UPLOAD RESOURCE MODAL ================= */}
         {showUploadResource && (
@@ -351,3 +339,17 @@ function IconButton({ icon: Icon, color }) {
     </button>
   );
 }
+
+function CollapsedTeacherProfile({ onOpen }) {
+  return (
+    <div className="h-full glass flex items-center justify-center pointer-events-auto">
+      <button
+        onClick={onOpen}
+        className="w-10 h-10 rounded-full bg-indigo-600 text-white flex items-center justify-center shadow"
+      >
+        <PersonIcon fontSize="small" />
+      </button>
+    </div>
+  );
+}
+
