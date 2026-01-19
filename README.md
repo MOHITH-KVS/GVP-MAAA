@@ -7,7 +7,7 @@ cd "C:\Users\my pc\OneDrive\Desktop\GVP-MAAA\gvp-maaa"
 cd "C:\Users\my pc\OneDrive\Desktop\GVP-MAAA\gvp-maaa\Backend"
 /*virtual env*/
 venv\Scripts\activate
-
-
+localhost
+http://127.0.0.1:8000/
 
 npm run dev 
