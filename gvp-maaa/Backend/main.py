@@ -1,12 +1,30 @@
 from fastapi import FastAPI, Depends, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from sqlalchemy import text
+
 
 from database import SessionLocal
-from schemas import LoginRequest, StudentSignupRequest, TeacherSignupRequest,AdminLoginRequest
+from schemas import (
+    LoginRequest,
+    StudentSignupRequest,
+    TeacherSignupRequest,
+    AdminLoginRequest
+)
 from models import User
 
 app = FastAPI(title="GVP Academic Analytics Backend")
 
+# -------------------------
+# CORS
+# -------------------------
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # -------------------------
 # Database Dependency
@@ -18,14 +36,12 @@ def get_db():
     finally:
         db.close()
 
-
 # -------------------------
 # Root Check
 # -------------------------
 @app.get("/")
 def root():
     return {"message": "Backend connected to database successfully"}
-
 
 # -------------------------
 # LOGIN (Student / Teacher / Admin)
@@ -47,34 +63,43 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
         "department_id": user.department_id
     }
 
-
 # -------------------------
 # STUDENT SIGNUP
 # -------------------------
 @app.post("/signup/student")
-def student_signup(
-    data: StudentSignupRequest,
-    db: Session = Depends(get_db)
-):
+def student_signup(data: StudentSignupRequest, db: Session = Depends(get_db)):
+
     if not data.email.endswith("@gvpcdpgc.edu.in"):
+        raise HTTPException(status_code=400, detail="Only college email allowed")
+
+    if len(data.roll_no) < 6:
+        raise HTTPException(status_code=400, detail="Invalid roll number")
+
+    department_id = int(data.roll_no[5:7])
+
+    # 🔴 SAFETY CHECK
+    dept_exists = db.execute(
+    text("SELECT 1 FROM departments WHERE department_id = :d"),
+    {"d": department_id}
+    ).fetchone()
+
+
+    if not dept_exists:
         raise HTTPException(
             status_code=400,
-            detail="Only college email allowed"
+            detail=f"Department {department_id} does not exist"
         )
 
     existing_user = db.query(User).filter(User.email == data.email).first()
     if existing_user:
-        raise HTTPException(
-            status_code=400,
-            detail="Email already registered"
-        )
+        raise HTTPException(status_code=400, detail="Email already registered")
 
     new_user = User(
         name=data.name,
         email=data.email,
-        password=data.password,   # hashing later
-        role="student",
-        department_id=data.department_id
+        password=data.password,
+        role="student",   # ✅ VALID
+        department_id=department_id
     )
 
     db.add(new_user)
@@ -83,7 +108,8 @@ def student_signup(
 
     return {
         "message": "Student account created successfully",
-        "user_id": new_user.user_id
+        "user_id": new_user.user_id,
+        "department_id": department_id
     }
 
 
@@ -125,7 +151,6 @@ def teacher_signup(
         "user_id": teacher.user_id
     }
 
-
 # -------------------------
 # ADMIN LOGIN
 # -------------------------
@@ -133,7 +158,10 @@ def teacher_signup(
 def admin_login(data: AdminLoginRequest, db: Session = Depends(get_db)):
 
     if data.access_key != "GVP-ADMIN-2026":
-        raise HTTPException(status_code=403, detail="Invalid admin access key")
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid admin access key"
+        )
 
     admin = db.query(User).filter(
         User.email == data.email,

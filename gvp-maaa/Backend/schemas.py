@@ -2,25 +2,25 @@ from pydantic import BaseModel, EmailStr
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    email: str
     password: str
 
 
 class StudentSignupRequest(BaseModel):
     name: str
-    email: EmailStr
+    roll_no: str
+    email: str
     password: str
-    department_id: int
 
 
 class TeacherSignupRequest(BaseModel):
     name: str
-    email: EmailStr
+    email: str
     password: str
     department_id: int
 
 
 class AdminLoginRequest(BaseModel):
-    email: EmailStr
+    email: str
     password: str
     access_key: str

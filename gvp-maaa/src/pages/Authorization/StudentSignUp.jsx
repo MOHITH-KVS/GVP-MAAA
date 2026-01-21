@@ -25,6 +25,7 @@ export default function StudentSignUp() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [error, setError] = useState("");
 
+  /* ===== HANDLE INPUT CHANGE ===== */
   const handleChange = (e) => {
     setForm({ ...form, [e.target.name]: e.target.value });
     setError("");
@@ -43,7 +44,8 @@ export default function StudentSignUp() {
 
   const passwordStrength = getPasswordStrength(form.password);
 
-  const handleSubmit = () => {
+  /* ===== SUBMIT ===== */
+  const handleSubmit = async () => {
     const { name, roll, email, password, confirmPassword } = form;
 
     if (!name || !roll || !email || !password || !confirmPassword) {
@@ -61,7 +63,29 @@ export default function StudentSignUp() {
       return;
     }
 
-    navigate("/auth/student/success");
+    try {
+      const response = await fetch("http://127.0.0.1:8000/signup/student", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          roll_no: roll,
+          email,
+          password,
+          department_id: 1,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.detail || "Signup failed");
+      }
+
+      navigate("/auth/student/signin");
+    } catch (err) {
+      setError(err.message);
+    }
   };
 
   return (
@@ -109,11 +133,7 @@ export default function StudentSignUp() {
               onClick={() => setShowPassword(!showPassword)}
               className="absolute right-3 top-9 text-slate-500 hover:text-slate-700"
             >
-              {showPassword ? (
-                <VisibilityOffIcon fontSize="small" />
-              ) : (
-                <VisibilityIcon fontSize="small" />
-              )}
+              {showPassword ? <VisibilityOffIcon fontSize="small" /> : <VisibilityIcon fontSize="small" />}
             </button>
           </div>
 
@@ -146,11 +166,7 @@ export default function StudentSignUp() {
               onClick={() => setShowConfirmPassword(!showConfirmPassword)}
               className="absolute right-3 top-9 text-slate-500 hover:text-slate-700"
             >
-              {showConfirmPassword ? (
-                <VisibilityOffIcon fontSize="small" />
-              ) : (
-                <VisibilityIcon fontSize="small" />
-              )}
+              {showConfirmPassword ? <VisibilityOffIcon fontSize="small" /> : <VisibilityIcon fontSize="small" />}
             </button>
           </div>
 
@@ -171,6 +187,7 @@ export default function StudentSignUp() {
         <p className="text-sm text-center text-slate-500 mt-4">
           Already have an account?{" "}
           <button
+            type="button"
             onClick={() => navigate("/auth/student/signin")}
             className="text-indigo-600 font-medium hover:underline"
           >

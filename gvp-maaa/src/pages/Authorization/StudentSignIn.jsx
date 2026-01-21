@@ -23,25 +23,56 @@ export default function StudentSignIn() {
   const isValidCollegeEmail = (email) =>
     ALLOWED_DOMAINS.some((domain) => email.endsWith(domain));
 
-  const handleSignIn = () => {
-    setError("");
+  const handleSignIn = async () => {
+  setError("");
 
-    if (!email || !password) {
-      setError("Please enter both email and password.");
-      return;
-    }
+  if (!email || !password) {
+    setError("Please enter both email and password.");
+    return;
+  }
 
-    if (!isValidCollegeEmail(email)) {
-      setError("Please use your official college email (@gvpcdpgc.edu.in).");
-      return;
-    }
+  if (!isValidCollegeEmail(email)) {
+    setError("Please use your official college email (@gvpcdpgc.edu.in).");
+    return;
+  }
 
+  try {
     setLoading(true);
 
-    setTimeout(() => {
+    const response = await fetch("http://127.0.0.1:8000/login", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        email,
+        password,
+      }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.detail || "Login failed");
+    }
+
+    // Optional: store user session
+    localStorage.setItem("user", JSON.stringify(data));
+
+    // Redirect based on role
+    if (data.role === "student") {
       navigate("/student");
-    }, 1800);
-  };
+    } else {
+      setError("Invalid role access");
+    }
+
+  } catch (err) {
+    setError(err.message);
+  } finally {
+    setLoading(false);
+  }
+};
+
 
   return (
     <div className="relative min-h-screen w-full flex items-center justify-center bg-slate-50 overflow-hidden">
@@ -138,11 +169,13 @@ export default function StudentSignIn() {
             Forgot password?
           </button>
           <button
+            type="button"
             onClick={() => navigate("/auth/student/signup")}
             className="hover:underline text-indigo-600 font-medium"
-          >
+           >
             Create account
           </button>
+
         </div>
 
         {/* DIVIDER */}
