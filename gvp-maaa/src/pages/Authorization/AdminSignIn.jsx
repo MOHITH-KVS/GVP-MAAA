@@ -5,9 +5,6 @@ import VisibilityIcon from "@mui/icons-material/Visibility";
 import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
 import CircularProgress from "@mui/material/CircularProgress";
 
-/* ===== TEMP ADMIN CREDENTIALS (FRONTEND SIMULATION) ===== */
-const ADMIN_EMAIL = "admin@gvpcdpgc.edu.in";
-const ADMIN_KEY = "GVP-ADMIN-2026";
 
 export default function AdminSignIn() {
   const navigate = useNavigate();
@@ -18,32 +15,52 @@ export default function AdminSignIn() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const isFormValid = email && password && adminKey;
 
-  const handleSignIn = () => {
-    setError("");
 
-    if (!email || !password || !adminKey) {
-      setError("All fields are required for administrative access.");
-      return;
-    }
+  const handleSignIn = async () => {
+  setError("");
 
-    if (email !== ADMIN_EMAIL) {
-      setError("Unauthorized admin email.");
-      return;
-    }
+  if (!email || !password || !adminKey) {
+    setError("All fields are required for administrative access.");
+    return;
+  }
 
-    if (adminKey !== ADMIN_KEY) {
-      setError("Invalid admin access key.");
-      return;
-    }
-
+  try {
     setLoading(true);
 
-        setTimeout(() => {
-    navigate("/auth/admin/success");
-    }, 2000);
+    const response = await fetch("http://127.0.0.1:8000/login/admin", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email,
+        password,
+        access_key: adminKey
+      })
+    });
 
-  };
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.detail || "Admin login failed");
+    }
+
+    // store admin session
+    localStorage.setItem("user", JSON.stringify(data));
+
+    // keep loader visible for UX
+    setTimeout(() => {
+      navigate("/admin");
+    }, 1000); // 1 second feels perfect
+
+
+
+  } catch (err) {
+    setError(err.message);
+    setLoading(false);
+  }  
+ };
+
 
   return (
     <div className="relative min-h-screen w-full flex items-center justify-center bg-slate-900 overflow-hidden">
@@ -127,11 +144,17 @@ export default function AdminSignIn() {
 
           <button
             onClick={handleSignIn}
-            className="w-full py-3 mt-2 rounded-xl bg-red-600 
-                       hover:bg-red-700 transition font-semibold"
-          >
-            Sign In as Administrator
+            disabled={loading || !isFormValid}
+            className={`w-full py-3 mt-2 rounded-xl font-semibold transition
+              ${
+                loading || !isFormValid
+                  ? "bg-red-400 cursor-not-allowed"
+                  : "bg-red-600 hover:bg-red-700"
+              }`}
+         > 
+            {loading ? "Signing in..." : "Sign In as Administrator"}
           </button>
+
         </div>
 
       </div>

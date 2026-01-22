@@ -19,9 +19,17 @@ export default function StudentSignIn() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [loginSuccess, setLoginSuccess] = useState(false);
+
+
 
   const isValidCollegeEmail = (email) =>
     ALLOWED_DOMAINS.some((domain) => email.endsWith(domain));
+
+  const isFormValid =
+  email &&
+  password &&
+  isValidCollegeEmail(email);
 
   const handleSignIn = async () => {
   setError("");
@@ -61,16 +69,22 @@ export default function StudentSignIn() {
 
     // Redirect based on role
     if (data.role === "student") {
+    setLoginSuccess(true);
+
+    setTimeout(() => {
       navigate("/student");
-    } else {
+    }, 1200); // smooth UX delay
+  }else {
       setError("Invalid role access");
     }
 
   } catch (err) {
-    setError(err.message);
-  } finally {
+  setTimeout(() => {
     setLoading(false);
-  }
+    setError(err.message);
+  }, 1000); // small delay so spinner feels real
+}
+
 };
 
 
@@ -119,6 +133,12 @@ export default function StudentSignIn() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
           />
+          {email && !isValidCollegeEmail(email) && (
+            <p className="text-sm text-red-600">
+              Use official college email (@gvpcdpgc.edu.in)
+            </p>
+          )}
+
 
           {/* PASSWORD WITH TOGGLE */}
           <div className="relative">
@@ -150,16 +170,24 @@ export default function StudentSignIn() {
           )}
 
           <button
-            onClick={handleSignIn}
-            disabled={loading}
-            className={`w-full py-3 rounded-xl font-medium transition
-              ${loading
+          onClick={handleSignIn}
+          disabled={loading || !isFormValid}
+          className={`w-full py-3 rounded-xl font-medium transition flex items-center justify-center gap-2
+            ${
+              loading || !isFormValid
                 ? "bg-indigo-400 cursor-not-allowed"
                 : "bg-indigo-600 hover:bg-indigo-700 text-white"
-              }`}
-          >
-            {loading ? "Signing In..." : "Sign In"}
-          </button>
+            }`}
+        >
+          {loading ? (
+            <>
+              <CircularProgress size={18} color="inherit" />
+              Signing in...
+            </>
+          ) : (
+            "Sign In"
+          )}
+        </button>
 
         </div>
 

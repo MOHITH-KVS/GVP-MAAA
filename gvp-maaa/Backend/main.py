@@ -2,8 +2,9 @@ from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-
-
+import os
+from dotenv import load_dotenv
+load_dotenv()
 from database import SessionLocal
 from schemas import (
     LoginRequest,
@@ -11,7 +12,7 @@ from schemas import (
     TeacherSignupRequest,
     AdminLoginRequest
 )
-from models import User, Student
+from models import User, Student, Faculty
 
 
 app = FastAPI(title="GVP Academic Analytics Backend")
@@ -115,7 +116,7 @@ def student_signup(data: StudentSignupRequest, db: Session = Depends(get_db)):
 
 
 # -------------------------
-# TEACHER SIGNUP
+# FACULTY SIGNUP
 # -------------------------
 @app.post("/signup/teacher")
 def teacher_signup(
@@ -135,22 +136,37 @@ def teacher_signup(
             detail="Email already registered"
         )
 
-    teacher = User(
+    # 1️⃣ Create user
+    new_user = User(
         name=data.name,
         email=data.email,
         password=data.password,
-        role="teacher",
+        role="faculty",
         department_id=data.department_id
     )
 
-    db.add(teacher)
+    db.add(new_user)
     db.commit()
-    db.refresh(teacher)
+    db.refresh(new_user)
+
+    # 2️⃣ Create faculty profile
+    faculty = Faculty(
+        faculty_id=new_user.user_id,
+        designation=data.designation,
+        qualifications=data.qualifications,
+        experience=data.experience,
+        subjects_handled=data.subjects_handled
+    )
+
+    db.add(faculty)
+    db.commit()
 
     return {
-        "message": "Teacher account created successfully",
-        "user_id": teacher.user_id
+        "message": "Faculty account created successfully",
+        "user_id": new_user.user_id
     }
+
+
 
 # -------------------------
 # ADMIN LOGIN
@@ -158,11 +174,8 @@ def teacher_signup(
 @app.post("/login/admin")
 def admin_login(data: AdminLoginRequest, db: Session = Depends(get_db)):
 
-    if data.access_key != "GVP-ADMIN-2026":
-        raise HTTPException(
-            status_code=403,
-            detail="Invalid admin access key"
-        )
+    if data.access_key != os.getenv("ADMIN_ACCESS_KEY"):
+        raise HTTPException(status_code=403, detail="Invalid admin access key")
 
     admin = db.query(User).filter(
         User.email == data.email,

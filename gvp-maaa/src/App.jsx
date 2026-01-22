@@ -17,7 +17,8 @@ import TeacherAccountSuccess from "./pages/Authorization/TeacherAccountSuccess";
 import AdminSignIn from "./pages/Authorization/AdminSignIn";
 import AdminAccountSuccess from "./pages/Authorization/AdminAccountSuccess";
 
-
+/* ================= PROTECTED ROUTE ================= */
+import ProtectedRoute from "./components/ProtectedRoute";
 
 /* ================= DASHBOARDS ================= */
 import StudentDashboard from "./dashboards/StudentDashboard";
@@ -58,10 +59,32 @@ export default function App() {
 
       
         {/* ================= DASHBOARDS ================= */}
-        {/* (temporary direct access – backend auth later) */}
-        <Route path="/student" element={<StudentDashboard />} />
-        <Route path="/teacher" element={<TeacherDashboard />} />
-        <Route path="/admin" element={<AdminDashboard />} />
+        
+        <Route
+          path="/admin"
+          element={
+            <ProtectedRoute allowedRole="admin">
+              <AdminDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/student"
+          element={
+            <ProtectedRoute allowedRole="student">
+              <StudentDashboard />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/teacher"
+          element={
+            <ProtectedRoute allowedRole="faculty">
+              <TeacherDashboard />
+            </ProtectedRoute>
+          }
+       />
 
       </Routes>
     </BrowserRouter>
