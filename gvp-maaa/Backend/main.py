@@ -11,7 +11,8 @@ from schemas import (
     TeacherSignupRequest,
     AdminLoginRequest
 )
-from models import User
+from models import User, Student
+
 
 app = FastAPI(title="GVP Academic Analytics Backend")
 
@@ -75,30 +76,19 @@ def student_signup(data: StudentSignupRequest, db: Session = Depends(get_db)):
     if len(data.roll_no) < 6:
         raise HTTPException(status_code=400, detail="Invalid roll number")
 
+    # extract department id (12 from roll number)
     department_id = int(data.roll_no[5:7])
-
-    # 🔴 SAFETY CHECK
-    dept_exists = db.execute(
-    text("SELECT 1 FROM departments WHERE department_id = :d"),
-    {"d": department_id}
-    ).fetchone()
-
-
-    if not dept_exists:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Department {department_id} does not exist"
-        )
 
     existing_user = db.query(User).filter(User.email == data.email).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Email already registered")
 
+    # 1️⃣ Create user
     new_user = User(
         name=data.name,
         email=data.email,
         password=data.password,
-        role="student",   # ✅ VALID
+        role="student",
         department_id=department_id
     )
 
@@ -106,10 +96,21 @@ def student_signup(data: StudentSignupRequest, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(new_user)
 
+    # 2️⃣ Auto-create student profile
+    student = Student(
+        student_id=new_user.user_id,
+        roll_no=data.roll_no,
+        year=1,
+        semester=1,
+        cgpa=0.00
+    )
+
+    db.add(student)
+    db.commit()
+
     return {
-        "message": "Student account created successfully",
-        "user_id": new_user.user_id,
-        "department_id": department_id
+        "message": "Student signup successful",
+        "user_id": new_user.user_id
     }
 
 
