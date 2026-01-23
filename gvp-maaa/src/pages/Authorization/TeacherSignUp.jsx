@@ -14,12 +14,24 @@ export default function TeacherSignUp() {
   const navigate = useNavigate();
 
   const [form, setForm] = useState({
-    name: "",
-    employeeId: "",
-    email: "",
-    password: "",
-    confirmPassword: "",
-  });
+  name: "",
+  employeeId: "",
+  departmentId: "",   // ✅ ADD THIS LINE
+  email: "",
+  password: "",
+  confirmPassword: "",
+ });
+
+
+  const DEPARTMENTS = [
+    { id: 12, name: "CSE" },
+    { id: 13, name: "IT" },
+    { id: 14, name: "ECE" },
+    { id: 15, name: "EEE" },
+    { id: 16, name: "MECH" },
+    { id: 17, name: "CIVIL" },
+ ];
+
 
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -42,7 +54,7 @@ export default function TeacherSignUp() {
   const passwordStrength = getPasswordStrength(form.password);
 
   const handleSubmit = () => {
-    const { name, employeeId, email, password, confirmPassword } = form;
+    const { name, employeeId, departmentId, email, password, confirmPassword } = form;
 
     if (!name || !employeeId || !email || !password || !confirmPassword) {
       setError("Please fill in all the fields.");
@@ -51,6 +63,11 @@ export default function TeacherSignUp() {
 
     if (!isValidCollegeEmail(email)) {
       setError("Please use your official college email (@gvpcdpgc.edu.in).");
+      return;
+    }
+
+    if (!departmentId) {
+      setError("Please select your department.");
       return;
     }
 
@@ -84,6 +101,25 @@ export default function TeacherSignUp() {
         <div className="space-y-3">
           <Input label="Full Name" name="name" value={form.name} onChange={handleChange} />
           <Input label="Employee ID" name="employeeId" value={form.employeeId} onChange={handleChange} />
+          {/* DEPARTMENT DROPDOWN */}
+          <div>
+            <label className="block text-sm text-slate-600 mb-1">
+              Department
+            </label>
+            <select
+              name="departmentId"
+              value={form.departmentId}
+              onChange={handleChange}
+              className="w-full px-4 py-2.5 rounded-xl border focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="">Select Department</option>
+              {DEPARTMENTS.map((dept) => (
+                <option key={dept.id} value={dept.id}>
+                  {dept.name}
+                </option>
+              ))}
+            </select>
+          </div>
           <Input label="Email" name="email" type="email" value={form.email} onChange={handleChange} />
 
           <div className="relative">
