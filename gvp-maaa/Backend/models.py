@@ -45,13 +45,13 @@ class Faculty(Base):
         ForeignKey("users.user_id", ondelete="CASCADE"),
         primary_key=True
     )
-
     employee_id = Column(String, nullable=False)
-
     designation = Column(String, nullable=True)
     qualifications = Column(String, nullable=True)
     experience = Column(Integer, nullable=True)
     subjects_handled = Column(String, nullable=True)
+
+
 
 
 

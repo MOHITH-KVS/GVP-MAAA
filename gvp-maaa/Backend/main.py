@@ -128,6 +128,7 @@ def teacher_signup(data: TeacherSignupRequest, db: Session = Depends(get_db)):
     if existing_user:
         raise HTTPException(status_code=400, detail="Email already registered")
 
+    # 1️⃣ Create user
     new_user = User(
         name=data.name,
         email=data.email,
@@ -135,13 +136,20 @@ def teacher_signup(data: TeacherSignupRequest, db: Session = Depends(get_db)):
         role="faculty",
         department_id=data.department_id
     )
-
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
 
+    # 2️⃣ Create faculty (MINIMAL)
+    faculty = Faculty(
+        faculty_id=new_user.user_id,
+        employee_id=data.employee_id
+    )
+    db.add(faculty)
+    db.commit()
+
     return {
-        "message": "Faculty account created successfully",
+        "message": "Faculty signup successful",
         "user_id": new_user.user_id
     }
 

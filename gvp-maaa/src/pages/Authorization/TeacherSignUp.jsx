@@ -36,48 +36,131 @@ export default function TeacherSignUp() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [error, setError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [loading, setLoading] = useState(false);
+  const [success, setSuccess] = useState("");
+
+
+
 
   const handleChange = (e) => {
-    setForm({ ...form, [e.target.name]: e.target.value });
-    setError("");
-  };
+  const { name, value } = e.target;
+
+  if (name === "name") {
+    // allow only letters & spaces
+    const cleanName = value.replace(/[^A-Za-z\s]/g, "");
+    setForm({ ...form, name: cleanName });
+  }
+  else if (name === "employeeId") {
+    // allow only letters & numbers
+    const cleanId = value.replace(/[^A-Za-z0-9/]/g, "");
+    setForm({ ...form, employeeId: cleanId });
+  }
+  else if (name === "email") {
+  setForm({ ...form, email: value.toLowerCase() });
+}
+
+  else {
+    setForm({ ...form, [name]: value });
+  }
+
+  setError("");
+  setFieldErrors({});
+ };
+
 
   const isValidCollegeEmail = (email) =>
     ALLOWED_DOMAINS.some((domain) => email.endsWith(domain));
 
   const getPasswordStrength = (password) => {
-    if (password.length < 6) return "Weak";
-    if (/[0-9]/.test(password) && /[^A-Za-z0-9]/.test(password)) return "Strong";
-    return "Medium";
-  };
+  if (password.length < 6) return "Weak";
+  if (/[0-9]/.test(password) && /[^A-Za-z0-9]/.test(password)) return "Strong";
+  return "Medium";
+ };
 
   const passwordStrength = getPasswordStrength(form.password);
 
-  const handleSubmit = () => {
-    const { name, employeeId, departmentId, email, password, confirmPassword } = form;
 
-    if (!name || !employeeId || !email || !password || !confirmPassword) {
-      setError("Please fill in all the fields.");
-      return;
+  const isNameValid = form.name.trim().length > 0;
+  const isEmployeeIdValid = form.employeeId.trim().length > 0;
+  const isDepartmentValid = !!form.departmentId;
+
+  const isPasswordMatch =
+    form.password &&
+    form.confirmPassword &&
+    form.password === form.confirmPassword;
+
+
+  const handleSubmit = async () => {
+  if (loading) return;   // prevent double click
+  setLoading(true);
+  setError("");
+
+  if (!form.name || !form.email || !form.password || !form.confirmPassword) {
+  setError("Please fill in all fields");
+  setLoading(false);
+  return;
+ }
+
+
+  if (!form.departmentId) {
+  setError("Please select your department");
+  setLoading(false);   // ✅ ADD
+  return;
+ }
+
+
+  if (form.password !== form.confirmPassword) {
+    setError("Passwords do not match");
+    return;
+  }
+
+  if (!isValidCollegeEmail(form.email)) {
+  setError("Please use your official college email (@gvpcdpgc.edu.in)");
+  setLoading(false);
+  return;
+ }
+
+
+  try {
+    const payload = {
+      name: form.name.trim(),
+      email: form.email.trim().toLowerCase(),
+      password: form.password,
+      employee_id: form.employeeId.trim(),          // ✅ ADD THIS LINE
+      department_id: parseInt(form.departmentId, 10),
+    };
+
+    console.log("Sending payload:", payload); // 🔥 DEBUG
+
+    const response = await fetch("http://127.0.0.1:8000/signup/teacher", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.detail || "Teacher signup failed");
     }
 
-    if (!isValidCollegeEmail(email)) {
-      setError("Please use your official college email (@gvpcdpgc.edu.in).");
-      return;
-    }
+    setSuccess(true);
+    setLoading(false);
 
-    if (!departmentId) {
-      setError("Please select your department.");
-      return;
-    }
+    setTimeout(() => {
+      navigate("/auth/teacher/signin");
+    }, 3000);
 
-    if (password !== confirmPassword) {
-      setError("Passwords do not match.");
-      return;
-    }
+  } catch (err) {
+    setError(err.message || "Signup failed");
+    setLoading(false);
 
-    navigate("/auth/teacher/success");
-  };
+  }
+ };
+
 
   return (
     <div className="relative min-h-screen w-full flex items-center justify-center bg-slate-50 overflow-hidden">
@@ -100,7 +183,19 @@ export default function TeacherSignUp() {
 
         <div className="space-y-3">
           <Input label="Full Name" name="name" value={form.name} onChange={handleChange} />
+          {!isNameValid && (
+            <p className="text-sm text-red-600">
+              Name cannot be empty
+            </p>
+          )}
+
           <Input label="Employee ID" name="employeeId" value={form.employeeId} onChange={handleChange} />
+          {!isEmployeeIdValid && (
+            <p className="text-sm text-red-600">
+              Employee ID is required
+            </p>
+          )}
+
           {/* DEPARTMENT DROPDOWN */}
           <div>
             <label className="block text-sm text-slate-600 mb-1">
@@ -121,6 +216,13 @@ export default function TeacherSignUp() {
             </select>
           </div>
           <Input label="Email" name="email" type="email" value={form.email} onChange={handleChange} />
+          {form.email && !isValidCollegeEmail(form.email) && (
+            <p className="text-sm text-red-600">
+              Please use your college email (@gvpcdpgc.edu.in)
+            </p>
+          )}
+
+
 
           <div className="relative">
             <Input
@@ -159,6 +261,18 @@ export default function TeacherSignUp() {
               value={form.confirmPassword}
               onChange={handleChange}
             />
+            {form.confirmPassword && (
+              isPasswordMatch ? (
+                <p className="text-sm text-emerald-600">
+                  ✔ Passwords match
+                </p>
+              ) : (
+                <p className="text-sm text-red-600">
+                  Passwords do not match
+                </p>
+              )
+            )}
+
             <button
               type="button"
               onClick={() => setShowConfirmPassword(!showConfirmPassword)}
@@ -172,9 +286,34 @@ export default function TeacherSignUp() {
 
           <button
             onClick={handleSubmit}
-            className="w-full py-2.5 mt-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700"
+            disabled={
+              loading ||
+              !isNameValid ||
+              !isEmployeeIdValid ||
+              !isDepartmentValid ||
+              !isPasswordMatch
+            }
+            className={`w-full py-2.5 mt-2 rounded-xl text-white font-medium
+              transition flex items-center justify-center gap-2
+              ${
+                loading ||
+                !isNameValid ||
+                !isEmployeeIdValid ||
+                !isDepartmentValid ||
+                !isPasswordMatch
+                  ? "bg-indigo-400 cursor-not-allowed"
+                  : "bg-indigo-600 hover:bg-indigo-700"
+              }`}
           >
-            Create Account
+
+            {loading ? (
+              <>
+                <Spinner />
+                Creating account...
+              </>
+            ) : (
+              "Create Account"
+            )}
           </button>
         </div>
 
@@ -200,6 +339,24 @@ export default function TeacherSignUp() {
           <SocialButton icon={LinkedInIcon} label="LinkedIn" />
         </div>
 
+        {/* ✅ SUCCESS MODAL — ADD HERE */}
+        {success && (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+            <div className="bg-white rounded-2xl shadow-xl p-6 w-[90%] max-w-sm text-center">
+              <h2 className="text-lg font-semibold">
+                Teacher Account Created Successfully
+              </h2>
+
+              <p className="text-sm text-slate-600 mt-2">
+                Redirecting to sign in…
+              </p>
+
+              <div className="mt-4 flex justify-center">
+                <Spinner />
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

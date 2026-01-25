@@ -17,7 +17,10 @@ class TeacherSignupRequest(BaseModel):
     name: str
     email: str
     password: str
+    employee_id: str
     department_id: int
+
+
 
 
 class AdminLoginRequest(BaseModel):
