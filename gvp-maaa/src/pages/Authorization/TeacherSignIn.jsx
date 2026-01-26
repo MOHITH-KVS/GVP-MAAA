@@ -1,8 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import GoogleIcon from "@mui/icons-material/Google";
-import GitHubIcon from "@mui/icons-material/GitHub";
-import LinkedInIcon from "@mui/icons-material/LinkedIn";
 import SchoolIcon from "@mui/icons-material/School";
 import CircularProgress from "@mui/material/CircularProgress";
 import VisibilityIcon from "@mui/icons-material/Visibility";
@@ -22,26 +20,64 @@ export default function TeacherSignIn() {
 
   const isValidCollegeEmail = (email) =>
     ALLOWED_DOMAINS.some((domain) => email.endsWith(domain));
+  const isFormValid =
+  email &&
+  password &&
+  isValidCollegeEmail(email);
 
-  const handleSignIn = () => {
-    setError("");
 
-    if (!email || !password) {
-      setError("Please enter both email and password.");
-      return;
-    }
+  const handleSignIn = async () => {
+  setError("");
 
-    if (!isValidCollegeEmail(email)) {
-      setError("Please use your official college email (@gvpcdpgc.edu.in).");
-      return;
-    }
+  if (!email || !password) {
+    setError("Please enter both email and password.");
+    return;
+  }
 
+  if (!isValidCollegeEmail(email)) {
+    setError("Please use your official college email (@gvpcdpgc.edu.in).");
+    return;
+  }
+
+  try {
     setLoading(true);
 
+    const response = await fetch("http://127.0.0.1:8000/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+
+    const data = await response.json();
+    // 🔐 SAVE JWT TOKEN
+    localStorage.setItem("access_token", data.access_token);
+    localStorage.setItem("user_role", data.role);
+
+
+    if (!response.ok) {
+      throw new Error(data.detail || "Login failed");
+    }
+
+    // role check
+    if (data.role !== "faculty") {
+      throw new Error("Invalid teacher credentials");
+    }
+
+    localStorage.setItem("user", JSON.stringify(data));
+
+    // smooth UX delay
     setTimeout(() => {
       navigate("/teacher");
-    }, 1800);
-  };
+    }, 1200);
+
+  } catch (err) {
+    setTimeout(() => {
+      setLoading(false);
+      setError(err.message);
+    }, 1000);
+  }
+ };
+
 
   return (
     <div className="relative min-h-screen w-full flex items-center justify-center bg-slate-50 overflow-hidden">
@@ -108,14 +144,24 @@ export default function TeacherSignIn() {
 
           <button
             onClick={handleSignIn}
-            disabled={loading}
-            className={`w-full py-3 rounded-xl font-medium transition
-              ${loading
-                ? "bg-indigo-400 cursor-not-allowed"
-                : "bg-indigo-600 hover:bg-indigo-700 text-white"
+            disabled={loading || !isFormValid}
+            className={`w-full py-3 rounded-xl font-medium transition flex items-center justify-center gap-2
+              ${
+                loading || !isFormValid
+                  ? "bg-indigo-400 cursor-not-allowed"
+                  : "bg-indigo-600 hover:bg-indigo-700 text-white"
               }`}
           >
-            {loading ? "Signing In..." : "Sign In"}
+
+            {loading ? (
+              <>
+                <CircularProgress size={18} color="inherit" />
+                Signing in...
+              </>
+            ) : (
+              "Sign In"
+            )}
+
           </button>
         </div>
 
@@ -135,11 +181,10 @@ export default function TeacherSignIn() {
           <div className="flex-1 h-px bg-slate-200"></div>
         </div>
 
-        <div className="grid grid-cols-3 gap-4">
-          <SocialButton icon={GoogleIcon} label="Google" />
-          <SocialButton icon={GitHubIcon} label="GitHub" />
-          <SocialButton icon={LinkedInIcon} label="LinkedIn" />
+        <div className="grid grid-cols-1 gap-4">
+            <SocialButton icon={GoogleIcon} label="Google" />
         </div>
+
 
       </div>
     </div>

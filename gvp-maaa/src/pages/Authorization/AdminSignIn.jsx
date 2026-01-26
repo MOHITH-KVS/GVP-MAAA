@@ -40,6 +40,9 @@ export default function AdminSignIn() {
     });
 
     const data = await response.json();
+    localStorage.setItem("access_token", data.access_token);
+    localStorage.setItem("user_role", data.role);
+
 
     if (!response.ok) {
       throw new Error(data.detail || "Admin login failed");

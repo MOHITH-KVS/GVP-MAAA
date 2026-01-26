@@ -13,6 +13,7 @@ from schemas import (
     AdminLoginRequest
 )
 from models import User, Student, Faculty
+from auth import create_access_token
 
 
 app = FastAPI(title="GVP Academic Analytics Backend")
@@ -58,12 +59,23 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
     if user.password != data.password:
         raise HTTPException(status_code=401, detail="Invalid password")
 
+    # 🔐 CREATE JWT TOKEN
+    access_token = create_access_token(
+        data={
+            "user_id": user.user_id,
+            "role": user.role
+        }
+    )
+
     return {
+        "access_token": access_token,
+        "token_type": "bearer",
         "user_id": user.user_id,
         "name": user.name,
         "role": user.role,
         "department_id": user.department_id
     }
+
 
 # -------------------------
 # STUDENT SIGNUP
@@ -128,30 +140,37 @@ def teacher_signup(data: TeacherSignupRequest, db: Session = Depends(get_db)):
     if existing_user:
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    # 1️⃣ Create user
-    new_user = User(
-        name=data.name,
-        email=data.email,
-        password=data.password,
-        role="faculty",
-        department_id=data.department_id
-    )
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
+    try:
+        # 1️⃣ Create user
+        new_user = User(
+            name=data.name,
+            email=data.email,
+            password=data.password,
+            role="faculty",          # ✅ STANDARDIZE ROLE
+            department_id=data.department_id
+        )
+        db.add(new_user)
+        db.flush()  # 🔑 get user_id WITHOUT commit
 
-    # 2️⃣ Create faculty (MINIMAL)
-    faculty = Faculty(
-        faculty_id=new_user.user_id,
-        employee_id=data.employee_id
-    )
-    db.add(faculty)
-    db.commit()
+        # 2️⃣ Create faculty
+        faculty = Faculty(
+            faculty_id=new_user.user_id,
+            employee_id=data.employee_id
+        )
+        db.add(faculty)
 
-    return {
-        "message": "Faculty signup successful",
-        "user_id": new_user.user_id
-    }
+        # 3️⃣ Commit ONCE
+        db.commit()
+
+        return {
+            "message": "Teacher signup successful",
+            "user_id": new_user.user_id
+        }
+
+    except Exception as e:
+        db.rollback()  # 🔥 THIS SAVES YOU
+        raise HTTPException(status_code=400, detail=str(e))
+
 
 
 # -------------------------

@@ -1,8 +1,5 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import GoogleIcon from "@mui/icons-material/Google";
-import GitHubIcon from "@mui/icons-material/GitHub";
-import LinkedInIcon from "@mui/icons-material/LinkedIn";
 import LocalLibraryIcon from "@mui/icons-material/LocalLibrary";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
@@ -377,20 +374,6 @@ export default function StudentSignUp() {
           </button>
         </p>
 
-        {/* DIVIDER */}
-        <div className="flex items-center gap-4 my-4">
-          <div className="flex-1 h-px bg-slate-200"></div>
-          <span className="text-xs text-slate-400">or sign up with</span>
-          <div className="flex-1 h-px bg-slate-200"></div>
-        </div>
-
-        {/* SOCIAL */}
-        <div className="grid grid-cols-3 gap-4">
-          <SocialButton icon={GoogleIcon} label="Google" />
-          <SocialButton icon={GitHubIcon} label="GitHub" />
-          <SocialButton icon={LinkedInIcon} label="LinkedIn" />
-        </div>
-
       </div>
     </div>
   );
@@ -417,15 +400,6 @@ function Input({ label, name, value, onChange, type = "text" , disabled }) {
   );
 }
 
-function SocialButton({ icon: Icon, label }) {
-  return (
-    <button className="flex items-center justify-center gap-2 py-2 rounded-xl 
-                       border hover:bg-slate-50 transition text-sm font-medium">
-      <Icon fontSize="small" />
-      {label}
-    </button>
-  );
-}
 
 function Spinner() {
   return (

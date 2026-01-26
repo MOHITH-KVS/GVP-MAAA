@@ -1,8 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import GoogleIcon from "@mui/icons-material/Google";
-import GitHubIcon from "@mui/icons-material/GitHub";
-import LinkedInIcon from "@mui/icons-material/LinkedIn";
 import SchoolIcon from "@mui/icons-material/School";
 import CircularProgress from "@mui/material/CircularProgress";
 import VisibilityIcon from "@mui/icons-material/Visibility";
@@ -59,6 +57,9 @@ export default function StudentSignIn() {
     });
 
     const data = await response.json();
+    localStorage.setItem("access_token", data.access_token);
+    localStorage.setItem("user_role", data.role);
+
 
     if (!response.ok) {
       throw new Error(data.detail || "Login failed");
@@ -214,12 +215,9 @@ export default function StudentSignIn() {
         </div>
 
         {/* SOCIAL LOGIN */}
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 gap-4">
           <SocialButton icon={GoogleIcon} label="Google" />
-          <SocialButton icon={GitHubIcon} label="GitHub" />
-          <SocialButton icon={LinkedInIcon} label="LinkedIn" />
         </div>
-
       </div>
     </div>
   );

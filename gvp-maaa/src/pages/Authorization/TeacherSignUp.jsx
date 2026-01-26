@@ -1,8 +1,5 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import GoogleIcon from "@mui/icons-material/Google";
-import GitHubIcon from "@mui/icons-material/GitHub";
-import LinkedInIcon from "@mui/icons-material/LinkedIn";
 import LocalLibraryIcon from "@mui/icons-material/LocalLibrary";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
@@ -39,6 +36,8 @@ export default function TeacherSignUp() {
   const [fieldErrors, setFieldErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState("");
+
+
 
 
 
@@ -95,6 +94,8 @@ export default function TeacherSignUp() {
   if (loading) return;   // prevent double click
   setLoading(true);
   setError("");
+  setSuccess("");
+
 
   if (!form.name || !form.email || !form.password || !form.confirmPassword) {
   setError("Please fill in all fields");
@@ -111,9 +112,11 @@ export default function TeacherSignUp() {
 
 
   if (form.password !== form.confirmPassword) {
-    setError("Passwords do not match");
-    return;
-  }
+  setError("Passwords do not match");
+  setLoading(false);
+  return;
+ }
+
 
   if (!isValidCollegeEmail(form.email)) {
   setError("Please use your official college email (@gvpcdpgc.edu.in)");
@@ -147,12 +150,17 @@ export default function TeacherSignUp() {
       throw new Error(data.detail || "Teacher signup failed");
     }
 
-    setSuccess(true);
+    // ⏳ force spinner to be visible
+  setTimeout(() => {
     setLoading(false);
+    setSuccess("Teacher account created successfully. Redirecting to login...");
 
     setTimeout(() => {
       navigate("/auth/teacher/signin");
     }, 3000);
+
+  }, 1000);
+
 
   } catch (err) {
     setError(err.message || "Signup failed");
@@ -327,28 +335,34 @@ export default function TeacherSignUp() {
           </button>
         </p>
 
-        <div className="flex items-center gap-4 my-4">
-          <div className="flex-1 h-px bg-slate-200"></div>
-          <span className="text-xs text-slate-400">or sign up with</span>
-          <div className="flex-1 h-px bg-slate-200"></div>
-        </div>
-
-        <div className="grid grid-cols-3 gap-4">
-          <SocialButton icon={GoogleIcon} label="Google" />
-          <SocialButton icon={GitHubIcon} label="GitHub" />
-          <SocialButton icon={LinkedInIcon} label="LinkedIn" />
-        </div>
 
         {/* ✅ SUCCESS MODAL — ADD HERE */}
         {success && (
           <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-            <div className="bg-white rounded-2xl shadow-xl p-6 w-[90%] max-w-sm text-center">
-              <h2 className="text-lg font-semibold">
+            <div className="bg-white rounded-2xl shadow-xl p-6 w-[90%] max-w-sm text-center animate-scaleIn">
+
+              <div className="w-16 h-16 mx-auto mb-3 rounded-full bg-green-100 flex items-center justify-center animate-scaleIn">
+                <svg
+                  className="w-8 h-8 text-green-600"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="3"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M5 13l4 4L19 7"
+                  />
+                </svg>
+              </div>
+
+              <h2 className="text-lg font-semibold text-slate-800">
                 Teacher Account Created Successfully
               </h2>
 
               <p className="text-sm text-slate-600 mt-2">
-                Redirecting to sign in…
+                Please login to manage your classes. Redirecting to login page...
               </p>
 
               <div className="mt-4 flex justify-center">
@@ -357,6 +371,7 @@ export default function TeacherSignUp() {
             </div>
           </div>
         )}
+
       </div>
     </div>
   );
@@ -379,11 +394,9 @@ function Input({ label, name, value, onChange, type = "text" }) {
   );
 }
 
-function SocialButton({ icon: Icon, label }) {
+
+function Spinner() {
   return (
-    <button className="flex items-center justify-center gap-2 py-2 rounded-xl border hover:bg-slate-50 transition text-sm font-medium">
-      <Icon fontSize="small" />
-      {label}
-    </button>
+    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
   );
 }
