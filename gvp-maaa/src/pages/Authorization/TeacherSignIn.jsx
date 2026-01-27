@@ -17,6 +17,8 @@ export default function TeacherSignIn() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [loginSuccess, setLoginSuccess] = useState(false);
+
 
   const isValidCollegeEmail = (email) =>
     ALLOWED_DOMAINS.some((domain) => email.endsWith(domain));
@@ -65,10 +67,12 @@ export default function TeacherSignIn() {
 
     localStorage.setItem("user", JSON.stringify(data));
 
-    // smooth UX delay
+    setLoginSuccess(true);
+
     setTimeout(() => {
       navigate("/teacher");
     }, 1200);
+
 
   } catch (err) {
     setTimeout(() => {
@@ -92,6 +96,40 @@ export default function TeacherSignIn() {
           </div>
         </div>
       )}
+
+      {/* ✅ SUCCESS POPUP */}
+      {loginSuccess && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-[90%] max-w-sm text-center animate-scaleIn">
+
+            <div className="w-16 h-16 mx-auto mb-3 rounded-full bg-green-100 flex items-center justify-center">
+              <svg
+                className="w-8 h-8 text-green-600"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="3"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+
+            <h2 className="text-lg font-semibold text-slate-800">
+              Login Successful
+            </h2>
+
+            <p className="text-sm text-slate-600 mt-2">
+              Redirecting to your teaching dashboard...
+            </p>
+
+            <div className="mt-4 flex justify-center">
+              <CircularProgress />
+            </div>
+
+          </div>
+        </div>
+      )}
+
 
       <div className="relative z-10 w-full max-w-md bg-white border rounded-2xl shadow-xl p-8">
 
@@ -166,7 +204,10 @@ export default function TeacherSignIn() {
         </div>
 
         <div className="flex justify-between text-sm text-slate-500 mt-4">
-          <button className="hover:underline">Forgot password?</button>
+          <button onClick={() => navigate("/auth/forgot-password")}>
+            Forgot password?
+          </button>
+
           <button
             onClick={() => navigate("/auth/teacher/signup")}
             className="hover:underline text-indigo-600 font-medium"

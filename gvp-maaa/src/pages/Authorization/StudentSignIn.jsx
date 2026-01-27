@@ -73,8 +73,9 @@ export default function StudentSignIn() {
     setLoginSuccess(true);
 
     setTimeout(() => {
-      navigate("/student");
-    }, 1200); // smooth UX delay
+  setLoading(false);   // 🔥 important
+  navigate("/student");
+  }, 1200);
   }else {
       setError("Invalid role access");
     }
@@ -107,6 +108,40 @@ export default function StudentSignIn() {
           </div>
         </div>
       )}
+
+      {/* ✅ SUCCESS POPUP */}
+      {loginSuccess && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-[90%] max-w-sm text-center animate-scaleIn">
+
+            <div className="w-16 h-16 mx-auto mb-3 rounded-full bg-green-100 flex items-center justify-center">
+              <svg
+                className="w-8 h-8 text-green-600"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="3"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+
+            <h2 className="text-lg font-semibold text-slate-800">
+              Login Successful
+            </h2>
+
+            <p className="text-sm text-slate-600 mt-2">
+              Redirecting to your dashboard...
+            </p>
+
+            <div className="mt-4 flex justify-center">
+              <CircularProgress />
+            </div>
+
+          </div>
+        </div>
+      )}
+
 
       <div className="relative z-10 w-full max-w-md bg-white border rounded-2xl shadow-xl p-8">
 
@@ -194,9 +229,11 @@ export default function StudentSignIn() {
 
         {/* EXTRA LINKS */}
         <div className="flex justify-between text-sm text-slate-500 mt-4">
-          <button className="hover:underline">
+          <button onClick={() => navigate("/auth/forgot-password")}>
             Forgot password?
           </button>
+
+
           <button
             type="button"
             onClick={() => navigate("/auth/student/signup")}

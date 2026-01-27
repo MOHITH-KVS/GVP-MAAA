@@ -8,8 +8,15 @@ export default function Logout({ onBack, role = "student" }) {
 
   // Animate IN
   useEffect(() => {
-    setVisible(true);
-  }, []);
+  // 🔐 CLEAR AUTH DATA
+  localStorage.removeItem("access_token");
+  localStorage.removeItem("user_role");
+  localStorage.removeItem("user");
+
+  // animate IN
+  setVisible(true);
+ }, []);
+
 
   /* ===== ROLE BASED SIGN-IN ROUTES ===== */
   const roleSignInRoute = {

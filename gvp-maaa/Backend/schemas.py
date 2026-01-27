@@ -27,3 +27,8 @@ class AdminLoginRequest(BaseModel):
     email: str
     password: str
     access_key: str
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str

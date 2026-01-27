@@ -2,7 +2,13 @@ from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import text
+from security import hash_password, verify_password
+from mail import send_reset_email
+from schemas import ResetPasswordRequest
+
+
 import os
+
 from dotenv import load_dotenv
 load_dotenv()
 from database import SessionLocal
@@ -13,7 +19,15 @@ from schemas import (
     AdminLoginRequest
 )
 from models import User, Student, Faculty
-from auth import create_access_token
+from auth import (
+    create_access_token,
+    create_reset_token,
+    verify_reset_token,
+    get_current_user   # ✅ ADD THIS
+)
+
+
+
 
 
 app = FastAPI(title="GVP Academic Analytics Backend")
@@ -56,8 +70,9 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    if user.password != data.password:
-        raise HTTPException(status_code=401, detail="Invalid password")
+    if not verify_password(data.password, user.password):
+       raise HTTPException(status_code=401, detail="Invalid password")
+
 
     # 🔐 CREATE JWT TOKEN
     access_token = create_access_token(
@@ -95,15 +110,24 @@ def student_signup(data: StudentSignupRequest, db: Session = Depends(get_db)):
     existing_user = db.query(User).filter(User.email == data.email).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Email already registered")
+    
+    # 🔐 PASSWORD LENGTH CHECK (bcrypt safety)
+    if len(data.password) > 72:
+        raise HTTPException(
+            status_code=400,
+            detail="Password must be 72 characters or less"
+        )
+
 
     # 1️⃣ Create user
     new_user = User(
-        name=data.name,
-        email=data.email,
-        password=data.password,
-        role="student",
-        department_id=department_id
-    )
+    name=data.name,
+    email=data.email,
+    password=hash_password(data.password),
+    role="student",
+    department_id=department_id
+  )
+
 
     db.add(new_user)
     db.commit()
@@ -139,13 +163,20 @@ def teacher_signup(data: TeacherSignupRequest, db: Session = Depends(get_db)):
     existing_user = db.query(User).filter(User.email == data.email).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Email already registered")
+    
+    # 🔐 PASSWORD LENGTH CHECK
+    if len(data.password) > 72:
+        raise HTTPException(
+            status_code=400,
+            detail="Password must be 72 characters or less"
+    )
 
     try:
         # 1️⃣ Create user
         new_user = User(
             name=data.name,
             email=data.email,
-            password=data.password,
+            password=hash_password(data.password),
             role="faculty",          # ✅ STANDARDIZE ROLE
             department_id=data.department_id
         )
@@ -198,3 +229,94 @@ def admin_login(data: AdminLoginRequest, db: Session = Depends(get_db)):
         "name": admin.name,
         "role": admin.role
     }
+
+
+# -------------------------
+# STUDENT PROTECTED
+# -------------------------
+@app.get("/student/protected")
+def student_protected(user=Depends(get_current_user)):
+    if user["role"] != "student":
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    return {
+        "message": "JWT works! Student access granted",
+        "user": user
+    }
+
+
+# -------------------------
+# TEACHER PROTECTED
+# -------------------------
+@app.get("/teacher/protected")
+def teacher_protected(user=Depends(get_current_user)):
+    if user["role"] != "faculty":
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    return {
+        "message": "JWT works! Teacher access granted",
+        "user": user
+    }
+
+
+# -------------------------
+# ADMIN PROTECTED
+# -------------------------
+@app.get("/admin/protected")
+def admin_protected(user=Depends(get_current_user)):
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    return {
+        "message": "JWT works! Admin access granted",
+        "user": user
+    }
+
+# -------------------------
+# FORGOT PASSWORD
+# -------------------------
+@app.post("/forgot-password")
+def forgot_password(email: str, db: Session = Depends(get_db)):
+
+    user = db.query(User).filter(User.email == email).first()
+
+    # Security best practice
+    if not user:
+        return {"message": "If the email exists, a reset link has been sent"}
+
+    reset_token = create_reset_token(email)
+    reset_link = f"http://localhost:5173/reset-password?token={reset_token}"
+
+    send_reset_email(email, reset_link)   # ✅ EMAIL SENT HERE
+
+    return {"message": "Password reset link sent"}
+
+
+
+
+# -------------------------
+# RESET PASSWORD
+# -------------------------
+@app.post("/reset-password")
+def reset_password(
+    data: ResetPasswordRequest,
+    db: Session = Depends(get_db)
+):
+    # Verify token
+    email = verify_reset_token(data.token)
+
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # bcrypt safety
+    if len(data.new_password) > 72:
+        raise HTTPException(
+            status_code=400,
+            detail="Password must be 72 characters or less"
+        )
+
+    user.password = hash_password(data.new_password)
+    db.commit()
+
+    return {"message": "Password reset successful"}

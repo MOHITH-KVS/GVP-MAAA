@@ -15,6 +15,8 @@ export default function AdminSignIn() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [loginSuccess, setLoginSuccess] = useState(false);
+
   const isFormValid = email && password && adminKey;
 
 
@@ -51,10 +53,12 @@ export default function AdminSignIn() {
     // store admin session
     localStorage.setItem("user", JSON.stringify(data));
 
-    // keep loader visible for UX
+    setLoginSuccess(true);
+
     setTimeout(() => {
       navigate("/admin");
-    }, 1000); // 1 second feels perfect
+    }, 1200);
+
 
 
 
@@ -79,6 +83,40 @@ export default function AdminSignIn() {
           </div>
         </div>
       )}
+
+      {/* ✅ SUCCESS POPUP */}
+      {loginSuccess && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="bg-slate-800 rounded-2xl shadow-2xl p-6 w-[90%] max-w-sm text-center border border-slate-700">
+
+            <div className="w-16 h-16 mx-auto mb-3 rounded-full bg-green-100 flex items-center justify-center">
+              <svg
+                className="w-8 h-8 text-green-600"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="3"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+
+            <h2 className="text-lg font-semibold text-slate-100">
+              Admin Login Successful
+            </h2>
+
+            <p className="text-sm text-slate-400 mt-2">
+              Redirecting to admin dashboard…
+            </p>
+
+            <div className="mt-4 flex justify-center">
+              <CircularProgress color="inherit" />
+            </div>
+
+          </div>
+        </div>
+      )}
+
 
       <div className="relative z-10 w-full max-w-md bg-slate-800 border border-slate-700 
                       rounded-2xl shadow-2xl p-8 text-slate-100">
