@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Numeric, ForeignKey
+from sqlalchemy import Column, Integer, String, Numeric, ForeignKey, JSON
 from database import Base
 
 
@@ -32,6 +32,16 @@ class Student(Base):
     semester = Column(Integer, default=1)
     section = Column(String, nullable=True)
     cgpa = Column(Numeric(3, 2), default=0.00)
+
+    # 🔽 NEW PROFILE FIELDS
+    phone = Column(String, nullable=True)
+    skills = Column(String, nullable=True)   # comma separated
+    certificates = Column(String, nullable=True)  # comma separated
+    linkedin = Column(String, nullable=True)
+    github = Column(String, nullable=True)
+    portfolio = Column(String, nullable=True) 
+    bio = Column(String, nullable=True)
+
 
 
 # -------------------------

@@ -6,8 +6,9 @@ export default function ProtectedRoute({ children, allowedRole }) {
 
   // ❌ No token → login
   if (!token) {
-    return <Navigate to="/auth/student/signin" replace />;
-  }
+  return <Navigate to="/auth" replace />;
+ }
+
 
   // ❌ Role mismatch → block
   if (allowedRole && role !== allowedRole) {

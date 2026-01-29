@@ -16,7 +16,9 @@ from schemas import (
     LoginRequest,
     StudentSignupRequest,
     TeacherSignupRequest,
-    AdminLoginRequest
+    AdminLoginRequest,
+    StudentProfileUpdate,
+    CertificateUpload     
 )
 from models import User, Student, Faculty
 from auth import (
@@ -149,6 +151,106 @@ def student_signup(data: StudentSignupRequest, db: Session = Depends(get_db)):
         "message": "Student signup successful",
         "user_id": new_user.user_id
     }
+
+
+
+# -------------------------
+# STUDENT PROFILE GET
+# -------------------------
+@app.get("/student/profile")
+def get_student_profile(
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if user["role"] != "student":
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    student = (
+        db.query(Student, User)
+        .join(User, Student.student_id == User.user_id)
+        .filter(User.user_id == user["user_id"])
+        .first()
+    )
+
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    student_data, user_data = student
+
+    return {
+        "name": user_data.name,
+        "email": user_data.email,
+        "roll_no": student_data.roll_no,
+        "year": student_data.year,
+        "semester": student_data.semester,
+        "section": student_data.section,
+        "cgpa": float(student_data.cgpa),
+        "phone": student_data.phone,
+        "skills": student_data.skills.split(",") if student_data.skills else [],
+        "linkedin": student_data.linkedin,
+        "github": student_data.github,
+        "portfolio": student_data.portfolio,
+        "bio": student_data.bio,
+    }
+
+
+
+# -------------------------
+# STUDENT PROFILE PUT
+# -------------------------
+@app.put("/student/profile")
+def update_student_profile(
+    data: StudentProfileUpdate,
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if user["role"] != "student":
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    student = db.query(Student).filter(
+        Student.student_id == user["user_id"]
+    ).first()
+
+    user_obj = db.query(User).filter(
+        User.user_id == user["user_id"]
+    ).first()
+
+    if not student or not user_obj:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    # ✅ UPDATE USER TABLE
+    user_obj.name = data.name
+
+    # ✅ UPDATE STUDENT TABLE
+    student.year = data.year
+    student.semester = data.semester
+    student.linkedin = data.linkedin
+    student.github = data.github
+    student.portfolio = data.portfolio
+    student.skills = ",".join(data.skills)
+
+    db.commit()
+
+    return {"message": "Profile updated successfully"}
+
+# -------------------------
+# STUDENT PROFILE PUT
+# -------------------------
+@app.put("/student/certificates")
+def update_certificates(
+    data: CertificateUpload,
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    student = db.query(Student).filter(
+        Student.student_id == user["user_id"]
+    ).first()
+
+    student.certificates = ",".join(data.certificates)
+    db.commit()
+
+    return {"message": "Certificates updated"}
+
 
 
 # -------------------------

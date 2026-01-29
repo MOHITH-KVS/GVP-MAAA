@@ -1,8 +1,8 @@
-export default function StudentOverview() {
+export default function StudentOverview({ profile }) {
   return (
     <>
       <h1 className="text-2xl font-semibold mb-2">
-        Welcome, <span className="text-indigo-600">Mohith</span> 👋
+        Welcome, <span className="text-indigo-600">{profile?.name}</span> 👋
       </h1>
 
       <p className="text-gray-500 mb-8">

@@ -73,9 +73,10 @@ export default function StudentSignIn() {
     setLoginSuccess(true);
 
     setTimeout(() => {
-  setLoading(false);   // 🔥 important
-  navigate("/student");
-  }, 1200);
+      setLoading(false);
+      navigate("/student", { replace: true }); // 🔒 replaces history
+    }, 1200);
+
   }else {
       setError("Invalid role access");
     }

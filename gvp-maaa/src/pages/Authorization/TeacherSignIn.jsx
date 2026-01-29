@@ -70,7 +70,7 @@ export default function TeacherSignIn() {
     setLoginSuccess(true);
 
     setTimeout(() => {
-      navigate("/teacher");
+      navigate("/teacher", { replace: true });
     }, 1200);
 
 

@@ -1,4 +1,8 @@
 import { useState } from "react";
+import { useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+
+
 
 /* ================= STUDENT PAGES ================= */
 import StudentOverview from "../pages/Student/Overview";
@@ -28,6 +32,7 @@ import MenuBookIcon from "@mui/icons-material/MenuBook";
 import NotificationsIcon from "@mui/icons-material/Notifications";
 import LinkedInIcon from "@mui/icons-material/LinkedIn";
 import GitHubIcon from "@mui/icons-material/GitHub";
+
 import CloseIcon from "@mui/icons-material/Close";
 import PersonIcon from "@mui/icons-material/Person";
 import MenuIcon from "@mui/icons-material/Menu";
@@ -39,14 +44,71 @@ export default function StudentDashboard() {
   const [showProfile, setShowProfile] = useState(true);
   const [showFullProfile, setShowFullProfile] = useState(false);
   const [showLogout, setShowLogout] = useState(false);
+  const [profile, setProfile] = useState(null);
+  const navigate = useNavigate();
+
+
+  // Fetch student profile on mount
+    const fetchProfile = async () => {
+  try {
+    const token = localStorage.getItem("access_token");
+    const res = await fetch("http://127.0.0.1:8000/student/profile", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    const data = await res.json();
+    setProfile(data);
+  } catch (err) {
+    console.error(err);
+  }
+ };
+
+  useEffect(() => {
+  fetchProfile();
+ }, []);
+
+
+  // Prevent back navigation
+  useEffect(() => {
+  window.history.pushState(null, "", window.location.href);
+
+  const handleBack = () => {
+    window.history.pushState(null, "", window.location.href);
+  };
+
+  window.addEventListener("popstate", handleBack);
+
+  return () => window.removeEventListener("popstate", handleBack);
+ }, []);
+
+
+
 
   if (showFullProfile) {
-    return <ViewProfile onClose={() => setShowFullProfile(false)} />;
+      return (
+    <ViewProfile
+      profile={profile}
+      onClose={() => {
+        setShowFullProfile(false);
+        fetchProfile(); // 🔥 refresh sidebar profile
+      }}
+    />
+
+  );
   }
 
   if (showLogout) {
     return <Logout onBack={() => setShowLogout(false)} />;
   }
+
+  if (!profile) {
+  return (
+    <div className="h-screen flex items-center justify-center">
+      <p className="text-slate-500">Loading profile...</p>
+    </div>
+  );
+ }
+
 
   return (
     <div className="h-screen w-screen bg-gradient-to-br from-indigo-50 via-white to-cyan-50">
@@ -120,7 +182,7 @@ export default function StudentDashboard() {
         <main className="flex-1 p-8 flex gap-6 overflow-hidden">
 
           <div className="flex-1 overflow-y-auto pr-2">
-            {activePage === "overview" && <StudentOverview />}
+            {activePage === "overview" && <StudentOverview profile={profile} />}
             {activePage === "attendance" && <Attendance />}
             {activePage === "marks" && <Marks />}
             {activePage === "assignments" && <Assignments />}
@@ -140,12 +202,14 @@ export default function StudentDashboard() {
           >
             {showProfile ? (
               <StudentProfile
+                profile={profile}
                 onClose={() => setShowProfile(false)}
                 onViewProfile={() => {
                   setShowFullProfile(true);
                   setShowProfile(false);
                 }}
               />
+
             ) : (
               <CollapsedProfile onOpen={() => setShowProfile(true)} />
             )}
@@ -185,7 +249,7 @@ function MenuItem({ icon: Icon, label, open, active, onClick }) {
   );
 }
 
-function StudentProfile({ onClose, onViewProfile }) {
+function StudentProfile({ profile, onClose, onViewProfile }) {
   return (
     <div className="h-full glass rounded-2xl p-6 flex flex-col justify-between">
       <button onClick={onClose} className="self-end p-2 hover:bg-white/60 rounded-full">
@@ -194,21 +258,44 @@ function StudentProfile({ onClose, onViewProfile }) {
 
       <div className="text-center">
         <div className="w-24 h-24 mx-auto rounded-full bg-indigo-500 text-white flex items-center justify-center text-3xl font-semibold">
-          M
+          {profile.name?.charAt(0).toUpperCase()}
         </div>
-        <h3 className="mt-4 text-lg font-semibold">Mohith</h3>
-        <p className="text-sm text-gray-500">B.Tech · CSE</p>
+        <h3 className="mt-4 text-lg font-semibold">
+          {profile.name}
+        </h3>
+        <p className="text-sm text-gray-500">
+          {profile.roll_no}
+        </p>
+
 
         <div className="mt-6 space-y-3 text-sm text-gray-600 text-left">
-          <ProfileRow label="Roll No" value="21XX1A05XX" />
-          <ProfileRow label="Year" value="3rd Year" />
-          <ProfileRow label="Semester" value="Sem 6" />
-          <ProfileRow label="Certificates" value="6" />
+          <ProfileRow label="Roll No" value={profile.roll_no} />
+          <ProfileRow label="Year" value={profile.year} />
+          <ProfileRow label="Semester" value={profile.semester} />
+          <ProfileRow label="Certificates" value={profile.certificates} />
         </div>
 
         <div className="mt-6 flex justify-center gap-4">
-          <IconButton icon={LinkedInIcon} color="bg-blue-600" />
-          <IconButton icon={GitHubIcon} color="bg-gray-800" />
+          <IconLink
+            icon={LinkedInIcon}
+            color="bg-blue-600"
+            link={profile.linkedin}
+          />
+
+          <IconLink
+            icon={GitHubIcon}
+            color="bg-gray-800"
+            link={profile.github}
+          />
+
+          <IconLink
+            icon={PersonIcon}
+            color="bg-indigo-600"
+            link={profile.portfolio}
+          />
+
+          
+
         </div>
       </div>
 
@@ -244,12 +331,46 @@ function ProfileRow({ label, value }) {
   );
 }
 
-function IconButton({ icon: Icon, color }) {
+function IconButton({ icon: Icon, color, url }) {
+  if (!url) return null;
+
   return (
-    <button
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
       className={`w-10 h-10 flex items-center justify-center rounded-full ${color} text-white shadow hover:scale-110 transition`}
     >
       <Icon fontSize="small" />
-    </button>
+    </a>
+  );
+}
+
+
+function IconLink({ icon: Icon, color, link }) {
+  if (!link) {
+    // No link → disabled icon
+    return (
+      <div
+        className={`w-10 h-10 flex items-center justify-center rounded-full 
+        bg-gray-300 text-white cursor-not-allowed`}
+        title="Link not added"
+      >
+        <Icon fontSize="small" />
+      </div>
+    );
+  }
+
+  return (
+    <a
+      href={link}
+      target="_blank"
+      rel="noreferrer"
+      className={`w-10 h-10 flex items-center justify-center rounded-full 
+      ${color} text-white shadow hover:scale-110 transition`}
+      title={link}
+    >
+      <Icon fontSize="small" />
+    </a>
   );
 }

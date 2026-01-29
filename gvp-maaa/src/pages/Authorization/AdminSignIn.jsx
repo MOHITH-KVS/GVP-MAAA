@@ -56,7 +56,7 @@ export default function AdminSignIn() {
     setLoginSuccess(true);
 
     setTimeout(() => {
-      navigate("/admin");
+      navigate("/admin", { replace: true });
     }, 1200);
 
 
