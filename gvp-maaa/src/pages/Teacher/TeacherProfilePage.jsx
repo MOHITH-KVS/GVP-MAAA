@@ -3,29 +3,58 @@ import CloseIcon from "@mui/icons-material/Close";
 import EditIcon from "@mui/icons-material/Edit";
 import SaveIcon from "@mui/icons-material/Save";
 import CancelIcon from "@mui/icons-material/Cancel";
+import { useEffect } from "react";
 
 /* ================= MAIN PAGE ================= */
 
-export default function TeacherProfilePage({ onBack }) {
+export default function TeacherProfilePage({ onBack, profile }) {
   const [activeTab, setActiveTab] = useState("overview");
   const [editMode, setEditMode] = useState(false);
 
-  /* ===== Editable fields (Teacher controlled) ===== */
-  const [email, setEmail] = useState("bhanu@gvp.edu");
-  const [phone, setPhone] = useState("+91 XXXXX XXXXX");
-  const [bio, setBio] = useState(
-    "Passionate educator with interest in databases and systems."
-  );
-  const [expertise, setExpertise] = useState([
-    "DBMS",
-    "Operating Systems",
-    "Computer Networks",
-  ]);
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [bio, setBio] = useState("");
+  const [expertise, setExpertise] = useState([]);
 
-  const handleSave = () => {
+ useEffect(() => {
+  if (profile) {
+    setEmail(profile.email || "");
+    setPhone(profile.phone || "");
+    setBio(profile.bio || "");
+    setExpertise(profile.expertise || []);
+  }
+ }, [profile]);
+
+  const handleSave = async () => {
+  try {
+    const token = localStorage.getItem("access_token");
+
+    const res = await fetch("http://127.0.0.1:8000/faculty/profile", {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        phone,
+        bio,
+        expertise,
+        certifications: [], // can add later
+        linkedin: profile.linkedin || null,
+        website: profile.website || null,
+      }),
+    });
+
+    if (!res.ok) throw new Error("Save failed");
+
     setEditMode(false);
-    // later → API call
-  };
+    alert("Profile updated successfully ✅");
+  } catch (err) {
+    alert("Failed to save profile ❌");
+    console.error(err);
+  }
+ };
+
 
   const handleCancel = () => {
     setEditMode(false);
@@ -40,9 +69,9 @@ export default function TeacherProfilePage({ onBack }) {
             B
           </div>
           <div>
-            <h2 className="text-xl font-semibold">Bhanu Prasad</h2>
+            <h2 className="text-xl font-semibold">{profile?.name}</h2>
             <p className="text-sm text-gray-500">
-              Associate Professor · CSE
+              {profile?.designation || "Faculty"}
             </p>
           </div>
         </div>
@@ -160,7 +189,7 @@ function OverviewSection({
   return (
     <Section title="Personal Information">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-        <Info label="Employee ID" value="CSE1023" locked />
+        <Info label="Employee ID" value={profile?.employee_id} locked />
         <Info
           label="Email"
           value={email}

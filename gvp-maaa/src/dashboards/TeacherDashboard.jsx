@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Overview from "../pages/Teacher/Overview";
 import Timetable from "../pages/Teacher/Timetable";
 import Attendance from "../pages/Teacher/Attendance";
@@ -41,15 +41,36 @@ export default function TeacherDashboard() {
   const [showUploadResource, setShowUploadResource] = useState(false);
   const [showGiveAlert, setShowGiveAlert] = useState(false);
   const [showFullProfile, setShowFullProfile] = useState(false);
+  const [profile, setProfile] = useState(null);
 
+  useEffect(() => {
+  const fetchProfile = async () => {
+    const token = localStorage.getItem("access_token");
+    const res = await fetch("http://127.0.0.1:8000/faculty/profile", {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    const data = await res.json();
+    setProfile(data);
+  };
+
+  fetchProfile();
+ }, []);
 
 
   if (showLogout) {
   return <Logout onBack={() => setShowLogout(false)} role="teacher" />;
 }
-if (showFullProfile) {
-    return <ViewProfile onClose={() => setShowFullProfile(false)} />;
-  }
+/*if (showFullProfile) {
+  return (
+    <TeacherProfilePage
+      profile={profile}
+      onBack={() => setShowFullProfile(false)}
+    />
+  );
+ }*/
+
 
 
 
@@ -216,7 +237,12 @@ if (showFullProfile) {
             showProfile ? "w-80" : "w-14"
           } overflow-hidden`}
         >
-          {showProfile ? (
+          {showFullProfile ? (
+            <TeacherProfilePage
+              profile={profile}
+              onBack={() => setShowFullProfile(false)}
+            />
+          ) : showProfile ? (
             <TeacherProfile
               onClose={() => setShowProfile(false)}
               onViewFullProfile={() => setShowFullProfile(true)}
@@ -224,6 +250,7 @@ if (showFullProfile) {
           ) : (
             <CollapsedTeacherProfile onOpen={() => setShowProfile(true)} />
           )}
+
         </div>
 
         </main>

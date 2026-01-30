@@ -8,6 +8,8 @@ from schemas import ResetPasswordRequest
 
 
 import os
+import json
+
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -18,7 +20,7 @@ from schemas import (
     TeacherSignupRequest,
     AdminLoginRequest,
     StudentProfileUpdate,
-    CertificateUpload     
+    FacultyProfileUpdate,   
 )
 from models import User, Student, Faculty
 from auth import (
@@ -178,20 +180,19 @@ def get_student_profile(
     student_data, user_data = student
 
     return {
-        "name": user_data.name,
-        "email": user_data.email,
-        "roll_no": student_data.roll_no,
-        "year": student_data.year,
-        "semester": student_data.semester,
-        "section": student_data.section,
-        "cgpa": float(student_data.cgpa),
-        "phone": student_data.phone,
-        "skills": student_data.skills.split(",") if student_data.skills else [],
-        "linkedin": student_data.linkedin,
-        "github": student_data.github,
-        "portfolio": student_data.portfolio,
-        "bio": student_data.bio,
-    }
+    "name": user_data.name,
+    "email": user_data.email,
+    "roll_no": student_data.roll_no,
+    "year": student_data.year,
+    "semester": student_data.semester,
+    "skills": student_data.skills.split(",") if student_data.skills else [],
+    "certificates": json.loads(student_data.certificates)
+        if student_data.certificates else [],
+    "linkedin": student_data.linkedin,
+    "github": student_data.github,
+    "portfolio": student_data.portfolio,
+ }
+
 
 
 
@@ -211,46 +212,28 @@ def update_student_profile(
         Student.student_id == user["user_id"]
     ).first()
 
-    user_obj = db.query(User).filter(
-        User.user_id == user["user_id"]
-    ).first()
-
-    if not student or not user_obj:
+    if not student:
         raise HTTPException(status_code=404, detail="Student not found")
 
-    # ✅ UPDATE USER TABLE
-    user_obj.name = data.name
-
-    # ✅ UPDATE STUDENT TABLE
+    # BASIC INFO
     student.year = data.year
     student.semester = data.semester
     student.linkedin = data.linkedin
     student.github = data.github
     student.portfolio = data.portfolio
+
+    # SKILLS (list → string)
     student.skills = ",".join(data.skills)
+
+    # ✅ CERTIFICATES (list of objects → JSON string)
+    student.certificates = json.dumps(
+    [c.dict() for c in data.certificates]
+ )
+
 
     db.commit()
 
     return {"message": "Profile updated successfully"}
-
-# -------------------------
-# STUDENT PROFILE PUT
-# -------------------------
-@app.put("/student/certificates")
-def update_certificates(
-    data: CertificateUpload,
-    user=Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    student = db.query(Student).filter(
-        Student.student_id == user["user_id"]
-    ).first()
-
-    student.certificates = ",".join(data.certificates)
-    db.commit()
-
-    return {"message": "Certificates updated"}
-
 
 
 # -------------------------
@@ -303,6 +286,87 @@ def teacher_signup(data: TeacherSignupRequest, db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()  # 🔥 THIS SAVES YOU
         raise HTTPException(status_code=400, detail=str(e))
+
+# -------------------------
+# FACULTY PROFILE GET
+# -------------------------
+@app.get("/faculty/profile")
+def get_faculty_profile(
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if user["role"] != "faculty":
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    faculty = (
+        db.query(Faculty, User)
+        .join(User, Faculty.faculty_id == User.user_id)
+        .filter(User.user_id == user["user_id"])
+        .first()
+    )
+
+    if not faculty:
+        raise HTTPException(status_code=404, detail="Faculty not found")
+
+    faculty_data, user_data = faculty
+
+    return {
+        "name": user_data.name,
+        "email": user_data.email,
+        "employee_id": faculty_data.employee_id,
+
+        "designation": faculty_data.designation,
+        "qualifications": faculty_data.qualifications,
+        "experience": faculty_data.experience,
+
+        "phone": faculty_data.phone,
+        "bio": faculty_data.bio,
+
+        "expertise": faculty_data.expertise.split(",")
+        if faculty_data.expertise else [],
+
+        "certifications": json.loads(faculty_data.certifications)
+        if faculty_data.certifications else [],
+
+        "linkedin": faculty_data.linkedin,
+        "website": faculty_data.website,
+    }
+
+
+# -------------------------
+# FACULTY PROFILE PUT
+# -------------------------
+@app.put("/faculty/profile")
+def update_faculty_profile(
+    data: FacultyProfileUpdate,
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if user["role"] != "faculty":
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    faculty = db.query(Faculty).filter(
+        Faculty.faculty_id == user["user_id"]
+    ).first()
+
+    if not faculty:
+        raise HTTPException(status_code=404, detail="Faculty not found")
+
+    faculty.phone = data.phone
+    faculty.bio = data.bio
+    faculty.linkedin = data.linkedin
+    faculty.website = data.website
+
+    faculty.expertise = ",".join(data.expertise)
+    faculty.certifications = json.dumps(
+        [c.dict() for c in data.certifications]
+    )
+
+    db.commit()
+
+    return {"message": "Faculty profile updated successfully"}
+
+
 
 
 

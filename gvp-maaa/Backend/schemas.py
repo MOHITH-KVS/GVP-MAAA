@@ -27,23 +27,20 @@ class StudentProfileResponse(BaseModel):
     bio: str | None = None
 
 
+class Certificate(BaseModel):
+    title: str
+    link: str
 
 
 class StudentProfileUpdate(BaseModel):
-    name: str
     year: int
     semester: int
-
-    skills: list[str] = []
-    certificates: list[str] = []   # ✅ ADD THIS
+    skills: list[str]
+    certificates: list[Certificate]
 
     linkedin: str | None = None
     github: str | None = None
     portfolio: str | None = None
-
-
-class CertificateUpload(BaseModel):
-    certificates: list[str]
 
 
 
@@ -53,6 +50,41 @@ class TeacherSignupRequest(BaseModel):
     password: str
     employee_id: str
     department_id: int
+
+
+class FacultyCertificate(BaseModel):
+    title: str
+    link: str
+
+
+class FacultyProfileResponse(BaseModel):
+    name: str
+    email: str
+    employee_id: str
+
+    designation: str | None = None
+    qualifications: str | None = None
+    experience: int | None = None
+
+    phone: str | None = None
+    bio: str | None = None
+
+    expertise: list[str] = []
+    certifications: list[FacultyCertificate] = []
+
+    linkedin: str | None = None
+    website: str | None = None
+
+
+class FacultyProfileUpdate(BaseModel):
+    phone: str | None = None
+    bio: str | None = None
+
+    expertise: list[str] = []
+    certifications: list[FacultyCertificate] = []
+
+    linkedin: str | None = None
+    website: str | None = None
 
 
 

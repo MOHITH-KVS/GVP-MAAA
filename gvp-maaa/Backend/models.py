@@ -55,11 +55,24 @@ class Faculty(Base):
         ForeignKey("users.user_id", ondelete="CASCADE"),
         primary_key=True
     )
+
     employee_id = Column(String, nullable=False)
+
     designation = Column(String, nullable=True)
     qualifications = Column(String, nullable=True)
     experience = Column(Integer, nullable=True)
     subjects_handled = Column(String, nullable=True)
+
+    # ✅ NEW PROFILE FIELDS
+    phone = Column(String, nullable=True)
+    bio = Column(String, nullable=True)
+
+    expertise = Column(String, nullable=True)      # comma separated
+    certifications = Column(String, nullable=True) # JSON string
+
+    linkedin = Column(String, nullable=True)
+    website = Column(String, nullable=True)
+
 
 
 

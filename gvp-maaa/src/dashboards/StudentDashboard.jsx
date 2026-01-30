@@ -272,7 +272,10 @@ function StudentProfile({ profile, onClose, onViewProfile }) {
           <ProfileRow label="Roll No" value={profile.roll_no} />
           <ProfileRow label="Year" value={profile.year} />
           <ProfileRow label="Semester" value={profile.semester} />
-          <ProfileRow label="Certificates" value={profile.certificates} />
+          <ProfileRow
+            label="Certificates"
+            value={profile.certificates ? profile.certificates.length : 0}
+          />
         </div>
 
         <div className="mt-6 flex justify-center gap-4">

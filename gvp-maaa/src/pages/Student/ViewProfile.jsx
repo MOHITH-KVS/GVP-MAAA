@@ -29,6 +29,8 @@ export default function ViewProfile({ onClose, profile }) {
   const [skills, setSkills] = useState([]);
   const [newSkill, setNewSkill] = useState("");
   const [certificates, setCertificates] = useState([]);
+  const [certTitle, setCertTitle] = useState("");
+  const [certLink, setCertLink] = useState("");
 
   /* -------- INIT -------- */
   useEffect(() => {
@@ -51,6 +53,7 @@ export default function ViewProfile({ onClose, profile }) {
 
       setSkills(profile.skills || []);
       setCertificates(profile.certificates || []);
+
     }
 
     return () => (document.body.style.overflow = "auto");
@@ -81,7 +84,7 @@ export default function ViewProfile({ onClose, profile }) {
         year: Number(info.year),
         semester: Number(info.semester),
         skills,
-        certificates: certificates.map(c => c.name),
+        certificates: certificates,
         linkedin: info.linkedin,
         github: info.github,
         portfolio: info.portfolio,
@@ -108,13 +111,33 @@ export default function ViewProfile({ onClose, profile }) {
     setNewSkill("");
   };
 
-  const addCertificate = (file) => {
-    if (!file) return;
-    setCertificates([
-      ...certificates,
-      { name: file.name.replace(".pdf", ""), file },
-    ]);
-  };
+  const addCertificate = () => {
+  if (!certTitle.trim() || !certLink.trim()) return;
+
+  setCertificates([
+    ...certificates,
+    { title: certTitle, link: certLink },
+  ]);
+
+
+  setCertTitle("");
+  setCertLink("");
+ };
+
+ const deleteCertificate = (index) => {
+  const confirmDelete = window.confirm(
+    "Are you sure you want to delete this certificate?"
+  );
+
+  if (!confirmDelete) return;
+
+  const updated = certificates.filter((_, i) => i !== index);
+  setCertificates(updated);
+ };
+
+
+
+
 
   /* -------- LOADING GUARD -------- */
   if (!info) {
@@ -274,43 +297,94 @@ export default function ViewProfile({ onClose, profile }) {
               <ul className="space-y-3 text-sm">
                 {certificates.length ? (
                   certificates.map((c, i) => (
-                    <li key={i} className="border rounded-lg p-3">
+                    <li
+                      key={i}
+                      className="border rounded-lg p-3 flex justify-between items-start gap-4"
+                    >
+                      {/* LEFT CONTENT */}
                       {editMode ? (
-                        <input
-                          value={c.name}
-                          onChange={(e) => {
-                            const copy = [...certificates];
-                            copy[i].name = e.target.value;
-                            setCertificates(copy);
-                          }}
-                          className="border rounded px-2 py-1 w-full"
-                        />
+                        <div className="flex-1 space-y-2">
+                          <input
+                            value={c.title}
+                            onChange={(e) => {
+                              const copy = [...certificates];
+                              copy[i].title = e.target.value;
+                              setCertificates(copy);
+                            }}
+                            className="border rounded px-2 py-1 w-full text-sm"
+                            placeholder="Certificate title"
+                          />
+
+                          <input
+                            value={c.link}
+                            onChange={(e) => {
+                              const copy = [...certificates];
+                              copy[i].link = e.target.value;
+                              setCertificates(copy);
+                            }}
+                            className="border rounded px-2 py-1 w-full text-sm"
+                            placeholder="Certificate link"
+                          />
+                        </div>
                       ) : (
-                        <p className="font-medium">✔ {c.name}</p>
+                        <div>
+                          <p className="font-medium">✔ {c.title}</p>
+                          <a
+                            href={c.link}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-indigo-600 text-sm underline"
+                          >
+                            View Certificate
+                          </a>
+                        </div>
+                      )}
+
+                      {/* DELETE BUTTON */}
+                      {editMode && (
+                        <button
+                          onClick={() => deleteCertificate(i)}
+                          className="text-red-500 text-sm hover:underline"
+                        >
+                          Delete
+                        </button>
                       )}
                     </li>
                   ))
                 ) : (
-                  <p className="text-sm text-slate-400">
-                    No certificates uploaded
-                  </p>
+                  <p className="text-sm text-slate-400">No certificates added</p>
                 )}
               </ul>
 
+              {/* ADD NEW CERTIFICATE */}
               {editMode && (
-                <label className="mt-4 inline-block cursor-pointer text-indigo-600 text-sm">
+                <div className="mt-4 space-y-2">
                   <input
-                    type="file"
-                    hidden
-                    accept=".pdf"
-                    onChange={(e) => addCertificate(e.target.files[0])}
+                    value={certTitle}
+                    onChange={(e) => setCertTitle(e.target.value)}
+                    placeholder="Certificate title (e.g. Python NPTEL)"
+                    className="border rounded px-3 py-2 w-full text-sm"
                   />
-                  + Upload Certificate (PDF)
-                </label>
-              )}
 
+                  <input
+                    value={certLink}
+                    onChange={(e) => setCertLink(e.target.value)}
+                    placeholder="Certificate link (Google Drive / DigiLocker)"
+                    className="border rounded px-3 py-2 w-full text-sm"
+                  />
+
+                  <button
+                    onClick={addCertificate}
+                    className="px-4 py-2 bg-indigo-600 text-white rounded text-sm"
+                  >
+                    Add Certificate
+                  </button>
+                </div>
+              )}
             </Section>
           )}
+
+
 
           {/* REMAINING SECTIONS */}
           {active === "Attendance" && (
