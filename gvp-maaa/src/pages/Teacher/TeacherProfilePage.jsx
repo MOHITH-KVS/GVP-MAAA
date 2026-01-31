@@ -15,6 +15,27 @@ export default function TeacherProfilePage({ onBack, profile }) {
   const [phone, setPhone] = useState("");
   const [bio, setBio] = useState("");
   const [expertise, setExpertise] = useState([]);
+  const [qualifications, setQualifications] = useState([]);
+  const [department, setDepartment] = useState("");
+  const [certifications, setCertifications] = useState([]);
+  const [publications, setPublications] = useState([]);
+  const [classes, setClasses] = useState([]);
+  const [name, setName] = useState("");
+  const [employeeId, setEmployeeId] = useState("");
+  const [linkedin, setLinkedin] = useState("");
+  const [github, setGithub] = useState("");
+  const [portfolio, setPortfolio] = useState("");
+
+
+
+  if (!profile) {
+  return (
+    <div className="h-screen flex items-center justify-center">
+      <p className="text-gray-500">Loading profile...</p>
+    </div>
+  );
+ }
+
 
  useEffect(() => {
   if (profile) {
@@ -22,12 +43,27 @@ export default function TeacherProfilePage({ onBack, profile }) {
     setPhone(profile.phone || "");
     setBio(profile.bio || "");
     setExpertise(profile.expertise || []);
+    setQualifications(profile.qualification || []);
+    setDepartment(profile.department_id || "")
+    setCertifications(profile.certifications || []);
+    setPublications(profile.publications || []);
+    setClasses(profile.classes || []);
+    setName(profile.name || "");
+    setEmployeeId(profile.employee_id || "");
+    setLinkedin(profile.linkedin || "");
+    setGithub(profile.github || "");
+    setPortfolio(profile.portfolio || "");
+
+
+
   }
  }, [profile]);
 
   const handleSave = async () => {
   try {
     const token = localStorage.getItem("access_token");
+    console.log("TOKEN:", token);
+
 
     const res = await fetch("http://127.0.0.1:8000/faculty/profile", {
       method: "PUT",
@@ -36,16 +72,31 @@ export default function TeacherProfilePage({ onBack, profile }) {
         Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify({
-        phone,
-        bio,
-        expertise,
-        certifications: [], // can add later
-        linkedin: profile.linkedin || null,
-        website: profile.website || null,
-      }),
+      name,
+      phone,
+      bio,
+      qualification,
+      department,
+
+      linkedin,
+      github,
+      portfolio,
+
+      expertise,
+      certifications,
+      publications,
+      classes
+    })
+
+
     });
 
-    if (!res.ok) throw new Error("Save failed");
+    if (!res.ok) {
+    const err = await res.text();
+    console.error("BACKEND ERROR:", err);
+    throw new Error("Save failed");
+  }
+
 
     setEditMode(false);
     alert("Profile updated successfully ✅");
@@ -130,6 +181,11 @@ export default function TeacherProfilePage({ onBack, profile }) {
         <main className="flex-1 p-8 overflow-y-auto">
           {activeTab === "overview" && (
             <OverviewSection
+              profile={profile}
+              name={name}
+              setName={setName}
+              employeeId={employeeId}
+              setEmployeeId={setEmployeeId}
               email={email}
               phone={phone}
               bio={bio}
@@ -137,10 +193,35 @@ export default function TeacherProfilePage({ onBack, profile }) {
               setEmail={setEmail}
               setPhone={setPhone}
               setBio={setBio}
+              linkedin={linkedin}
+              setLinkedin={setLinkedin}
+              github={github}
+              setGithub={setGithub}
+              portfolio={portfolio}
+              setPortfolio={setPortfolio}
+            />
+
+
+          )}
+          {activeTab === "academic" && (
+            <AcademicSection
+              editMode={editMode}
+              qualifications={qualifications}
+              setQualifications={setQualifications}
+              department={department}
+              setDepartment={setDepartment}
             />
           )}
-          {activeTab === "academic" && <AcademicSection />}
-          {activeTab === "classes" && <ClassesSection />}
+
+          {activeTab === "classes" && (
+            <ClassesSection
+              editMode={editMode}
+              classes={classes}
+              setClasses={setClasses}
+            />
+          )}
+
+
           {activeTab === "expertise" && (
             <ExpertiseSection
               items={expertise}
@@ -148,8 +229,23 @@ export default function TeacherProfilePage({ onBack, profile }) {
               setItems={setExpertise}
             />
           )}
-          {activeTab === "certifications" && <CertificationsSection />}
-          {activeTab === "publications" && <PublicationsSection />}
+          {activeTab === "certifications" && (
+            <CertificationsSection
+              editMode={editMode}
+              certifications={certifications}
+              setCertifications={setCertifications}
+            />
+          )}
+
+          {activeTab === "publications" && (
+            <PublicationsSection
+              editMode={editMode}
+              publications={publications}
+              setPublications={setPublications}
+            />
+          )}
+
+
           {activeTab === "remarks" && <RemarksSection />}
         </main>
       </div>
@@ -178,6 +274,10 @@ function ProfileTab({ label, value, activeTab, setActiveTab }) {
 /* ================= SECTIONS ================= */
 
 function OverviewSection({
+  name,
+  setName,
+  employeeId,
+  setEmployeeId,
   email,
   phone,
   bio,
@@ -185,11 +285,27 @@ function OverviewSection({
   setEmail,
   setPhone,
   setBio,
+  linkedin, setLinkedin,
+  github, setGithub,
+  portfolio, setPortfolio,
 }) {
   return (
     <Section title="Personal Information">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-        <Info label="Employee ID" value={profile?.employee_id} locked />
+        <Info
+          label="Name"
+          value={name}
+          editMode={editMode}
+          onChange={setName}
+        />
+
+        <Info
+          label="Employee ID"
+          value={employeeId}
+          editMode={editMode}
+          onChange={setEmployeeId}
+        />
+
         <Info
           label="Email"
           value={email}
@@ -217,48 +333,151 @@ function OverviewSection({
         />
       )}
 
-      <h3 className="mt-8 mb-4 font-semibold">Quick Stats</h3>
-      <StatsGrid
-        stats={[
-          ["Experience", "12 Years"],
-          ["Subjects", "3"],
-          ["Students", "180+"],
-          ["Classes / Week", "15"],
-        ]}
-      />
+      <h3 className="mt-8 mb-4 font-semibold">Social Links</h3>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <Info label="LinkedIn" value={linkedin} editMode={editMode} onChange={setLinkedin} />
+        <Info label="GitHub" value={github} editMode={editMode} onChange={setGithub} />
+        <Info label="Portfolio" value={portfolio} editMode={editMode} onChange={setPortfolio} />
+      </div>
+
+
     </Section>
   );
 }
 
-function AcademicSection() {
+function AcademicSection({ editMode, qualifications, setQualifications, department, setDepartment }) {
+
   return (
-    <Section title="Academic Information">
-      <InfoGrid
-        items={[
-          ["Qualification", "Ph.D (Computer Science)"],
-          ["Specialization", "Databases, OS"],
-          ["Department", "CSE"],
-          ["Joining Year", "2012"],
-        ]}
-      />
-    </Section>
-  );
+  <Section title="Academic Information">
+    <div className="grid grid-cols-2 gap-6">
+
+      <div>
+        <p className="text-xs text-gray-400">Qualifications</p>
+        {editMode ? (
+          <input
+            value={qualifications}
+            onChange={(e) => setQualifications(e.target.value)}
+            className="w-full p-2 border rounded-lg"
+          />
+        ) : (
+          <p>{qualifications || "—"}</p>
+        )}
+      </div>
+
+      <div>
+        <p className="text-xs text-gray-400">Department</p>
+        {editMode ? (
+          <input
+            value={department}
+            onChange={(e) => setDepartment(e.target.value)}
+            className="w-full p-2 border rounded-lg"
+          />
+        ) : (
+          <p>{department || "—"}</p>
+        )}
+      </div>
+
+    </div>
+  </Section>
+ );
 }
 
-function ClassesSection() {
+function ClassesSection({ editMode, classes, setClasses }) {
+
+  const addRow = () => {
+    setClasses([
+      ...classes,
+      {
+        year: "",
+        section: "",
+        subject: "",
+        students: "",
+        attendance: null
+      }
+    ]);
+  };
+
+  const updateRow = (index, field, value) => {
+    const updated = [...classes];
+    updated[index][field] = value;
+    setClasses(updated);
+  };
+
+  const removeRow = (index) => {
+    setClasses(classes.filter((_, i) => i !== index));
+  };
+
   return (
     <Section title="Classes & Attendance">
-      <Table
-        headers={["Year", "Section", "Subject", "Students", "Avg Attendance"]}
-        rows={[
-          ["3rd Year", "A", "DBMS", "60", "82%"],
-          ["3rd Year", "B", "OS", "58", "79%"],
-          ["4th Year", "A", "CN", "62", "85%"],
-        ]}
-      />
+
+      {editMode && (
+        <button
+          onClick={addRow}
+          className="mb-4 px-4 py-2 bg-indigo-600 text-white rounded-lg"
+        >
+          + Add Class
+        </button>
+      )}
+
+      <div className="overflow-x-auto">
+        <table className="w-full border rounded-xl">
+          <thead className="bg-gray-50">
+            <tr>
+              <th>Year</th>
+              <th>Section</th>
+              <th>Subject</th>
+              <th>Students</th>
+              <th>Avg Attendance</th>
+              {editMode && <th>Action</th>}
+            </tr>
+          </thead>
+
+          <tbody>
+            {classes.map((row, i) => (
+              <tr key={i} className="border-t">
+
+                {/* Editable fields */}
+                {["year", "section", "subject", "students"].map(field => (
+                  <td key={field} className="px-3 py-2">
+                    {editMode ? (
+                      <input
+                        value={row[field]}
+                        onChange={(e) => updateRow(i, field, e.target.value)}
+                        className="w-full p-1 border rounded"
+                      />
+                    ) : (
+                      row[field] || "—"
+                    )}
+                  </td>
+                ))}
+
+                {/* Attendance – read only */}
+                <td className="px-3 py-2 text-gray-500">
+                  {row.attendance ?? "Auto"}
+                </td>
+
+                {/* Delete */}
+                {editMode && (
+                  <td className="px-3 py-2">
+                    <button
+                      onClick={() => removeRow(i)}
+                      className="text-red-600"
+                    >
+                      Delete
+                    </button>
+                  </td>
+                )}
+
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </Section>
   );
 }
+
+
 
 function ExpertiseSection({ items, editMode, setItems }) {
   return (
@@ -277,32 +496,139 @@ function ExpertiseSection({ items, editMode, setItems }) {
   );
 }
 
-function CertificationsSection() {
+function CertificationsSection({ editMode, certifications, setCertifications }) {
+
+  const addCert = () => {
+    setCertifications([...certifications, { name: "", link: "" }]);
+  };
+
+  const updateCert = (i, field, value) => {
+    const updated = [...certifications];
+    updated[i][field] = value;
+    setCertifications(updated);
+  };
+
+  const removeCert = (i) => {
+    setCertifications(certifications.filter((_, idx) => idx !== i));
+  };
+
   return (
-    <Section title="Certifications & FDPs">
-      <List
-        items={[
-          "AICTE FDP on AI – 2023",
-          "NPTEL Advanced DBMS",
-          "Faculty Development Program – IIT Madras",
-        ]}
-      />
+    <Section title="Certifications">
+      {editMode && (
+        <button
+          onClick={addCert}
+          className="mb-4 px-4 py-2 bg-indigo-600 text-white rounded-lg"
+        >
+          + Add Certification
+        </button>
+      )}
+
+      {certifications.map((c, i) => (
+        <div key={i} className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+          {editMode ? (
+            <>
+              <input
+                value={c.name}
+                onChange={(e) => updateCert(i, "name", e.target.value)}
+                placeholder="Certificate Name"
+                className="p-2 border rounded"
+              />
+              <input
+                value={c.link}
+                onChange={(e) => updateCert(i, "link", e.target.value)}
+                placeholder="Certificate Link"
+                className="p-2 border rounded"
+              />
+              <button
+                onClick={() => removeCert(i)}
+                className="text-red-600"
+              >
+                Delete
+              </button>
+            </>
+          ) : (
+            <a
+              href={c.link}
+              target="_blank"
+              className="text-indigo-600 underline"
+            >
+              {c.name}
+            </a>
+          )}
+        </div>
+      ))}
     </Section>
   );
 }
 
-function PublicationsSection() {
+
+
+function PublicationsSection({ editMode, publications, setPublications }) {
+
+  const addPub = () => {
+    setPublications([...publications, { name: "", link: "" }]);
+  };
+
+  const updatePub = (i, field, value) => {
+    const updated = [...publications];
+    updated[i][field] = value;
+    setPublications(updated);
+  };
+
+  const removePub = (i) => {
+    setPublications(publications.filter((_, idx) => idx !== i));
+  };
+
   return (
     <Section title="Publications">
-      <List
-        items={[
-          "Journal on Distributed Systems – IEEE",
-          "Conference on Cloud Computing – 2022",
-        ]}
-      />
+      {editMode && (
+        <button
+          onClick={addPub}
+          className="mb-4 px-4 py-2 bg-indigo-600 text-white rounded-lg"
+        >
+          + Add Publication
+        </button>
+      )}
+
+      {publications.map((p, i) => (
+        <div key={i} className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+          {editMode ? (
+            <>
+              <input
+                value={p.name}
+                onChange={(e) => updatePub(i, "name", e.target.value)}
+                placeholder="Publication Name"
+                className="p-2 border rounded"
+              />
+              <input
+                value={p.link}
+                onChange={(e) => updatePub(i, "link", e.target.value)}
+                placeholder="Publication Link"
+                className="p-2 border rounded"
+              />
+              <button
+                onClick={() => removePub(i)}
+                className="text-red-600"
+              >
+                Delete
+              </button>
+            </>
+          ) : (
+            <a
+              href={p.link}
+              target="_blank"
+              rel="noreferrer"
+              className="text-indigo-600 underline"
+            >
+              {p.name}
+            </a>
+          )}
+        </div>
+      ))}
     </Section>
   );
 }
+
 
 function RemarksSection() {
   return (
@@ -325,20 +651,18 @@ function Section({ title, children }) {
   );
 }
 
-function Info({ label, value, editMode, onChange, locked }) {
+function Info({ label, value, editMode, onChange }) {
   return (
     <div>
       <p className="text-xs text-gray-400">{label}</p>
-      {locked ? (
-        <p className="font-medium text-gray-500">{value} 🔒</p>
-      ) : editMode ? (
+      {editMode ? (
         <input
           value={value}
           onChange={(e) => onChange(e.target.value)}
           className="w-full mt-1 p-2 border rounded-lg text-sm"
         />
       ) : (
-        <p className="font-medium">{value}</p>
+        <p className="font-medium">{value || "—"}</p>
       )}
     </div>
   );

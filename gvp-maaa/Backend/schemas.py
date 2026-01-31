@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from typing import List, Optional
 
 
@@ -75,17 +75,34 @@ class FacultyProfileResponse(BaseModel):
     linkedin: str | None = None
     website: str | None = None
 
+class NameLink(BaseModel):
+    name: str
+    link: str
+
+class ClassItem(BaseModel):
+    year: str
+    section: str
+    subject: str
+    students: str
+    attendance: Optional[float] = None  # auto later
 
 class FacultyProfileUpdate(BaseModel):
-    phone: str | None = None
-    bio: str | None = None
+    name: Optional[str] = None
 
-    expertise: list[str] = []
-    certifications: list[FacultyCertificate] = []
+    phone: Optional[str] = None
+    bio: Optional[str] = None
 
-    linkedin: str | None = None
-    website: str | None = None
+    qualifications: Optional[str] = None
+    experience: Optional[str] = None
 
+    linkedin: Optional[str] = None
+    github: Optional[str] = None
+    portfolio: Optional[str] = None
+
+    expertise: Optional[List[str]] = None
+    certifications: Optional[List[NameLink]] = None
+    publications: Optional[List[NameLink]] = None
+    classes: Optional[List[ClassItem]] = None
 
 
 

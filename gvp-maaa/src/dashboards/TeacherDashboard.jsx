@@ -46,11 +46,23 @@ export default function TeacherDashboard() {
   useEffect(() => {
   const fetchProfile = async () => {
     const token = localStorage.getItem("access_token");
+
+    if (!token) {
+      console.error("No access token found");
+      return;
+    }
+
     const res = await fetch("http://127.0.0.1:8000/faculty/profile", {
       headers: {
         Authorization: `Bearer ${token}`,
       },
     });
+
+    if (!res.ok) {
+      console.error("Failed to fetch profile", res.status);
+      return;
+    }
+
     const data = await res.json();
     setProfile(data);
   };
@@ -59,20 +71,18 @@ export default function TeacherDashboard() {
  }, []);
 
 
+
   if (showLogout) {
   return <Logout onBack={() => setShowLogout(false)} role="teacher" />;
 }
-/*if (showFullProfile) {
+
+ if (!profile) {
   return (
-    <TeacherProfilePage
-      profile={profile}
-      onBack={() => setShowFullProfile(false)}
-    />
+    <div className="h-screen flex items-center justify-center">
+      <p className="text-gray-500">Loading dashboard...</p>
+    </div>
   );
- }*/
-
-
-
+ }
 
   return (
     <div className="h-screen w-screen bg-gradient-to-br from-indigo-50 via-white to-cyan-50">
@@ -237,13 +247,9 @@ export default function TeacherDashboard() {
             showProfile ? "w-80" : "w-14"
           } overflow-hidden`}
         >
-          {showFullProfile ? (
-            <TeacherProfilePage
-              profile={profile}
-              onBack={() => setShowFullProfile(false)}
-            />
-          ) : showProfile ? (
+          {showProfile ? (
             <TeacherProfile
+              profile={profile}
               onClose={() => setShowProfile(false)}
               onViewFullProfile={() => setShowFullProfile(true)}
             />
@@ -251,9 +257,17 @@ export default function TeacherDashboard() {
             <CollapsedTeacherProfile onOpen={() => setShowProfile(true)} />
           )}
 
+
         </div>
 
         </main>
+        {/* ================= FULL PROFILE PAGE ================= */}
+        {showFullProfile && (
+          <TeacherProfilePage
+            profile={profile}
+            onBack={() => setShowFullProfile(false)}
+          />
+        )}
         {/* ================= UPLOAD RESOURCE MODAL ================= */}
         {showUploadResource && (
           <UploadResourceModal
@@ -273,7 +287,7 @@ export default function TeacherDashboard() {
 
 /* ================= PROFILE ================= */
 
-function TeacherProfile({ onClose, onViewFullProfile }) {
+function TeacherProfile({ profile, onClose, onViewFullProfile }) {
   return (
     <div className="h-full rounded-2xl overflow-hidden pointer-events-auto">
       <div className="h-full glass p-6 flex flex-col justify-between">
@@ -288,19 +302,45 @@ function TeacherProfile({ onClose, onViewFullProfile }) {
           <div className="w-24 h-24 mx-auto rounded-full bg-indigo-500 text-white flex items-center justify-center text-3xl font-semibold">
             B
           </div>
-          <h3 className="mt-4 text-lg font-semibold">Bhanu Prasad</h3>
-          <p className="text-sm text-gray-500">Associate Professor · CSE</p>
+          <h3 className="mt-4 text-lg font-semibold">
+            {profile?.name || "Faculty"}
+          </h3>
+          <p className="text-sm text-gray-500">
+            {profile?.designation || "Faculty"}
+          </p>
+
 
           <div className="mt-6 space-y-3 text-sm text-gray-600 text-left">
-            <ProfileRow label="Qualification" value="Ph.D (Computer Science)" />
-            <ProfileRow label="Experience" value="12 Years" />
-            <ProfileRow label="Subjects Count" value="3" />
-            <ProfileRow label="Subjects" value="DBMS, OS, CN" />
+            <ProfileRow label="Email" value={profile?.email || "—"} />
+            <ProfileRow label="Phone" value={profile?.phone || "—"} />
+            <ProfileRow label="Expertise" value={profile?.expertise?.join(", ") || "—"} />
           </div>
 
           <div className="mt-6 flex justify-center gap-4">
-            <IconButton icon={LinkedInIcon} color="bg-blue-600" />
-            <IconButton icon={LanguageIcon} color="bg-gray-800" />
+            {profile?.linkedin && (
+              <IconButton
+                icon={LinkedInIcon}
+                color="bg-blue-600"
+                onClick={() => window.open(profile.linkedin, "_blank")}
+              />
+            )}
+
+            {profile?.github && (
+              <IconButton
+                icon={GitHubIcon}
+                color="bg-gray-800"
+                onClick={() => window.open(profile.github, "_blank")}
+              />
+            )}
+
+            {profile?.portfolio && (
+              <IconButton
+                icon={LanguageIcon}
+                color="bg-indigo-600"
+                onClick={() => window.open(profile.portfolio, "_blank")}
+              />
+            )}
+
           </div>
         </div>
 

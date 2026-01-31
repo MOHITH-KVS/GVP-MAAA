@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Numeric, ForeignKey, JSON
+from sqlalchemy import Column, Integer, String, Numeric, ForeignKey,Text
 from database import Base
 
 
@@ -50,28 +50,25 @@ class Student(Base):
 class Faculty(Base):
     __tablename__ = "faculty"
 
-    faculty_id = Column(
-        Integer,
-        ForeignKey("users.user_id", ondelete="CASCADE"),
-        primary_key=True
-    )
+    faculty_id = Column(Integer, ForeignKey("users.user_id"), primary_key=True)
+    employee_id = Column(String, unique=True, nullable=False)
 
-    employee_id = Column(String, nullable=False)
+    designation = Column(String)
+    qualifications = Column(String)
+    experience = Column(String)
 
-    designation = Column(String, nullable=True)
-    qualifications = Column(String, nullable=True)
-    experience = Column(Integer, nullable=True)
-    subjects_handled = Column(String, nullable=True)
+    phone = Column(String)
+    bio = Column(Text)
 
-    # ✅ NEW PROFILE FIELDS
-    phone = Column(String, nullable=True)
-    bio = Column(String, nullable=True)
+    expertise = Column(Text)        # comma-separated
+    certifications = Column(Text)   # JSON string
+    publications = Column(Text)     # JSON string
+    classes = Column(Text)          # JSON string
 
-    expertise = Column(String, nullable=True)      # comma separated
-    certifications = Column(String, nullable=True) # JSON string
+    linkedin = Column(String)
+    github = Column(String)
+    portfolio = Column(String)
 
-    linkedin = Column(String, nullable=True)
-    website = Column(String, nullable=True)
 
 
 

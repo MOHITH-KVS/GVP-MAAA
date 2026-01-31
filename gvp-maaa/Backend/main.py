@@ -193,9 +193,6 @@ def get_student_profile(
     "portfolio": student_data.portfolio,
  }
 
-
-
-
 # -------------------------
 # STUDENT PROFILE PUT
 # -------------------------
@@ -234,6 +231,7 @@ def update_student_profile(
     db.commit()
 
     return {"message": "Profile updated successfully"}
+
 
 
 # -------------------------
@@ -311,26 +309,37 @@ def get_faculty_profile(
     faculty_data, user_data = faculty
 
     return {
-        "name": user_data.name,
-        "email": user_data.email,
-        "employee_id": faculty_data.employee_id,
+    # ---------- USER ----------
+    "name": user_data.name,
+    "email": user_data.email,
 
-        "designation": faculty_data.designation,
-        "qualifications": faculty_data.qualifications,
-        "experience": faculty_data.experience,
+    # ---------- FACULTY ----------
+    "employee_id": faculty_data.employee_id,
+    "designation": faculty_data.designation,
+    "department": user_data.department_id,
+    "qualifications": faculty_data.qualifications,
+    "experience": faculty_data.experience,
 
-        "phone": faculty_data.phone,
-        "bio": faculty_data.bio,
+    "phone": faculty_data.phone,
+    "bio": faculty_data.bio,
 
-        "expertise": faculty_data.expertise.split(",")
+    "linkedin": faculty_data.linkedin,
+    "github": faculty_data.github,
+    "portfolio": faculty_data.portfolio,
+
+    # ---------- LIST / JSON ----------
+    "expertise": faculty_data.expertise.split(",")
         if faculty_data.expertise else [],
 
-        "certifications": json.loads(faculty_data.certifications)
+    "certifications": json.loads(faculty_data.certifications)
         if faculty_data.certifications else [],
 
-        "linkedin": faculty_data.linkedin,
-        "website": faculty_data.website,
-    }
+    "publications": json.loads(faculty_data.publications)
+        if faculty_data.publications else [],
+
+    "classes": json.loads(faculty_data.classes)
+        if faculty_data.classes else []
+ }
 
 
 # -------------------------
@@ -339,35 +348,70 @@ def get_faculty_profile(
 @app.put("/faculty/profile")
 def update_faculty_profile(
     data: FacultyProfileUpdate,
-    user=Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
 ):
-    if user["role"] != "faculty":
+    if current_user["role"] != "faculty":
         raise HTTPException(status_code=403, detail="Not authorized")
 
     faculty = db.query(Faculty).filter(
-        Faculty.faculty_id == user["user_id"]
+        Faculty.faculty_id == current_user["user_id"]
     ).first()
 
-    if not faculty:
+    user = db.query(User).filter(
+        User.user_id == current_user["user_id"]
+    ).first()
+
+    if not faculty or not user:
         raise HTTPException(status_code=404, detail="Faculty not found")
 
-    faculty.phone = data.phone
-    faculty.bio = data.bio
-    faculty.linkedin = data.linkedin
-    faculty.website = data.website
+    # ----- USERS TABLE -----
+    if data.name is not None:
+        user.name = data.name
 
-    faculty.expertise = ",".join(data.expertise)
-    faculty.certifications = json.dumps(
-        [c.dict() for c in data.certifications]
-    )
+    # ----- FACULTY TABLE -----
+    if data.phone is not None:
+        faculty.phone = data.phone
+
+    if data.bio is not None:
+        faculty.bio = data.bio
+
+    if data.linkedin is not None:
+        faculty.linkedin = data.linkedin
+
+    if data.github is not None:
+        faculty.github = data.github
+
+    if data.portfolio is not None:
+        faculty.portfolio = data.portfolio
+
+    if data.qualifications is not None:
+        faculty.qualifications = data.qualifications
+
+    if data.experience is not None:
+        faculty.experience = data.experience
+
+    # ----- JSON FIELDS -----
+    if data.expertise is not None:
+        faculty.expertise = ",".join(data.expertise)
+
+    if data.certifications is not None:
+        faculty.certifications = json.dumps(
+            [c.dict() for c in data.certifications]
+        )
+
+    if data.publications is not None:
+        faculty.publications = json.dumps(
+            [p.dict() for p in data.publications]
+        )
+
+    if data.classes is not None:
+        faculty.classes = json.dumps(
+            [c.dict() for c in data.classes]
+        )
 
     db.commit()
-
-    return {"message": "Faculty profile updated successfully"}
-
-
-
+    return {"message": "Profile updated successfully"}
 
 
 # -------------------------
