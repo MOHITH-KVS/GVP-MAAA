@@ -419,4 +419,3 @@ function CollapsedTeacherProfile({ onOpen }) {
     </div>
   );
 }
-

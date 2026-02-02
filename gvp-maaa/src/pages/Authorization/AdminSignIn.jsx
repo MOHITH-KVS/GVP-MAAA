@@ -42,31 +42,28 @@ export default function AdminSignIn() {
     });
 
     const data = await response.json();
-    localStorage.setItem("access_token", data.access_token);
-    localStorage.setItem("user_role", data.role);
-
 
     if (!response.ok) {
       throw new Error(data.detail || "Admin login failed");
     }
 
-    // store admin session
+    // ✅ STORE TOKEN CORRECTLY
+    localStorage.setItem("admin_token", data.access_token);
+    localStorage.setItem("user_role", data.role);
     localStorage.setItem("user", JSON.stringify(data));
 
     setLoginSuccess(true);
+    setLoading(false); // ✅ VERY IMPORTANT
 
     setTimeout(() => {
       navigate("/admin", { replace: true });
     }, 1200);
 
-
-
-
   } catch (err) {
     setError(err.message);
     setLoading(false);
-  }  
- };
+  }
+};
 
 
   return (

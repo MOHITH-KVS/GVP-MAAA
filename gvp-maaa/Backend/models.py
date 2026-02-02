@@ -1,4 +1,6 @@
-from sqlalchemy import Column, Integer, String, Numeric, ForeignKey,Text
+from sqlalchemy import Column, Integer, String, Numeric, ForeignKey, Text, Boolean, DateTime
+from sqlalchemy.sql import func
+
 from database import Base
 
 
@@ -69,9 +71,37 @@ class Faculty(Base):
     github = Column(String)
     portfolio = Column(String)
 
+# -------------------------
+# TIMETABLE
+# -------------------------
+class Timetable(Base):
+    __tablename__ = "timetables"
 
+    id = Column(Integer, primary_key=True, index=True)
 
+    # BASIC INFO
+    title = Column(String(255), nullable=False)        # e.g. "III Year Class Timetable"
+    timetable_type = Column(String(50), nullable=False)  # class / exam / fest / event
 
+    # OPTIONAL CLASS DETAILS
+    department = Column(String(50), nullable=True)
+    year = Column(String(20), nullable=True)
+    section = Column(String(10), nullable=True)
+    semester = Column(String(20), nullable=True)
+
+    # FILE / LINK DETAILS
+    file_name = Column(String(255), nullable=True)
+    file_url = Column(Text, nullable=False)
+    file_type = Column(String(20), nullable=False)     # pdf / excel / doc / image / link
+
+    # AUDIENCE
+    audience = Column(String(50), default="students")  # students / faculty / both / all
+
+    # ADMIN META
+    uploaded_by = Column(Integer, ForeignKey("users.user_id"), nullable=False)
+    uploaded_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    is_active = Column(Boolean, default=True)
 
 
 

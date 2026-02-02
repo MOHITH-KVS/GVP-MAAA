@@ -1,14 +1,20 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from security import hash_password, verify_password
 from mail import send_reset_email
-from schemas import ResetPasswordRequest
+from schemas import ResetPasswordRequest,TimetableCreate, TimetableResponse
+from datetime import datetime
+from models import Timetable
+
+import pandas as pd
 
 
 import os
 import json
+import shutil
+import uuid
 
 
 from dotenv import load_dotenv
@@ -22,7 +28,7 @@ from schemas import (
     StudentProfileUpdate,
     FacultyProfileUpdate,   
 )
-from models import User, Student, Faculty
+from models import User, Student, Faculty,Timetable
 from auth import (
     create_access_token,
     create_reset_token,
@@ -35,6 +41,15 @@ from auth import (
 
 
 app = FastAPI(title="GVP Academic Analytics Backend")
+
+from fastapi.staticfiles import StaticFiles
+
+app.mount(
+    "/uploads",
+    StaticFiles(directory="uploads"),
+    name="uploads"
+)
+
 
 # -------------------------
 # CORS
@@ -233,7 +248,6 @@ def update_student_profile(
     return {"message": "Profile updated successfully"}
 
 
-
 # -------------------------
 # FACULTY SIGNUP
 # -------------------------
@@ -316,7 +330,7 @@ def get_faculty_profile(
     # ---------- FACULTY ----------
     "employee_id": faculty_data.employee_id,
     "designation": faculty_data.designation,
-    "department": user_data.department_id,
+    #"department": user_data.department_id,#
     "qualifications": faculty_data.qualifications,
     "experience": faculty_data.experience,
 
@@ -348,8 +362,8 @@ def get_faculty_profile(
 @app.put("/faculty/profile")
 def update_faculty_profile(
     data: FacultyProfileUpdate,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     if current_user["role"] != "faculty":
         raise HTTPException(status_code=403, detail="Not authorized")
@@ -395,10 +409,10 @@ def update_faculty_profile(
     if data.expertise is not None:
         faculty.expertise = ",".join(data.expertise)
 
-    if data.certifications is not None:
-        faculty.certifications = json.dumps(
-            [c.dict() for c in data.certifications]
-        )
+    if data.certifications:
+     faculty.certifications = json.dumps(
+        [c.dict() for c in data.certifications]
+    )
 
     if data.publications is not None:
         faculty.publications = json.dumps(
@@ -440,35 +454,6 @@ def admin_login(data: AdminLoginRequest, db: Session = Depends(get_db)):
         "role": admin.role
     }
 
-
-# -------------------------
-# STUDENT PROTECTED
-# -------------------------
-@app.get("/student/protected")
-def student_protected(user=Depends(get_current_user)):
-    if user["role"] != "student":
-        raise HTTPException(status_code=403, detail="Not authorized")
-
-    return {
-        "message": "JWT works! Student access granted",
-        "user": user
-    }
-
-
-# -------------------------
-# TEACHER PROTECTED
-# -------------------------
-@app.get("/teacher/protected")
-def teacher_protected(user=Depends(get_current_user)):
-    if user["role"] != "faculty":
-        raise HTTPException(status_code=403, detail="Not authorized")
-
-    return {
-        "message": "JWT works! Teacher access granted",
-        "user": user
-    }
-
-
 # -------------------------
 # ADMIN PROTECTED
 # -------------------------
@@ -481,6 +466,124 @@ def admin_protected(user=Depends(get_current_user)):
         "message": "JWT works! Admin access granted",
         "user": user
     }
+
+
+# =========================
+# ADMIN – UPLOAD TIMETABLE
+# =========================
+@app.post("/admin/timetable/upload", response_model=TimetableResponse)
+def upload_timetable(
+    title: str = Form(...),
+    timetable_type: str = Form(...),
+
+    department: str = Form(None),
+    year: str = Form(None),
+    section: str = Form(None),
+    semester: str = Form(None),
+
+    audience: str = Form("students"),
+    file: UploadFile = File(...),
+
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # 🔐 Only admin
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    # 📁 Ensure directory exists
+    upload_dir = "uploads/timetables"
+    os.makedirs(upload_dir, exist_ok=True)
+
+    # 🔹 Unique filename
+    timestamp = int(datetime.utcnow().timestamp())
+    filename = f"{timestamp}_{file.filename}"
+    file_path = os.path.join(upload_dir, filename)
+
+    # 💾 Save file
+    with open(file_path, "wb") as f:
+        f.write(file.file.read())
+
+    # 📄 File type
+    file_type = file.filename.split(".")[-1].lower()
+
+    # 🗄️ Save DB record
+    timetable = Timetable(
+        title=title,
+        timetable_type=timetable_type,
+
+        department=department,
+        year=year,
+        section=section,
+        semester=semester,
+
+        file_name=file.filename,
+        file_path=file_path,
+        file_type=file_type,
+
+        audience=audience,
+        uploaded_at=datetime.utcnow(),
+        is_active=True
+    )
+
+    db.add(timetable)
+    db.commit()
+    db.refresh(timetable)
+
+    return timetable
+
+
+
+# =========================
+# GET PUBLISHED TIMETABLES
+# =========================
+@app.get("/timetables", response_model=list[TimetableResponse])
+def get_timetables(
+    department: str = None,
+    year: str = None,
+    section: str = None,
+    audience: str = None,
+    db: Session = Depends(get_db)
+):
+    query = db.query(Timetable).filter(Timetable.is_active == True)
+
+    if department:
+        query = query.filter(Timetable.department == department)
+    if year:
+        query = query.filter(Timetable.year == year)
+    if section:
+        query = query.filter(Timetable.section == section)
+    if audience:
+        query = query.filter(Timetable.audience.in_([audience, "all"]))
+
+    return query.order_by(Timetable.uploaded_at.desc()).all()
+
+
+# =========================
+# DELETE TIMETABLES
+# =========================
+@app.delete("/admin/timetables/{timetable_id}")
+def delete_timetable(
+    timetable_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    timetable = db.query(Timetable).filter(
+        Timetable.id == timetable_id
+    ).first()
+
+    if not timetable:
+        raise HTTPException(status_code=404, detail="Timetable not found")
+
+    timetable.is_active = False
+    db.commit()
+
+    return {"message": "Timetable deleted successfully"}
+
+
 
 # -------------------------
 # FORGOT PASSWORD
@@ -500,8 +603,6 @@ def forgot_password(email: str, db: Session = Depends(get_db)):
     send_reset_email(email, reset_link)   # ✅ EMAIL SENT HERE
 
     return {"message": "Password reset link sent"}
-
-
 
 
 # -------------------------

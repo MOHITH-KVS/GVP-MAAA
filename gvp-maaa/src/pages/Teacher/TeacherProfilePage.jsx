@@ -7,7 +7,7 @@ import { useEffect } from "react";
 
 /* ================= MAIN PAGE ================= */
 
-export default function TeacherProfilePage({ onBack, profile }) {
+export default function TeacherProfilePage({ onBack, profile, onProfileUpdated }) {
   const [activeTab, setActiveTab] = useState("overview");
   const [editMode, setEditMode] = useState(false);
 
@@ -15,8 +15,8 @@ export default function TeacherProfilePage({ onBack, profile }) {
   const [phone, setPhone] = useState("");
   const [bio, setBio] = useState("");
   const [expertise, setExpertise] = useState([]);
-  const [qualifications, setQualifications] = useState([]);
-  const [department, setDepartment] = useState("");
+  const [qualifications, setQualifications] = useState("");
+  /*const [department, setDepartment] = useState("");*/
   const [certifications, setCertifications] = useState([]);
   const [publications, setPublications] = useState([]);
   const [classes, setClasses] = useState([]);
@@ -43,8 +43,8 @@ export default function TeacherProfilePage({ onBack, profile }) {
     setPhone(profile.phone || "");
     setBio(profile.bio || "");
     setExpertise(profile.expertise || []);
-    setQualifications(profile.qualification || []);
-    setDepartment(profile.department_id || "")
+    setQualifications(profile.qualifications || "");
+    /*setDepartment(profile.department_id || "")*/
     setCertifications(profile.certifications || []);
     setPublications(profile.publications || []);
     setClasses(profile.classes || []);
@@ -75,8 +75,8 @@ export default function TeacherProfilePage({ onBack, profile }) {
       name,
       phone,
       bio,
-      qualification,
-      department,
+      qualifications,
+      /*department,*/
 
       linkedin,
       github,
@@ -97,9 +97,12 @@ export default function TeacherProfilePage({ onBack, profile }) {
     throw new Error("Save failed");
   }
 
+  if (onProfileUpdated) {
+   onProfileUpdated();
+  }
+  setEditMode(false);
+  alert("Profile updated successfully ✅");
 
-    setEditMode(false);
-    alert("Profile updated successfully ✅");
   } catch (err) {
     alert("Failed to save profile ❌");
     console.error(err);
@@ -208,7 +211,7 @@ export default function TeacherProfilePage({ onBack, profile }) {
               editMode={editMode}
               qualifications={qualifications}
               setQualifications={setQualifications}
-              department={department}
+              //*department={department}*/
               setDepartment={setDepartment}
             />
           )}

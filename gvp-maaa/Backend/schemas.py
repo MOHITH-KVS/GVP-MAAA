@@ -1,5 +1,6 @@
 from pydantic import BaseModel
 from typing import List, Optional
+from datetime import datetime
 
 
 class LoginRequest(BaseModel):
@@ -115,3 +116,48 @@ class AdminLoginRequest(BaseModel):
 class ResetPasswordRequest(BaseModel):
     token: str
     new_password: str
+
+# =========================
+# TIMETABLE SCHEMAS
+# =========================
+
+# 🔹 Admin Upload (metadata only, file handled separately)
+class TimetableCreate(BaseModel):
+    title: str                         # "III Year Class Timetable"
+    timetable_type: str               # class / exam / fest / event
+
+    department: Optional[str] = None
+    year: Optional[str] = None
+    section: Optional[str] = None
+    semester: Optional[str] = None
+
+    audience: str = "students"        # students / faculty / both / all
+
+
+# 🔹 Timetable Response (single item)
+class TimetableResponse(BaseModel):
+    id: int
+
+    title: str
+    timetable_type: str
+
+    department: Optional[str]
+    year: Optional[str]
+    section: Optional[str]
+    semester: Optional[str]
+
+    file_name: Optional[str]
+    file_url: str
+    file_type: str
+
+    audience: str
+    uploaded_at: datetime
+    is_active: bool
+
+    class Config:
+        orm_mode = True
+
+
+# 🔹 Timetable List Response
+class TimetableListResponse(BaseModel):
+    timetables: List[TimetableResponse]
