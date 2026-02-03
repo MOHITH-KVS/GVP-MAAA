@@ -1,56 +1,53 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
-/* ===== SAMPLE DATA ===== */
-const STUDENTS = [
-  {
-    id: 1,
-    roll: "21CSE001",
-    name: "Arjun Reddy",
-    year: "3rd Year",
-    section: "A",
-    attendance: 72,
-    cgpa: 6.8,
-    backlogs: 1,
-    alertsSent: 3,
-    lastAlert: "12 Mar 2025",
-  },
-  {
-    id: 2,
-    roll: "21CSE014",
-    name: "Sanjana Rao",
-    year: "3rd Year",
-    section: "B",
-    attendance: 86,
-    cgpa: 8.2,
-    backlogs: 0,
-    alertsSent: 0,
-    lastAlert: "-",
-  },
-  {
-    id: 3,
-    roll: "20CSE032",
-    name: "Vishal Kumar",
-    year: "4th Year",
-    section: "A",
-    attendance: 68,
-    cgpa: 6.1,
-    backlogs: 2,
-    alertsSent: 4,
-    lastAlert: "01 Feb 2025",
-  },
-];
 
 export default function Students() {
-  const [students, setStudents] = useState(STUDENTS);
+  const [students, setStudents] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [year, setYear] = useState("All");
   const [section, setSection] = useState("All");
   const [search, setSearch] = useState("");
 
   const [showAlertModal, setShowAlertModal] = useState(false);
-  const [showAddStudent, setShowAddStudent] = useState(false);
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [showDeleteStudent, setShowDeleteStudent] = useState(false);
   const [showUpdateStudent, setShowUpdateStudent] = useState(false);
+
+  const fetchStudents = async () => {
+  try {
+    setLoading(true); // ✅ start loading
+
+    const token = localStorage.getItem("access_token");
+
+    const response = await fetch("http://127.0.0.1:8000/admin/students", {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`
+      }
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error("Failed to fetch students:", data);
+      setStudents([]);
+    } else {
+      setStudents(Array.isArray(data) ? data : []);
+    }
+
+  } catch (err) {
+    console.error("Fetch students failed:", err);
+    setStudents([]);
+  } finally {
+    setLoading(false); // ✅ THIS WAS MISSING
+  }
+ };
+
+
+  useEffect(() => {
+  fetchStudents();
+ }, []);
 
 
 
@@ -75,6 +72,11 @@ export default function Students() {
     (s) => s.attendance < 75 || s.cgpa < 7
   ).length;
 
+  if (loading) {
+  return <p className="text-center">Loading students...</p>;
+ }
+
+
   return (
     <div className="space-y-8">
 
@@ -89,13 +91,6 @@ export default function Students() {
       {/* ================= ADMIN ACTIONS ================= */}
       <div className="bg-white px-4 py-3 rounded-xl border flex gap-3 flex-wrap items-center">
 
-        {/* PRIMARY ACTION */}
-        <button
-          onClick={() => setShowAddStudent(true)}
-          className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700 transition"
-        >
-          + Add Student
-        </button>
 
         {/* SECONDARY ACTION */}
         <button
@@ -172,7 +167,7 @@ export default function Students() {
                   <td className="px-4 py-3">{s.roll}</td>
                   <td className="px-4 py-3 font-medium">{s.name}</td>
                   <td className="px-4 py-3 text-center">{s.year}</td>
-                  <td className="px-4 py-3 text-center">{s.section}</td>
+                  <td className="px-4 py-3 text-center">{s.section ? s.section : "—"}</td>
                   <td className="px-4 py-3 text-center">{s.attendance}%</td>
                   <td className="px-4 py-3 text-center">{s.cgpa}</td>
                   <td className="px-4 py-3 text-center">
@@ -270,235 +265,11 @@ export default function Students() {
 
       {/* ================= MODALS ================= */}
       {showAlertModal && (<AlertModal students={students} onClose={() => setShowAlertModal(false)}/>)}
-      {showAddStudent && <AddStudentModal onAdd={setStudents} onClose={() => setShowAddStudent(false)} />}
       {selectedStudent && <StudentProfile student={selectedStudent} onClose={() => setSelectedStudent(null)} />}
       {showDeleteStudent && (<DeleteStudentModal students={students} onDelete={setStudents} onClose={() => setShowDeleteStudent(false)} /> )}
       {showUpdateStudent && (<UpdateStudentModal students={students} setStudents={setStudents} onClose={() => setShowUpdateStudent(false)}/>)}
 
 
-    </div>
-  );
-}
-
-function AddStudentModal({ onAdd, onClose }) {
-  const [mode, setMode] = useState("single");
-
-  /* ===== COMMON ===== */
-  const [step, setStep] = useState("form"); // form | review | success
-
-  /* ===== SINGLE MODE ===== */
-  const [singleList, setSingleList] = useState([
-    { roll: "", name: "", year: "3rd Year", section: "A" },
-  ]);
-
-  /* ===== BULK MODE ===== */
-  const [file, setFile] = useState(null);
-  const [bulkPreview, setBulkPreview] = useState([]);
-
-  /* ===== ADD SINGLE ROW ===== */
-  const addSingleRow = () => {
-    setSingleList([
-      ...singleList,
-      { roll: "", name: "", year: "3rd Year", section: "A" },
-    ]);
-  };
-
-  /* ===== HANDLE SINGLE INPUT ===== */
-  const updateSingle = (index, key, value) => {
-    const copy = [...singleList];
-    copy[index][key] = value;
-    setSingleList(copy);
-  };
-
-  /* ===== PREPARE SINGLE FOR REVIEW ===== */
-  const reviewSingle = () => {
-    const valid = singleList.filter(s => s.roll && s.name);
-    if (valid.length === 0) return;
-    setSingleList(valid);
-    setStep("review");
-  };
-
-  /* ===== HANDLE FILE UPLOAD (DUMMY PARSE) ===== */
-  const handleFileUpload = (e) => {
-    const uploaded = e.target.files[0];
-    setFile(uploaded);
-
-    // 🔹 Dummy parsed data (replace with backend later)
-    setBulkPreview([
-      { roll: "21CSE101", name: "Ravi Kumar", year: "3rd Year", section: "A" },
-      { roll: "21CSE102", name: "Neha Sharma", year: "3rd Year", section: "A" },
-    ]);
-  };
-
-  /* ===== FINAL PUBLISH ===== */
-  const finalPublish = () => {
-    const prepared =
-      mode === "single"
-        ? singleList.map((s, i) => ({
-            id: Date.now() + i,
-            ...s,
-            attendance: 0,
-            cgpa: 0,
-            backlogs: 0,
-            alertsSent: 0,
-            lastAlert: "-",
-          }))
-        : bulkPreview.map((s, i) => ({
-            id: Date.now() + i,
-            ...s,
-            attendance: 0,
-            cgpa: 0,
-            backlogs: 0,
-            alertsSent: 0,
-            lastAlert: "-",
-          }));
-
-    onAdd(prev => [...prev, ...prepared]);
-    setStep("success");
-
-    setTimeout(() => {
-      onClose();
-    }, 2000);
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-      <div className="bg-white w-full max-w-3xl rounded-2xl p-6 space-y-6">
-
-        {/* HEADER */}
-        <div className="flex justify-between items-center">
-          <h2 className="text-lg font-semibold">Add Student</h2>
-          <button onClick={onClose}>✕</button>
-        </div>
-
-        {/* MODE */}
-        {step === "form" && (
-          <div className="flex gap-3">
-            <button
-              onClick={() => setMode("single")}
-              className={`px-4 py-2 rounded-lg border ${mode === "single" ? "bg-indigo-600 text-white" : ""}`}
-            >
-              Single Student
-            </button>
-            <button
-              onClick={() => setMode("bulk")}
-              className={`px-4 py-2 rounded-lg border ${mode === "bulk" ? "bg-amber-500 text-white" : ""}`}
-            >
-              Bulk Students
-            </button>
-          </div>
-        )}
-
-        {/* ================= SINGLE FORM ================= */}
-        {mode === "single" && step === "form" && (
-          <div className="space-y-4">
-            {singleList.map((s, i) => (
-              <div key={i} className="grid grid-cols-4 gap-2">
-                <input
-                  placeholder="Roll"
-                  value={s.roll}
-                  onChange={e => updateSingle(i, "roll", e.target.value)}
-                  className="border px-3 py-2 rounded-lg"
-                />
-                <input
-                  placeholder="Name"
-                  value={s.name}
-                  onChange={e => updateSingle(i, "name", e.target.value)}
-                  className="border px-3 py-2 rounded-lg"
-                />
-                <select
-                  value={s.year}
-                  onChange={e => updateSingle(i, "year", e.target.value)}
-                  className="border px-3 py-2 rounded-lg"
-                >
-                  <option>3rd Year</option>
-                  <option>4th Year</option>
-                </select>
-                <select
-                  value={s.section}
-                  onChange={e => updateSingle(i, "section", e.target.value)}
-                  className="border px-3 py-2 rounded-lg"
-                >
-                  <option>A</option>
-                  <option>B</option>
-                </select>
-              </div>
-            ))}
-
-            <button onClick={addSingleRow} className="text-indigo-600 text-sm">
-              + Add Another Student
-            </button>
-
-            <div className="flex justify-end gap-3">
-              <button onClick={reviewSingle} className="px-4 py-2 bg-indigo-600 text-white rounded-lg">
-                Review Students
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* ================= BULK FORM ================= */}
-        {mode === "bulk" && step === "form" && (
-          <div className="space-y-4 border p-4 rounded-xl bg-amber-50">
-            <input type="file" onChange={handleFileUpload} />
-            {file && <p className="text-sm text-green-600">File selected: {file.name}</p>}
-
-            {bulkPreview.length > 0 && (
-              <button
-                onClick={() => setStep("review")}
-                className="px-4 py-2 bg-amber-500 text-white rounded-lg"
-              >
-                Review Uploaded Students
-              </button>
-            )}
-          </div>
-        )}
-
-        {/* ================= REVIEW ================= */}
-        {step === "review" && (
-          <>
-            <table className="w-full text-sm border">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="p-2">Roll</th>
-                  <th className="p-2">Name</th>
-                  <th className="p-2">Year</th>
-                  <th className="p-2">Section</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(mode === "single" ? singleList : bulkPreview).map((s, i) => (
-                  <tr key={i} className="border-t">
-                    <td className="p-2">{s.roll}</td>
-                    <td className="p-2">{s.name}</td>
-                    <td className="p-2">{s.year}</td>
-                    <td className="p-2">{s.section}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-
-            <div className="flex justify-end gap-3">
-              <button onClick={() => setStep("form")} className="px-4 py-2 border rounded-lg">
-                Back & Edit
-              </button>
-              <button onClick={finalPublish} className="px-4 py-2 bg-green-600 text-white rounded-lg">
-                Final Publish
-              </button>
-            </div>
-          </>
-        )}
-
-        {/* ================= SUCCESS ================= */}
-        {step === "success" && (
-          <div className="text-center py-10 space-y-3 animate-pulse">
-            <div className="text-4xl">✅</div>
-            <p className="text-lg font-semibold text-green-600">
-              Successfully updated to database
-            </p>
-          </div>
-        )}
-      </div>
     </div>
   );
 }
@@ -717,25 +488,24 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
   /* ===== SINGLE UPDATE ===== */
   const [filterYear, setFilterYear] = useState("");
   const [filterSection, setFilterSection] = useState("");
+  const [filterDepartment, setFilterDepartment] = useState("");
+  const [editMode, setEditMode] = useState(false);
+
+
   const [search, setSearch] = useState("");
   const [selectedStudentId, setSelectedStudentId] = useState(null);
-
-  const [editFields, setEditFields] = useState({
-    name: false,
-    roll: false,
-    year: false,
-    section: false,
-  });
 
   const [singleUpdate, setSingleUpdate] = useState({});
 
   const filteredStudents = students.filter(
-    (s) =>
-      (!filterYear || s.year === filterYear) &&
-      (!filterSection || s.section === filterSection) &&
-      (s.name.toLowerCase().includes(search.toLowerCase()) ||
-        s.roll.toLowerCase().includes(search.toLowerCase()))
-  );
+  (s) =>
+    (!filterDepartment || s.department === filterDepartment) &&
+    (!filterYear || s.year === filterYear) &&
+    (!filterSection || s.section === filterSection) &&
+    (s.name.toLowerCase().includes(search.toLowerCase()) ||
+     s.roll.toLowerCase().includes(search.toLowerCase()))
+ );
+
 
   const selectedStudent = students.find(
     (s) => s.id === selectedStudentId
@@ -743,53 +513,80 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
 
   /* ===== BULK UPDATE ===== */
   const [bulkFilter, setBulkFilter] = useState({
-    year: "",
-    section: "",
-    newYear: "",
-    newSection: "",
-  });
+  year: "",
+  department: "",   // ✅ ADD THIS
+  section: "",
+  newYear: "",
+  newSection: "",
+ });
+
 
   const bulkStudents = students.filter(
-    (s) =>
-      s.year === bulkFilter.year &&
-      (!bulkFilter.section || s.section === bulkFilter.section)
-  );
+  (s) =>
+    s.year === bulkFilter.year &&
+    s.department === bulkFilter.department &&
+    (!bulkFilter.section || s.section === bulkFilter.section)
+ );
 
   /* ===== CONFIRM UPDATE ===== */
-  const confirmUpdate = () => {
-  setSubmitting(true);
+  const confirmUpdate = async () => {
+    setSubmitting(true);
+    const token = localStorage.getItem("access_token");
 
-  setStudents((prev) =>
-    prev.map((s) => {
-      if (flow === "single" && s.id === selectedStudentId) {
-        return {
-          ...s,
-          name: singleUpdate.name ?? s.name,
-          roll: singleUpdate.roll ?? s.roll,
-          year: singleUpdate.year ?? s.year,
-          section: singleUpdate.section ?? s.section,
-        };
+  try {
+    // 🔹 SINGLE STUDENT UPDATE
+    if (flow === "single" && selectedStudentId) {
+      const response = await fetch(
+        `http://127.0.0.1:8000/admin/students/${selectedStudentId}`,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(singleUpdate),
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error("Failed to update student");
       }
 
-      if (
-        flow === "bulk" &&
-        s.year === bulkFilter.year &&
-        (!bulkFilter.section || s.section === bulkFilter.section)
-      ) {
-        return {
-          ...s,
-          year: bulkFilter.newYear || s.year,
-          section: bulkFilter.newSection || s.section,
-        };
-      }
+      const result = await response.json();
 
-      return s;
-    })
+      // ✅ update UI from backend response
+      setStudents((prev) =>
+        prev.map((s) =>
+          s.id === selectedStudentId ? result.student : s
+        )
+      );
+    }
+
+    setStep("success");
+    setTimeout(() => {
+      setEditMode(false);
+      setSelectedStudentId(null);
+      setSingleUpdate({});
+      onClose();
+    }, 2000);
+
+  } catch (err) {
+    alert(err.message);
+  } finally {
+    setSubmitting(false);
+  }
+ };
+
+ const isChanged =
+  selectedStudent &&
+  Object.keys(singleUpdate).length > 0 &&
+  (
+    singleUpdate.name !== selectedStudent.name ||
+    singleUpdate.roll !== selectedStudent.roll ||
+    singleUpdate.year !== selectedStudent.year ||
+    singleUpdate.section !== selectedStudent.section ||
+    singleUpdate.department !== selectedStudent.department
   );
-
-  setStep("success");
-  setTimeout(onClose, 2500);
-};
 
 
   return (
@@ -835,10 +632,27 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
                 onChange={(e) => setFilterYear(e.target.value)}
               >
                 <option value="">Select Year</option>
-                <option>3rd Year</option>
-                <option>4th Year</option>
+                <option value="1st Year">1st Year</option>
+                <option value="2nd Year">2nd Year</option>
+                <option value="3rd Year">3rd Year</option>
+                <option value="4th Year">4th Year</option>
+
               </select>
 
+               
+              <select
+                className="border px-3 py-2 rounded-lg"
+                value={filterDepartment}
+                onChange={(e) => setFilterDepartment(e.target.value)}
+              >
+                <option value="">Select Department</option>
+                <option value="CSE">CSE</option>
+                <option value="CSM">CSM</option>
+                <option value="ECE">ECE</option>
+                <option value="MECH">MECH</option>
+                <option value="CIVIL">CIVIL</option>
+              </select>
+ 
               <select
                 className="border px-3 py-2 rounded-lg"
                 value={filterSection}
@@ -847,6 +661,7 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
                 <option value="">Select Section (optional)</option>
                 <option>A</option>
                 <option>B</option>
+                <option>C</option>
               </select>
             </div>
 
@@ -865,8 +680,17 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
                   key={s.id}
                   onClick={() => {
                     setSelectedStudentId(s.id);
-                    setSingleUpdate(s);
+                    setSingleUpdate({
+                      name: s.name,
+                      roll: s.roll,
+                      year: s.year,
+                      section: s.section,
+                      department: s.department,
+                    });
+                    setEditMode(false);
                   }}
+
+
                   className={`px-3 py-2 cursor-pointer hover:bg-gray-100 ${
                     selectedStudentId === s.id ? "bg-indigo-50" : ""
                   }`}
@@ -881,82 +705,113 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
                 </p>
               )}
             </div>
-
-            {/* FIELD SELECT */}
             {selectedStudent && (
-              <>
-                <p className="font-medium text-sm">
-                  Select fields to update
-                </p>
+              <div className="space-y-4">
 
-                <div className="grid grid-cols-2 gap-2 text-sm">
-                  {Object.keys(editFields).map((key) => (
-                    <label key={key} className="flex gap-2 items-center">
-                      <input
-                        type="checkbox"
-                        checked={editFields[key]}
-                        onChange={() =>
-                          setEditFields({
-                            ...editFields,
-                            [key]: !editFields[key],
-                          })
-                        }
-                      />
-                      {key.toUpperCase()}
-                    </label>
-                  ))}
-                </div>
+                {/* VIEW MODE */}
+                {!editMode && (
+                  <>
+                    <div className="grid grid-cols-2 gap-3 text-sm">
+                      <div><b>Name:</b> {selectedStudent.name}</div>
+                      <div><b>Roll:</b> {selectedStudent.roll}</div>
+                      <div><b>Year:</b> {selectedStudent.year}</div>
+                      <div><b>Section:</b> {selectedStudent.section}</div>
+                      <div><b>Department:</b> {selectedStudent.department}</div>
+                    </div>
 
-                {editFields.name && (
-                  <input
-                    defaultValue={selectedStudent.name}
-                    onChange={(e) =>
-                      setSingleUpdate({ ...singleUpdate, name: e.target.value })
-                    }
-                    className="border px-3 py-2 rounded-lg w-full"
-                  />
-                )}
-                {editFields.roll && (
-                  <input
-                    defaultValue={selectedStudent.roll}
-                    onChange={(e) =>
-                      setSingleUpdate({ ...singleUpdate, roll: e.target.value })
-                    }
-                    className="border px-3 py-2 rounded-lg w-full"
-                  />
-                )}
-                {editFields.year && (
-                  <input
-                    defaultValue={selectedStudent.year}
-                    onChange={(e) =>
-                      setSingleUpdate({ ...singleUpdate, year: e.target.value })
-                    }
-                    className="border px-3 py-2 rounded-lg w-full"
-                  />
-                )}
-                {editFields.section && (
-                  <input
-                    defaultValue={selectedStudent.section}
-                    onChange={(e) =>
-                      setSingleUpdate({
-                        ...singleUpdate,
-                        section: e.target.value,
-                      })
-                    }
-                    className="border px-3 py-2 rounded-lg w-full"
-                  />
+                    <div className="flex justify-end">
+                      <button
+                        onClick={() => setEditMode(true)}
+                        className="px-4 py-2 bg-indigo-600 text-white rounded-lg"
+                      >
+                        Edit Student
+                      </button>
+                    </div>
+                  </>
                 )}
 
-                <div className="flex justify-end">
-                  <button
-                    onClick={() => setStep("review")}
-                    className="px-4 py-2 bg-indigo-600 text-white rounded-lg"
-                  >
-                    Review Update
-                  </button>
-                </div>
-              </>
-            )}
+                {/* EDIT MODE */}
+                {editMode && (
+                  <>
+                    <input
+                      value={singleUpdate.name || ""}
+                      onChange={(e) =>
+                        setSingleUpdate({ ...singleUpdate, name: e.target.value })
+                      }
+                      className="border px-3 py-2 rounded-lg w-full"
+                      placeholder="Name"
+                    />
+
+                    <input
+                      value={singleUpdate.roll || ""}
+                      onChange={(e) =>
+                        setSingleUpdate({ ...singleUpdate, roll: e.target.value })
+                      }
+                      className="border px-3 py-2 rounded-lg w-full"
+                      placeholder="Roll"
+                    />
+
+                    <select
+                      value={singleUpdate.year || ""}
+                      onChange={(e) =>
+                        setSingleUpdate({ ...singleUpdate, year: e.target.value })
+                      }
+                      className="border px-3 py-2 rounded-lg w-full"
+                    >
+                      <option value="1st Year">1st Year</option>
+                      <option value="2nd Year">2nd Year</option>
+                      <option value="3rd Year">3rd Year</option>
+                      <option value="4th Year">4th Year</option>
+                    </select>
+
+                    <select
+                      value={singleUpdate.section || ""}
+                      onChange={(e) =>
+                        setSingleUpdate({ ...singleUpdate, section: e.target.value })
+                      }
+                      className="border px-3 py-2 rounded-lg w-full"
+                    >
+                      <option value="">Select Section</option>
+                      <option>A</option>
+                      <option>B</option>
+                      <option>C</option>
+                    </select>
+
+
+                    <select
+                      value={singleUpdate.department || ""}
+                      onChange={(e) =>
+                        setSingleUpdate({ ...singleUpdate, department: e.target.value })
+                      }
+                      className="border px-3 py-2 rounded-lg w-full"
+                    >
+                      <option>CSE</option>
+                      <option>CSM</option>
+                      <option>ECE</option>
+                      <option>MECH</option>
+                      <option>CIVIL</option>
+                    </select>
+
+                    <div className="flex justify-end gap-3">
+                      <button
+                        onClick={() => setEditMode(false)}
+                        className="px-4 py-2 border rounded-lg"
+                      >
+                        Cancel
+                      </button>
+
+                      <button
+                        onClick={confirmUpdate}
+                        disabled={submitting || !isChanged}
+                        className="px-4 py-2 bg-green-600 text-white rounded-lg"
+                      >
+                        {submitting ? "Saving..." : "Save Changes"}
+                      </button>
+                    </div>
+                  </>
+                )}
+          </div>
+        )}
           </div>
         )}
 
@@ -966,13 +821,17 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
             <select
               className="border px-3 py-2 rounded-lg w-full"
               onChange={(e) =>
-                setBulkFilter({ ...bulkFilter, year: e.target.value })
+                setBulkFilter({ ...bulkFilter, department: e.target.value })
               }
             >
-              <option value="">Select Current Year</option>
-              <option>3rd Year</option>
-              <option>4th Year</option>
+              <option value="">Select Department</option>
+              <option>CSE</option>
+              <option>CSM</option>
+              <option>ECE</option>
+              <option>MECH</option>
+              <option>CIVIL</option>
             </select>
+
 
             <select
               className="border px-3 py-2 rounded-lg w-full"

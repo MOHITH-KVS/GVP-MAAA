@@ -48,9 +48,11 @@ export default function AdminSignIn() {
     }
 
     // ✅ STORE TOKEN CORRECTLY
-    localStorage.setItem("admin_token", data.access_token);
+    // ✅ STORE TOKEN CORRECTLY
+    localStorage.setItem("access_token", data.access_token);
     localStorage.setItem("user_role", data.role);
     localStorage.setItem("user", JSON.stringify(data));
+
 
     setLoginSuccess(true);
     setLoading(false); // ✅ VERY IMPORTANT

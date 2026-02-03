@@ -30,6 +30,7 @@ class Student(Base):
         primary_key=True
     )
     roll_no = Column(String, unique=True, nullable=True)
+    joining_year = Column(Integer, nullable=False)
     year = Column(Integer, default=1)
     semester = Column(Integer, default=1)
     section = Column(String, nullable=True)

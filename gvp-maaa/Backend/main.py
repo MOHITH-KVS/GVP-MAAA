@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 from security import hash_password, verify_password
 from mail import send_reset_email
-from schemas import ResetPasswordRequest,TimetableCreate, TimetableResponse
+from schemas import ResetPasswordRequest, StudentPromotionRequest,TimetableCreate, TimetableResponse
 from datetime import datetime
 from models import Timetable
 
@@ -124,6 +124,7 @@ def student_signup(data: StudentSignupRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Invalid roll number")
 
     # extract department id (12 from roll number)
+    joining_year = int(data.roll_no[2:4])
     department_id = int(data.roll_no[5:7])
 
     existing_user = db.query(User).filter(User.email == data.email).first()
@@ -154,12 +155,15 @@ def student_signup(data: StudentSignupRequest, db: Session = Depends(get_db)):
 
     # 2️⃣ Auto-create student profile
     student = Student(
-        student_id=new_user.user_id,
-        roll_no=data.roll_no,
-        year=1,
-        semester=1,
-        cgpa=0.00
-    )
+    student_id=new_user.user_id,
+    roll_no=data.roll_no,
+    joining_year=joining_year,   # ✅ ADD THIS
+    year=1,
+    semester=1,
+    section=None,
+    cgpa=0.00
+ )
+
 
     db.add(student)
     db.commit()
@@ -246,6 +250,7 @@ def update_student_profile(
     db.commit()
 
     return {"message": "Profile updated successfully"}
+
 
 
 # -------------------------
@@ -429,14 +434,16 @@ def update_faculty_profile(
 
 
 # -------------------------
-# ADMIN LOGIN
+# ADMIN LOGIN (JWT BASED)
 # -------------------------
 @app.post("/login/admin")
 def admin_login(data: AdminLoginRequest, db: Session = Depends(get_db)):
 
+    # 1️⃣ Validate admin access key
     if data.access_key != os.getenv("ADMIN_ACCESS_KEY"):
         raise HTTPException(status_code=403, detail="Invalid admin access key")
 
+    # 2️⃣ Get admin user
     admin = db.query(User).filter(
         User.email == data.email,
         User.role == "admin"
@@ -445,14 +452,122 @@ def admin_login(data: AdminLoginRequest, db: Session = Depends(get_db)):
     if not admin:
         raise HTTPException(status_code=404, detail="Admin not found")
 
-    if admin.password != data.password:
+    # 3️⃣ Verify bcrypt password ✅
+    if not verify_password(data.password, admin.password):
         raise HTTPException(status_code=401, detail="Invalid password")
 
+    # 4️⃣ Create JWT
+    access_token = create_access_token(
+        data={"user_id": admin.user_id, "role": admin.role}
+    )
+
     return {
+        "access_token": access_token,
+        "token_type": "bearer",
         "user_id": admin.user_id,
         "name": admin.name,
         "role": admin.role
     }
+
+# =========================
+# ADMIN – PROMOTE STUDENTS
+# =========================
+@app.put("/admin/students/promote")
+def promote_students(
+    current_year: int,
+    new_year: int,
+    section: str | None = None,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # 🔐 Admin only
+    if current_user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    query = db.query(Student).filter(Student.year == current_year)
+
+    if section:
+        query = query.filter(Student.section == section)
+
+    students = query.all()
+
+    if not students:
+        raise HTTPException(status_code=404, detail="No students found")
+
+    for s in students:
+        s.year = new_year
+        s.semester = new_year * 2 - 1  # semester logic
+
+    db.commit()
+
+    return {
+        "message": f"{len(students)} students promoted successfully"
+    }
+
+# =========================
+# ADMIN – GET ALL STUDENTS
+# =========================
+@app.get("/admin/students")
+def get_all_students(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    students = (
+        db.query(Student, User)
+        .join(User, Student.student_id == User.user_id)
+        .all()
+    )
+
+    return [
+        {
+            "id": student.student_id,
+            "roll": student.roll_no,
+            "name": user.name,
+            "year": student.year,
+            "section": student.section,
+            "attendance": 0,   # placeholder
+            "cgpa": float(student.cgpa),
+            "backlogs": 0
+        }
+        for student, user in students
+    ]
+
+
+# =========================
+# ADMIN – UPDATE SINGLE STUDENT
+# =========================
+@app.put("/admin/students/{student_id}")
+def update_student(
+    student_id: int,
+    data: dict,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # 🔐 Admin only
+    if current_user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    student = db.query(Student).filter(Student.id == student_id).first()
+
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    # 🔄 Update only provided fields
+    for key, value in data.items():
+        if hasattr(student, key):
+            setattr(student, key, value)
+
+    db.commit()
+    db.refresh(student)
+
+    return {
+        "message": "Student updated successfully",
+        "student": student
+    }
+
 
 # -------------------------
 # ADMIN PROTECTED
@@ -582,6 +697,7 @@ def delete_timetable(
     db.commit()
 
     return {"message": "Timetable deleted successfully"}
+
 
 
 

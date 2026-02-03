@@ -161,3 +161,13 @@ class TimetableResponse(BaseModel):
 # 🔹 Timetable List Response
 class TimetableListResponse(BaseModel):
     timetables: List[TimetableResponse]
+
+
+# =========================
+# STUDENT PROMOTION SCHEMAS
+# =========================
+class StudentPromotionRequest(BaseModel):
+    student_ids: list[int]
+    new_year: int
+    new_semester: int
+    new_section: str | None = None
