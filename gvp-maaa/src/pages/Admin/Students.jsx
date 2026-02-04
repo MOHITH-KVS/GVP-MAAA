@@ -496,6 +496,8 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
   const [selectedStudentId, setSelectedStudentId] = useState(null);
 
   const [singleUpdate, setSingleUpdate] = useState({});
+  const [selectedBulkIds, setSelectedBulkIds] = useState([]);
+
 
   const filteredStudents = students.filter(
   (s) =>
@@ -523,10 +525,10 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
 
   const bulkStudents = students.filter(
   (s) =>
-    s.year === bulkFilter.year &&
-    s.department === bulkFilter.department &&
+    (!bulkFilter.year || s.year === bulkFilter.year) &&
+    (!bulkFilter.department || s.department === bulkFilter.department) &&
     (!bulkFilter.section || s.section === bulkFilter.section)
- );
+);
 
   /* ===== CONFIRM UPDATE ===== */
   const confirmUpdate = async () => {
@@ -818,6 +820,24 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
         {/* ================= BULK UPDATE ================= */}
         {flow === "bulk" && step === "form" && (
           <div className="space-y-4">
+
+            {/* SELECT CURRENT YEAR */}
+            <select
+              className="border px-3 py-2 rounded-lg w-full"
+              value={bulkFilter.year}
+              onChange={(e) =>
+                setBulkFilter({ ...bulkFilter, year: e.target.value })
+              }
+            >
+              <option value="">Select Current Year</option>
+              <option value="1st Year">1st Year</option>
+              <option value="2nd Year">2nd Year</option>
+              <option value="3rd Year">3rd Year</option>
+              <option value="4th Year">4th Year</option>
+            </select>
+
+
+            {/* SELECT CURRENT DEPARTMENT */}
             <select
               className="border px-3 py-2 rounded-lg w-full"
               onChange={(e) =>
@@ -832,7 +852,7 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
               <option>CIVIL</option>
             </select>
 
-
+            {/* SELECT CURRENT SECTION */}
             <select
               className="border px-3 py-2 rounded-lg w-full"
               onChange={(e) =>
@@ -842,6 +862,7 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
               <option value="">Select Section (optional)</option>
               <option>A</option>
               <option>B</option>
+              <option>C</option>
             </select>
 
             <input
@@ -860,14 +881,61 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
               }
             />
 
+
             {bulkStudents.length > 0 && (
+              <div className="border rounded-lg max-h-48 overflow-y-auto text-sm">
+                {bulkStudents.map((s) => (
+                  <label
+                    key={s.id}
+                    className="flex items-center gap-3 px-3 py-2 border-b cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedBulkIds.includes(s.id)}
+                      onChange={() => {
+                        setSelectedBulkIds((prev) =>
+                          prev.includes(s.id)
+                            ? prev.filter((id) => id !== s.id)
+                            : [...prev, s.id]
+                        );
+                      }}
+                    />
+                    <span>
+                      {s.roll} – {s.name} ({s.section})
+                    </span>
+                  </label>
+                ))}
+              </div>
+            )}
+
+
+
+            {selectedBulkIds.length > 0 && (
               <button
                 onClick={() => setStep("review")}
                 className="px-4 py-2 bg-indigo-600 text-white rounded-lg"
               >
-                Preview {bulkStudents.length} Students
+                Preview {selectedBulkIds.length} Students
               </button>
             )}
+
+            {/* PREVIEW STUDENTS */}
+            {bulkStudents.length > 0 && (
+              <div className="border rounded-lg max-h-40 overflow-y-auto text-sm">
+                {bulkStudents.map((s) => (
+                  <div key={s.id} className="px-3 py-2 border-b">
+                    {s.roll} – {s.name} ({s.year} {s.section})
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {bulkStudents.length === 0 && (
+              <p className="text-sm text-gray-400 text-center">
+                No students match selected filters
+              </p>
+            )}
+
           </div>
         )}
 
@@ -877,7 +945,7 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
             <p className="font-medium">Review Changes</p>
 
             <div className="max-h-40 overflow-y-auto border rounded-lg text-sm">
-              {(flow === "single" ? [selectedStudent] : bulkStudents).map(
+              {(flow === "single" ? [selectedStudent]: bulkStudents.filter((s) => selectedBulkIds.includes(s.id))).map(
                 (s) => (
                   <div key={s.id} className="px-3 py-2 border-b">
                     {s.roll} – {s.name}
