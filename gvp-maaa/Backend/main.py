@@ -4,17 +4,23 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 from security import hash_password, verify_password
 from mail import send_reset_email
-from schemas import ResetPasswordRequest, StudentPromotionRequest,TimetableCreate, TimetableResponse
+from schemas import  ResetPasswordRequest, StudentPromotionRequest,TimetableCreate, TimetableResponse
 from datetime import datetime
 from models import Timetable
 
 import pandas as pd
-
-
 import os
 import json
 import shutil
 import uuid
+
+DEPARTMENT_MAP = {
+    11: "CSE",
+    12: "CSM",
+    14: "ECE",
+    15: "MECH",
+    16: "CIVIL"
+}
 
 
 from dotenv import load_dotenv
@@ -527,14 +533,47 @@ def get_all_students(
             "roll": student.roll_no,
             "name": user.name,
             "year": student.year,
+            "semester": student.semester,
             "section": student.section,
-            "attendance": 0,   # placeholder
+            "department": DEPARTMENT_MAP.get(user.department_id, "UNKNOWN"),
+            "attendance": 0,
             "cgpa": float(student.cgpa),
             "backlogs": 0
         }
         for student, user in students
     ]
 
+# =========================
+# ADMIN – BULK PROMOTE STUDENTS
+# =========================
+@app.put("/admin/students/bulk-promote")
+def bulk_promote_students(
+    payload: StudentPromotionRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    students = db.query(Student).filter(
+        Student.student_id.in_(payload.student_ids)
+    ).all()
+
+    if not students:
+        raise HTTPException(status_code=404, detail="No students found")
+
+    for student in students:
+        student.year = payload.new_year
+        student.semester = payload.new_semester
+        if payload.new_section:
+            student.section = payload.new_section
+
+    db.commit()
+
+    return {
+        "message": "Students promoted successfully",
+        "updated_count": len(students)
+    }
 
 # =========================
 # ADMIN – UPDATE SINGLE STUDENT
@@ -550,7 +589,7 @@ def update_student(
     if current_user["role"] != "admin":
         raise HTTPException(status_code=403, detail="Admin only")
 
-    student = db.query(Student).filter(Student.id == student_id).first()
+    student = db.query(Student).filter(Student.student_id == student_id).first()
 
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
@@ -567,6 +606,10 @@ def update_student(
         "message": "Student updated successfully",
         "student": student
     }
+
+
+
+
 
 
 # -------------------------

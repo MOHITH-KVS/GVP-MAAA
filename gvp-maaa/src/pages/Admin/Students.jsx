@@ -15,16 +15,15 @@ export default function Students() {
 
   const fetchStudents = async () => {
   try {
-    setLoading(true); // ✅ start loading
+    setLoading(true);
 
     const token = localStorage.getItem("access_token");
 
     const response = await fetch("http://127.0.0.1:8000/admin/students", {
       method: "GET",
       headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`
-      }
+        Authorization: `Bearer ${token}`,
+      },
     });
 
     const data = await response.json();
@@ -32,15 +31,16 @@ export default function Students() {
     if (!response.ok) {
       console.error("Failed to fetch students:", data);
       setStudents([]);
-    } else {
-      setStudents(Array.isArray(data) ? data : []);
+      return;
     }
+
+    setStudents(Array.isArray(data) ? data : []);
 
   } catch (err) {
     console.error("Fetch students failed:", err);
     setStudents([]);
   } finally {
-    setLoading(false); // ✅ THIS WAS MISSING
+    setLoading(false);
   }
  };
 
@@ -488,6 +488,7 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
   /* ===== SINGLE UPDATE ===== */
   const [filterYear, setFilterYear] = useState("");
   const [filterSection, setFilterSection] = useState("");
+  const [filterSemester, setFilterSemester] = useState("");
   const [filterDepartment, setFilterDepartment] = useState("");
   const [editMode, setEditMode] = useState(false);
 
@@ -502,10 +503,13 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
   const filteredStudents = students.filter(
   (s) =>
     (!filterDepartment || s.department === filterDepartment) &&
-    (!filterYear || s.year === filterYear) &&
+    (!filterYear || Number(s.year) === Number(filterYear)) &&
+    (!filterSemester || Number(s.semester) === Number(filterSemester))&&
     (!filterSection || s.section === filterSection) &&
-    (s.name.toLowerCase().includes(search.toLowerCase()) ||
-     s.roll.toLowerCase().includes(search.toLowerCase()))
+    (
+      s.name.toLowerCase().includes(search.toLowerCase()) ||
+      s.roll.toLowerCase().includes(search.toLowerCase())
+    )
  );
 
 
@@ -516,24 +520,28 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
   /* ===== BULK UPDATE ===== */
   const [bulkFilter, setBulkFilter] = useState({
   year: "",
-  department: "",   // ✅ ADD THIS
+  /*semester: "",        // ✅ ADD*/
+  department: "",
   section: "",
   newYear: "",
-  newSection: "",
+  newSemester: "",
+  newSection: ""
  });
+
 
 
   const bulkStudents = students.filter(
   (s) =>
-    (!bulkFilter.year || s.year === bulkFilter.year) &&
+    (!bulkFilter.year ||Number(s.year) === Number(bulkFilter.year)) &&
     (!bulkFilter.department || s.department === bulkFilter.department) &&
+    /*(!bulkFilter.semester || Number(s.semester) === Number(bulkFilter.semester)) && */
     (!bulkFilter.section || s.section === bulkFilter.section)
 );
 
   /* ===== CONFIRM UPDATE ===== */
   const confirmUpdate = async () => {
-    setSubmitting(true);
-    const token = localStorage.getItem("access_token");
+  setSubmitting(true);
+  const token = localStorage.getItem("access_token");
 
   try {
     // 🔹 SINGLE STUDENT UPDATE
@@ -550,34 +558,105 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
         }
       );
 
-      if (!response.ok) {
-        throw new Error("Failed to update student");
-      }
+      if (!response.ok) throw new Error("Single update failed");
 
       const result = await response.json();
 
-      // ✅ update UI from backend response
       setStudents((prev) =>
         prev.map((s) =>
-          s.id === selectedStudentId ? result.student : s
+          s.id === selectedStudentId
+            ? { ...s, ...singleUpdate }
+            : s
         )
       );
-    }
-
-    setStep("success");
-    setTimeout(() => {
       setEditMode(false);
       setSelectedStudentId(null);
       setSingleUpdate({});
-      onClose();
-    }, 2000);
+
+    }
+
+    // 🔹 BULK PROMOTION
+    // 🔹 BULK PROMOTION (FIXED)
+    if (flow === "bulk" && selectedBulkIds.length > 0) {
+
+      if (selectedBulkIds.length === 0) {
+        alert("Please select at least one student");
+        return;
+      }
+
+      if (!bulkFilter.newYear || !bulkFilter.newSemester) {
+        alert("Please select both Year and Semester");
+        return;
+      }
+      
+
+      console.log("BULK PAYLOAD", {
+        student_ids: selectedBulkIds.map(Number),
+        new_year: Number(bulkFilter.newYear),
+        new_semester: Number(bulkFilter.newSemester),
+        new_section: bulkFilter.newSection || null,
+      });
+
+
+      const response = await fetch(
+        "http://127.0.0.1:8000/admin/students/bulk-promote",
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            student_ids: selectedBulkIds.map(Number), 
+            new_year: Number(bulkFilter.newYear),
+            new_semester: Number(bulkFilter.newSemester), // ✅ ADD
+            new_section: bulkFilter.newSection || null,
+          })
+        }
+      );
+
+      if (!response.ok) {
+        const err = await response.json();
+        console.error(err);
+        throw new Error("Bulk promotion failed");
+      }
+
+      // 🔄 Update UI locally
+      setStudents((prev) =>
+        prev.map((s) =>
+          selectedBulkIds.includes(s.id)
+            ? {
+                ...s,
+                year: Number(bulkFilter.newYear),
+                section: bulkFilter.newSection || s.section,
+              }
+            : s
+        )
+      );
+
+      setSelectedBulkIds([]);
+      setBulkFilter({
+        year: "",
+        department: "",
+        section: "",
+        newYear: "",
+        newSemester: "",
+        newSection: ""
+      });
+
+
+    }
+
+
+    setStep("success");
+    setTimeout(() => onClose(), 2000);
 
   } catch (err) {
     alert(err.message);
   } finally {
     setSubmitting(false);
   }
- };
+};
 
  const isChanged =
   selectedStudent &&
@@ -586,8 +665,8 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
     singleUpdate.name !== selectedStudent.name ||
     singleUpdate.roll !== selectedStudent.roll ||
     singleUpdate.year !== selectedStudent.year ||
-    singleUpdate.section !== selectedStudent.section ||
-    singleUpdate.department !== selectedStudent.department
+    singleUpdate.semester !== selectedStudent.semester ||
+    singleUpdate.section !== selectedStudent.section
   );
 
 
@@ -634,12 +713,31 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
                 onChange={(e) => setFilterYear(e.target.value)}
               >
                 <option value="">Select Year</option>
-                <option value="1st Year">1st Year</option>
-                <option value="2nd Year">2nd Year</option>
-                <option value="3rd Year">3rd Year</option>
-                <option value="4th Year">4th Year</option>
+                <option value={1}>1st Year</option>
+                <option value={2}>2nd Year</option>
+                <option value={3}>3rd Year</option>
+                <option value={4}>4th Year</option>
 
               </select>
+
+              <select
+                className="border px-3 py-2 rounded-lg w-full"
+                value={filterSemester}
+                onChange={(e) =>
+                  setFilterSemester(e.target.value)
+                }
+              >
+                <option value="">Select Semester</option>
+                <option value={1}>Semester 1</option>
+                <option value={2}>Semester 2</option>
+                <option value={3}>Semester 3</option>
+                <option value={4}>Semester 4</option>
+                <option value={5}>Semester 5</option>
+                <option value={6}>Semester 6</option>
+                <option value={7}>Semester 7</option>
+                <option value={8}>Semester 8</option>
+              </select>
+
 
                
               <select
@@ -664,6 +762,8 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
                 <option>A</option>
                 <option>B</option>
                 <option>C</option>
+                <option>D</option>
+                <option>E</option>
               </select>
             </div>
 
@@ -687,7 +787,6 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
                       roll: s.roll,
                       year: s.year,
                       section: s.section,
-                      department: s.department,
                     });
                     setEditMode(false);
                   }}
@@ -760,11 +859,32 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
                       }
                       className="border px-3 py-2 rounded-lg w-full"
                     >
-                      <option value="1st Year">1st Year</option>
-                      <option value="2nd Year">2nd Year</option>
-                      <option value="3rd Year">3rd Year</option>
-                      <option value="4th Year">4th Year</option>
+                      <option value="">Select Year</option>
+                      <option value={1}>1st Year</option>
+                      <option value={2}>2nd Year</option>
+                      <option value={3}>3rd Year</option>
+                      <option value={4}>4th Year</option>
+
                     </select>
+
+                    <select
+                      value={singleUpdate.semester || ""}
+                      onChange={(e) =>
+                        setSingleUpdate({ ...singleUpdate, semester: e.target.value })
+                      }
+                      className="border px-3 py-2 rounded-lg w-full"
+                    >
+                      <option value="">Promote to Semester</option>
+                      <option value={1}>Semester 1</option>
+                      <option value={2}>Semester 2</option>
+                      <option value={3}>Semester 3</option>
+                      <option value={4}>Semester 4</option>
+                      <option value={5}>Semester 5</option>
+                      <option value={6}>Semester 6</option>
+                      <option value={7}>Semester 7</option>
+                      <option value={8}>Semester 8</option>
+                    </select>
+
 
                     <select
                       value={singleUpdate.section || ""}
@@ -777,22 +897,10 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
                       <option>A</option>
                       <option>B</option>
                       <option>C</option>
+                      <option>D</option>
+                      <option>E</option>
                     </select>
 
-
-                    <select
-                      value={singleUpdate.department || ""}
-                      onChange={(e) =>
-                        setSingleUpdate({ ...singleUpdate, department: e.target.value })
-                      }
-                      className="border px-3 py-2 rounded-lg w-full"
-                    >
-                      <option>CSE</option>
-                      <option>CSM</option>
-                      <option>ECE</option>
-                      <option>MECH</option>
-                      <option>CIVIL</option>
-                    </select>
 
                     <div className="flex justify-end gap-3">
                       <button
@@ -830,13 +938,33 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
               }
             >
               <option value="">Select Current Year</option>
-              <option value="1st Year">1st Year</option>
-              <option value="2nd Year">2nd Year</option>
-              <option value="3rd Year">3rd Year</option>
-              <option value="4th Year">4th Year</option>
+              <option value={1}>1st Year</option>
+              <option value={2}>2nd Year</option>
+              <option value={3}>3rd Year</option>
+              <option value={4}>4th Year</option>
+
             </select>
 
+            {/*<select
+              className="border px-3 py-2 rounded-lg w-full"
+              value={bulkFilter.semester}
+              onChange={(e) =>
+                setBulkFilter({ ...bulkFilter, semester: e.target.value })
+              }
+            >
+              <option value="">Select Current Semester</option>
+              <option value={1}>Semester 1</option>
+              <option value={2}>Semester 2</option>
+              <option value={3}>Semester 3</option>
+              <option value={4}>Semester 4</option>
+              <option value={5}>Semester 5</option>
+              <option value={6}>Semester 6</option>
+              <option value={7}>Semester 7</option>
+              <option value={8}>Semester 8</option>
 
+            </select>*/}
+
+           
             {/* SELECT CURRENT DEPARTMENT */}
             <select
               className="border px-3 py-2 rounded-lg w-full"
@@ -863,27 +991,82 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
               <option>A</option>
               <option>B</option>
               <option>C</option>
+              <option>D</option>
+              <option>E</option>
             </select>
 
-            <input
-              placeholder="Promote to Year"
+            <select
               className="border px-3 py-2 rounded-lg w-full"
+              value={bulkFilter.newYear}
               onChange={(e) =>
                 setBulkFilter({ ...bulkFilter, newYear: e.target.value })
               }
-            />
+            >
+              <option value="">Promote to Year</option>
+              <option value={1}>1st Year</option>
+              <option value={2}>2nd Year</option>
+              <option value={3}>3rd Year</option>
+              <option value={4}>4th Year</option>
 
-            <input
-              placeholder="Change Section (optional)"
+            </select>
+
+            <select
               className="border px-3 py-2 rounded-lg w-full"
+              value={bulkFilter.newSemester}
+              onChange={(e) =>
+                setBulkFilter({ ...bulkFilter, newSemester: e.target.value })
+              }
+            >
+              <option value="">Select New Semester</option>
+              <option value={1}>Semester 1</option>
+              <option value={2}>Semester 2</option>
+              <option value={3}>Semester 3</option>
+              <option value={4}>Semester 4</option>
+              <option value={5}>Semester 5</option>
+              <option value={6}>Semester 6</option>
+              <option value={7}>Semester 7</option>
+              <option value={8}>Semester 8</option>
+
+            </select>
+
+
+            <select
+              className="border px-3 py-2 rounded-lg w-full"
+              value={bulkFilter.newSection}
               onChange={(e) =>
                 setBulkFilter({ ...bulkFilter, newSection: e.target.value })
               }
-            />
+            >
+              <option value="">Change Section (optional)</option>
+              <option value="A">A</option>
+              <option value="B">B</option>
+              <option value="C">C</option>
+              <option value="D">D</option>
+              <option value="E">E</option>
+            </select>
+
 
 
             {bulkStudents.length > 0 && (
               <div className="border rounded-lg max-h-48 overflow-y-auto text-sm">
+
+                {/* ✅ SELECT ALL */}
+                <label className="flex items-center gap-3 px-3 py-2 border-b font-medium bg-gray-50 sticky top-0">
+                  <input
+                    type="checkbox"
+                    checked={selectedBulkIds.length === bulkStudents.length}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setSelectedBulkIds(bulkStudents.map((s) => Number(s.id)));
+                      } else {
+                        setSelectedBulkIds([]);
+                      }
+                    }}
+                  />
+                  Select All ({bulkStudents.length})
+                </label>
+
+                {/* 🔽 INDIVIDUAL STUDENTS */}
                 {bulkStudents.map((s) => (
                   <label
                     key={s.id}
@@ -894,10 +1077,11 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
                       checked={selectedBulkIds.includes(s.id)}
                       onChange={() => {
                         setSelectedBulkIds((prev) =>
-                          prev.includes(s.id)
-                            ? prev.filter((id) => id !== s.id)
-                            : [...prev, s.id]
+                          prev.includes(Number(s.id))
+                            ? prev.filter((id) => id !== Number(s.id))
+                            : [...prev, Number(s.id)]
                         );
+
                       }}
                     />
                     <span>
@@ -909,7 +1093,6 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
             )}
 
 
-
             {selectedBulkIds.length > 0 && (
               <button
                 onClick={() => setStep("review")}
@@ -917,17 +1100,6 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
               >
                 Preview {selectedBulkIds.length} Students
               </button>
-            )}
-
-            {/* PREVIEW STUDENTS */}
-            {bulkStudents.length > 0 && (
-              <div className="border rounded-lg max-h-40 overflow-y-auto text-sm">
-                {bulkStudents.map((s) => (
-                  <div key={s.id} className="px-3 py-2 border-b">
-                    {s.roll} – {s.name} ({s.year} {s.section})
-                  </div>
-                ))}
-              </div>
             )}
 
             {bulkStudents.length === 0 && (
@@ -1060,10 +1232,13 @@ function AlertModal({ students, onClose }) {
                 onChange={(e) => setYear(e.target.value)}
                 className="border px-3 py-2 rounded-lg"
               >
-                <option>All</option>
-                <option>3rd Year</option>
-                <option>4th Year</option>
+                <option value="All">All</option>
+                <option value={1}>1st Year</option>
+                <option value={2}>2nd Year</option>
+                <option value={3}>3rd Year</option>
+                <option value={4}>4th Year</option>
               </select>
+
 
               <select
                 value={section}

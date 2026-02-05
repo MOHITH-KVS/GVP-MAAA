@@ -171,3 +171,10 @@ class StudentPromotionRequest(BaseModel):
     new_year: int
     new_semester: int
     new_section: str | None = None
+
+#class BulkPromoteRequest(BaseModel):
+#    year: str
+#    department: str
+#    section: Optional[str] = None
+#    new_year: str
+#    new_section: Optional[str] = None

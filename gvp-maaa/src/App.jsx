@@ -34,6 +34,10 @@ import StudentDashboard from "./dashboards/StudentDashboard";
 import TeacherDashboard from "./dashboards/TeacherDashboard";
 import AdminDashboard from "./dashboards/AdminDashboard";
 
+/* ================= ADMIN SUB-PAGES ================= */
+import Students from "./pages/Admin/Students";
+import Teachers from "./pages/Admin/Teachers";
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -77,7 +81,11 @@ export default function App() {
               <AdminDashboard />
             </ProtectedRoute>
           }
-        />
+        >
+          <Route path="students" element={<Students />} />
+          <Route path="teachers" element={<Teachers />} />
+        </Route>
+
         <Route
           path="/student"
           element={

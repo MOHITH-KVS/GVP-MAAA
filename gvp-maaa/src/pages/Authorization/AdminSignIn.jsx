@@ -47,10 +47,10 @@ export default function AdminSignIn() {
       throw new Error(data.detail || "Admin login failed");
     }
 
-    // ✅ STORE TOKEN CORRECTLY
+  
     // ✅ STORE TOKEN CORRECTLY
     localStorage.setItem("access_token", data.access_token);
-    localStorage.setItem("user_role", data.role);
+    localStorage.setItem("role", data.role);
     localStorage.setItem("user", JSON.stringify(data));
 
 
