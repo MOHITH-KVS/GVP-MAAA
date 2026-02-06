@@ -50,7 +50,7 @@ export default function AdminSignIn() {
   
     // ✅ STORE TOKEN CORRECTLY
     localStorage.setItem("access_token", data.access_token);
-    localStorage.setItem("role", data.role);
+    localStorage.setItem("role", "admin");
     localStorage.setItem("user", JSON.stringify(data));
 
 

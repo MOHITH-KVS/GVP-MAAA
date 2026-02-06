@@ -607,11 +607,13 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
             Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({
-            student_ids: selectedBulkIds.map(Number), 
+            student_ids: selectedBulkIds,
+            current_semester: Number(bulkFilter.semester), // ✅ ADD THIS
             new_year: Number(bulkFilter.newYear),
-            new_semester: Number(bulkFilter.newSemester), // ✅ ADD
+            new_semester: Number(bulkFilter.newSemester),
             new_section: bulkFilter.newSection || null,
           })
+
         }
       );
 

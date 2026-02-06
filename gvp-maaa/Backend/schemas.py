@@ -168,9 +168,11 @@ class TimetableListResponse(BaseModel):
 # =========================
 class StudentPromotionRequest(BaseModel):
     student_ids: list[int]
+    current_semester: int
     new_year: int
     new_semester: int
     new_section: str | None = None
+
 
 #class BulkPromoteRequest(BaseModel):
 #    year: str

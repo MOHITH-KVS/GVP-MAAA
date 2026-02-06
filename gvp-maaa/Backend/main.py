@@ -562,6 +562,14 @@ def bulk_promote_students(
     if not students:
         raise HTTPException(status_code=404, detail="No students found")
 
+    # 🔐 VALIDATION (THIS IS THE ANSWER)
+    if payload.new_semester != payload.current_semester + 1:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid promotion sequence"
+        )
+
+    # ✅ SAFE PROMOTION
     for student in students:
         student.year = payload.new_year
         student.semester = payload.new_semester
@@ -574,6 +582,7 @@ def bulk_promote_students(
         "message": "Students promoted successfully",
         "updated_count": len(students)
     }
+
 
 # =========================
 # ADMIN – UPDATE SINGLE STUDENT
