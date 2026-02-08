@@ -297,22 +297,52 @@ function DeleteStudentModal({ students, onDelete, onClose }) {
   );
 
   /* ===== FINAL DELETE ===== */
-  const handleFinalDelete = () => {
-    if (mode === "single" && selectedStudent) {
-      onDelete((prev) =>
-        prev.filter((s) => s.roll !== selectedStudent.roll)
-      );
+  const handleFinalDelete = async () => {
+  const token = localStorage.getItem("access_token");
+
+  let ids = [];
+
+  if (mode === "single" && selectedStudent) {
+    ids = [selectedStudent.id];
+  }
+
+  if (mode === "bulk") {
+    ids = filteredStudents.map((s) => s.id);
+  }
+
+  if (ids.length === 0) {
+    alert("No students selected");
+    return;
+  }
+
+  try {
+    const res = await fetch("http://127.0.0.1:8000/admin/students", {
+      method: "DELETE",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        student_ids: ids,
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Delete failed");
     }
 
-    if (mode === "bulk") {
-      onDelete((prev) =>
-        prev.filter((s) => !(s.year === year && s.section === section))
-      );
-    }
+    // 🔄 Update UI after DB delete
+    onDelete((prev) => prev.filter((s) => !ids.includes(s.id)));
 
     setStep("success");
     setTimeout(onClose, 1800);
-  };
+
+  } catch (err) {
+    alert(err.message);
+  }
+ };
+
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">

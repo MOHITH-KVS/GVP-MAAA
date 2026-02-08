@@ -180,3 +180,9 @@ class StudentPromotionRequest(BaseModel):
 #    section: Optional[str] = None
 #    new_year: str
 #    new_section: Optional[str] = None
+
+# =========================
+# STUDENT DELETE SCHEMA
+# =========================
+class StudentDeleteRequest(BaseModel):
+    student_ids: list[int]

@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 from security import hash_password, verify_password
 from mail import send_reset_email
-from schemas import  ResetPasswordRequest, StudentPromotionRequest,TimetableCreate, TimetableResponse
+from schemas import  ResetPasswordRequest, StudentPromotionRequest,TimetableCreate, TimetableResponse,StudentDeleteRequest
 from datetime import datetime
 from models import Timetable
 
@@ -617,8 +617,46 @@ def update_student(
     }
 
 
+# =========================
+# ADMIN – DELETE STUDENTS (SINGLE + BULK)
+# =========================
+@app.delete("/admin/students")
+def delete_students(
+    payload: StudentDeleteRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # 🔐 Admin only
+    if current_user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
 
+    if not payload.student_ids:
+        raise HTTPException(status_code=400, detail="No students selected")
 
+    # 1️⃣ Get students
+    students = db.query(Student).filter(
+        Student.student_id.in_(payload.student_ids)
+    ).all()
+
+    if not students:
+        raise HTTPException(status_code=404, detail="Students not found")
+
+    # 2️⃣ Delete related USERS first
+    db.query(User).filter(
+        User.user_id.in_(payload.student_ids)
+    ).delete(synchronize_session=False)
+
+    # 3️⃣ Delete students
+    db.query(Student).filter(
+        Student.student_id.in_(payload.student_ids)
+    ).delete(synchronize_session=False)
+
+    db.commit()
+
+    return {
+        "message": "Students deleted successfully",
+        "deleted_count": len(payload.student_ids)
+    }
 
 
 # -------------------------
