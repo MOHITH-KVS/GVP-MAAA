@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect,useRef } from "react";
 
 
 export default function Students() {
@@ -52,14 +52,19 @@ export default function Students() {
 
 
   /* ===== FILTER ===== */
+  /* ===== FILTER ===== */
   const filtered = students.filter((s) => {
+    const name = (s.name || "").toLowerCase();
+    const roll = (s.roll || "").toLowerCase();
+    const query = search.toLowerCase();
+
     return (
-      (year === "All" || s.year === year) &&
+      (year === "All" || String(s.year) === String(year)) &&
       (section === "All" || s.section === section) &&
-      (s.name.toLowerCase().includes(search.toLowerCase()) ||
-        s.roll.toLowerCase().includes(search.toLowerCase()))
+      (name.includes(query) || roll.includes(query))
     );
   });
+
 
   /* ===== SORT AT RISK FIRST ===== */
   const sortedStudents = [...filtered].sort((a, b) => {
@@ -275,26 +280,79 @@ export default function Students() {
 }
 
 function DeleteStudentModal({ students, onDelete, onClose }) {
-  const [mode, setMode] = useState("single"); // single | bulk
   const [step, setStep] = useState("form"); // form | review | success
+  const [flow, setFlow] = useState(""); // single | bulk
 
-  const [year, setYear] = useState("3rd Year");
-  const [section, setSection] = useState("A");
+
+  // filters (same as update)
+  const [filterYear, setFilterYear] = useState("");
+  const [filterSemester, setFilterSemester] = useState("");
+  const [filterDepartment, setFilterDepartment] = useState("");
+  const [filterSection, setFilterSection] = useState("");
+
   const [search, setSearch] = useState("");
-  const [selectedRoll, setSelectedRoll] = useState("");
+
+  // selection
+  const [selectedStudentId, setSelectedStudentId] = useState(null);
+  const [selectedBulkIds, setSelectedBulkIds] = useState([]);
+
+  // confirm + undo
+  const [confirmText, setConfirmText] = useState("");
+  const [undoTimer, setUndoTimer] = useState(5);
+  const [undoIds, setUndoIds] = useState([]);
+  const undoRef = useRef(null);
+  const UNDO_DURATION = 5; // seconds
+
 
   /* ===== FILTERED STUDENTS ===== */
-  const filteredStudents = students.filter(
-    (s) =>
-      s.year === year &&
-      s.section === section &&
-      (s.name.toLowerCase().includes(search.toLowerCase()) ||
-        s.roll.toLowerCase().includes(search.toLowerCase()))
+  const filteredStudents = students.filter((s) => {
+  const name = (s.name || "").toLowerCase();
+  const roll = (s.roll || "").toLowerCase();
+  const query = search.toLowerCase();
+
+  return (
+    (!filterDepartment || s.department === filterDepartment) &&
+    (!filterYear || String(s.year) === filterYear) &&
+    (!filterSemester || String(s.semester) === filterSemester) &&
+    (!filterSection || s.section === filterSection) &&
+    (name.includes(query) || roll.includes(query))
   );
+ });
+
+
+ useEffect(() => {
+  if (flow === "single") {
+    // if selected student is no longer visible after filtering, clear it
+    const exists = filteredStudents.some(
+      (s) => s.id === selectedStudentId
+    );
+    if (!exists) {
+      setSelectedStudentId(null);
+    }
+  }
+ }, [filteredStudents, flow, selectedStudentId]);
+
 
   const selectedStudent = filteredStudents.find(
-    (s) => s.roll === selectedRoll
+    (s) => s.id === selectedStudentId
   );
+
+  /* ===== UNDO DELETE ===== */
+  const handleUndo = () => {
+  if (undoRef.current) {
+    clearInterval(undoRef.current);
+  }
+
+  // restore deleted students locally
+  onDelete((prev) => [
+    ...prev,
+    ...students.filter((s) => undoIds.includes(s.id)),
+  ]);
+
+  setUndoIds([]);
+  setStep("form");
+ };
+
 
   /* ===== FINAL DELETE ===== */
   const handleFinalDelete = async () => {
@@ -302,18 +360,23 @@ function DeleteStudentModal({ students, onDelete, onClose }) {
 
   let ids = [];
 
-  if (mode === "single" && selectedStudent) {
-    ids = [selectedStudent.id];
+
+  if (flow === "single" && selectedStudentId) {
+    ids = [selectedStudentId];
   }
 
-  if (mode === "bulk") {
-    ids = filteredStudents.map((s) => s.id);
+  if (flow === "bulk") {
+    ids = selectedBulkIds;
   }
+
 
   if (ids.length === 0) {
     alert("No students selected");
     return;
   }
+
+  setUndoIds(ids);     // store deleted ids for undo
+  setUndoTimer(UNDO_DURATION); // reset timer
 
   try {
     const res = await fetch("http://127.0.0.1:8000/admin/students", {
@@ -333,15 +396,52 @@ function DeleteStudentModal({ students, onDelete, onClose }) {
     }
 
     // 🔄 Update UI after DB delete
-    onDelete((prev) => prev.filter((s) => !ids.includes(s.id)));
+      onDelete((prev) => prev.filter((s) => !ids.includes(s.id)));
 
-    setStep("success");
-    setTimeout(onClose, 1800);
+      setStep("success");
+
+
 
   } catch (err) {
     alert(err.message);
   }
  };
+  
+  /* ===== KEEP SELECTED IDS IN SYNC WITH FILTERED LIST ===== */
+  useEffect(() => {
+  if (flow === "bulk") {
+    // remove ids that no longer exist after filtering
+    setSelectedBulkIds((prev) =>
+      prev.filter((id) => filteredStudents.some((s) => s.id === id))
+    );
+  }
+ }, [filteredStudents, flow]);
+
+ 
+ /* ===== UNDO TIMER ===== */
+ useEffect(() => {
+  if (step !== "success") return;
+
+  undoRef.current = setInterval(() => {
+    setUndoTimer((t) => {
+      if (t <= 1) {
+        clearInterval(undoRef.current);
+        return 0;
+      }
+      return t - 1;
+    });
+  }, 1000);
+
+  return () => clearInterval(undoRef.current);
+ }, [step]);
+
+ /* ===== AUTO-CLOSE MODAL AFTER UNDO PERIOD ===== */
+ useEffect(() => {
+  if (step === "success" && undoTimer === 0) {
+    onClose();
+  }
+ }, [undoTimer, step, onClose]);
+
 
 
   return (
@@ -357,83 +457,136 @@ function DeleteStudentModal({ students, onDelete, onClose }) {
         </div>
 
         {/* MODE SELECT */}
-        {step === "form" && (
-          <div className="flex gap-3">
-            <button
-              onClick={() => setMode("single")}
-              className={`px-4 py-2 rounded-lg border ${
-                mode === "single" ? "bg-red-600 text-white" : ""
-              }`}
-            >
-              Single Remove
-            </button>
-            <button
-              onClick={() => setMode("bulk")}
-              className={`px-4 py-2 rounded-lg border ${
-                mode === "bulk" ? "bg-red-500 text-white" : ""
-              }`}
-            >
-              Bulk Remove
-            </button>
+        {!flow && (
+          <div className="space-y-4">
+            <p className="font-medium">Choose delete type</p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setFlow("single")}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg"
+              >
+                Single Student
+              </button>
+              <button
+                onClick={() => setFlow("bulk")}
+                className="px-4 py-2 bg-slate-700 text-white rounded-lg"
+              >
+                Bulk Delete
+              </button>
+            </div>
           </div>
         )}
+
 
         {/* ================= FORM ================= */}
         {step === "form" && (
           <>
             {/* FILTERS */}
-            <div className="grid grid-cols-3 gap-3">
-              <select
-                value={year}
-                onChange={(e) => setYear(e.target.value)}
-                className="border px-3 py-2 rounded-lg"
-              >
-                <option>3rd Year</option>
-                <option>4th Year</option>
-              </select>
+            <div className="grid grid-cols-2 gap-3">
+            <select value={filterYear} onChange={(e) => setFilterYear(e.target.value)}>
+              <option value="">Select Year</option>
+              <option value="1">1st Year</option>
+              <option value="2">2nd Year</option>
+              <option value="3">3rd Year</option>
+              <option value="4">4th Year</option>
+            </select>
 
-              <select
-                value={section}
-                onChange={(e) => setSection(e.target.value)}
-                className="border px-3 py-2 rounded-lg"
-              >
-                <option>A</option>
-                <option>B</option>
-              </select>
+            <select value={filterSemester} onChange={(e) => setFilterSemester(e.target.value)}>
+              <option value="">Select Semester</option>
+              <option value="1">Semester 1</option>
+              <option value="2">Semester 2</option>
+              <option value="3">Semester 3</option>
+              <option value="4">Semester 4</option>
+              <option value="5">Semester 5</option>
+              <option value="6">Semester 6</option>
+              <option value="7">Semester 7</option>
+              <option value="8">Semester 8</option>
+            </select>
 
-              {mode === "single" && (
-                <input
-                  placeholder="Search by name or roll"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  className="border px-3 py-2 rounded-lg"
-                />
-              )}
-            </div>
+            <select value={filterDepartment} onChange={(e) => setFilterDepartment(e.target.value)}>
+              <option value="">Select Department</option>
+              <option value="CSE">CSE</option>
+              <option value="CSM">CSM</option>
+              <option value="ECE">ECE</option>
+              <option value="MECH">MECH</option>
+              <option value="CIVIL">CIVIL</option>
+            </select>
+
+            <select value={filterSection} onChange={(e) => setFilterSection(e.target.value)}>
+              <option value="">Select Section</option>
+              <option value="A">A</option>
+              <option value="B">B</option>
+              <option value="C">C</option>
+              <option value="D">D</option>
+              <option value="E">E</option>
+            </select>
+          </div>
+
+            {/* SEARCH (same as Update modal) */}
+            <input
+              placeholder="Search by name or roll"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="border px-3 py-2 rounded-lg w-full"
+            />
+
 
             {/* SINGLE LIST */}
-            {mode === "single" && (
-              <select
-                className="border px-3 py-2 rounded-lg w-full"
-                value={selectedRoll}
-                onChange={(e) => setSelectedRoll(e.target.value)}
-              >
-                <option value="">Select Student</option>
+            {flow === "single" && (
+              <div className="max-h-40 overflow-y-auto border rounded-lg text-sm">
                 {filteredStudents.map((s) => (
-                  <option key={s.id} value={s.roll}>
-                    {s.roll} — {s.name}
-                  </option>
+                  <div
+                    key={s.id}
+                    onClick={() => setSelectedStudentId(s.id)}
+                    className={`px-3 py-2 cursor-pointer ${
+                      selectedStudentId === s.id ? "bg-red-100" : ""
+                    }`}
+                  >
+                    {s.roll} – {s.name}
+                  </div>
                 ))}
-              </select>
+              </div>
             )}
 
-            {/* BULK INFO */}
-            {mode === "bulk" && (
-              <p className="text-sm text-gray-600">
-                This will remove <b>{filteredStudents.length}</b> students
-                from <b>{year} - Section {section}</b>
-              </p>
+
+            {flow === "bulk" && (
+              <div className="border rounded-lg max-h-48 overflow-y-auto text-sm">
+
+                <label className="flex gap-2 px-3 py-2 border-b font-medium">
+                  <input
+                    type="checkbox"
+                    checked={
+                      filteredStudents.length > 0 &&
+                      filteredStudents.every(s => selectedBulkIds.includes(s.id))
+                    }
+                    onChange={(e) =>
+                      setSelectedBulkIds(
+                        e.target.checked ? filteredStudents.map(s => s.id) : []
+                      )
+                    }
+                  />
+                  Select All ({filteredStudents.length})
+                </label>
+
+                {filteredStudents.map((s) => (
+                  <label key={s.id} className="flex gap-2 px-3 py-2 border-b">
+                    <input
+                      type="checkbox"
+                      checked={selectedBulkIds.includes(s.id)}
+                      onChange={() =>
+                        setSelectedBulkIds(prev =>
+                          prev.includes(s.id)
+                            ? prev.filter(id => id !== s.id)
+                            : [...prev, s.id]
+                        )
+                      }
+                    />
+                    {s.roll} – {s.name}
+                  </label>
+                ))}
+              </div>
             )}
+
 
             {/* ACTIONS */}
             <div className="flex justify-end gap-3">
@@ -441,12 +594,16 @@ function DeleteStudentModal({ students, onDelete, onClose }) {
                 Cancel
               </button>
               <button
-                disabled={mode === "single" && !selectedStudent}
+                disabled={
+                  (flow === "single" && !selectedStudentId) ||
+                  (flow === "bulk" && selectedBulkIds.length === 0)
+                }
                 onClick={() => setStep("review")}
                 className="px-4 py-2 bg-red-600 text-white rounded-lg disabled:opacity-50"
               >
                 Review Delete
               </button>
+
             </div>
           </>
         )}
@@ -459,22 +616,33 @@ function DeleteStudentModal({ students, onDelete, onClose }) {
             </p>
 
             <div className="border rounded-lg max-h-48 overflow-auto">
-              {(mode === "single"
-                ? [selectedStudent]
-                : filteredStudents
-              ).map(
-                (s, i) =>
-                  s && (
-                    <div
-                      key={i}
-                      className="px-3 py-2 border-b text-sm flex justify-between"
-                    >
-                      <span>{s.roll}</span>
-                      <span>{s.name}</span>
-                    </div>
-                  )
-              )}
+              {(
+                flow === "single"
+                  ? filteredStudents.filter(s => s.id === selectedStudentId)
+                  : filteredStudents.filter(s => selectedBulkIds.includes(s.id))
+              ).map((s) => (
+                <div
+                  key={s.id}
+                  className="px-3 py-2 border-b text-sm flex justify-between"
+                >
+                  <span>{s.roll}</span>
+                  <span>{s.name}</span>
+                </div>
+              ))}
             </div>
+
+            <div className="space-y-2">
+              <label className="text-sm text-gray-600">
+                Type <b>DELETE</b> to confirm
+              </label>
+              <input
+                value={confirmText}
+                onChange={(e) => setConfirmText(e.target.value)}
+                placeholder="Type DELETE"
+                className="border px-3 py-2 rounded-lg w-full"
+              />
+            </div>
+
 
             <div className="flex justify-end gap-3">
               <button
@@ -484,8 +652,9 @@ function DeleteStudentModal({ students, onDelete, onClose }) {
                 Back & Edit
               </button>
               <button
+                disabled={confirmText !== "DELETE"}
                 onClick={handleFinalDelete}
-                className="px-4 py-2 bg-red-600 text-white rounded-lg"
+                className="px-4 py-2 bg-red-600 text-white rounded-lg disabled:opacity-50"
               >
                 Confirm Remove
               </button>
@@ -494,16 +663,55 @@ function DeleteStudentModal({ students, onDelete, onClose }) {
         )}
 
         {/* ================= SUCCESS ================= */}
+        {/* ================= SUCCESS ================= */}
         {step === "success" && (
-          <div className="text-center py-10 space-y-2 animate-fadeIn">
-            <div className="text-2xl font-semibold text-red-600">
-              Students Removed Successfully
+          <div className="text-center py-12 space-y-4">
+
+            {/* CHECK ICON */}
+            <div className="mx-auto w-16 h-16 rounded-full bg-red-100 flex items-center justify-center animate-bounce">
+              <span className="text-3xl text-red-600">✓</span>
             </div>
+
+            {/* TEXT */}
+            <h3 className="text-lg font-semibold text-red-700">
+              Students Deleted Successfully
+            </h3>
+
             <p className="text-sm text-gray-500">
-              Records have been updated.
+              Students deleted. You can undo this action for {undoTimer} seconds.
             </p>
+
+            {undoTimer > 0 && (
+              <button
+                onClick={handleUndo}
+                className="mt-4 px-4 py-2 border border-red-500 text-red-600 rounded-lg hover:bg-red-50"
+              >
+                Undo ({undoTimer})
+              </button>
+            )}
+
+            {/* LOADING BAR */}
+            <div className="w-full h-1 bg-gray-200 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-red-500"
+                style={{
+                  animation: `progress ${UNDO_DURATION}s linear`
+                }}
+              />
+            </div>
+
+            <style>
+              {`
+                @keyframes progress {
+                  from { width: 0%; }
+                  to { width: 100%; }
+                }
+              `}
+            </style>
+
           </div>
         )}
+
       </div>
     </div>
   );

@@ -522,10 +522,12 @@ def get_all_students(
         raise HTTPException(status_code=403, detail="Admin only")
 
     students = (
-        db.query(Student, User)
-        .join(User, Student.student_id == User.user_id)
-        .all()
-    )
+    db.query(Student, User)
+    .join(User, Student.student_id == User.user_id)
+    .filter(Student.is_deleted == False)
+    .all()
+   )
+
 
     return [
         {
@@ -626,36 +628,29 @@ def delete_students(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    # 🔐 Admin only
     if current_user["role"] != "admin":
         raise HTTPException(status_code=403, detail="Admin only")
 
     if not payload.student_ids:
         raise HTTPException(status_code=400, detail="No students selected")
 
-    # 1️⃣ Get students
     students = db.query(Student).filter(
-        Student.student_id.in_(payload.student_ids)
+        Student.student_id.in_(payload.student_ids),
+        Student.is_deleted == False
     ).all()
 
     if not students:
         raise HTTPException(status_code=404, detail="Students not found")
 
-    # 2️⃣ Delete related USERS first
-    db.query(User).filter(
-        User.user_id.in_(payload.student_ids)
-    ).delete(synchronize_session=False)
-
-    # 3️⃣ Delete students
-    db.query(Student).filter(
-        Student.student_id.in_(payload.student_ids)
-    ).delete(synchronize_session=False)
+    for student in students:
+        student.is_deleted = True
+        student.deleted_at = datetime.utcnow()
 
     db.commit()
 
     return {
-        "message": "Students deleted successfully",
-        "deleted_count": len(payload.student_ids)
+        "message": "Students marked as deleted",
+        "deleted_count": len(students)
     }
 
 

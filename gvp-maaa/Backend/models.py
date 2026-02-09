@@ -45,6 +45,10 @@ class Student(Base):
     portfolio = Column(String, nullable=True) 
     bio = Column(String, nullable=True)
 
+     # ✅ NEW (SOFT DELETE)
+    is_deleted = Column(Boolean, default=False)
+    deleted_at = Column(DateTime, nullable=True)
+
 
 
 # -------------------------
