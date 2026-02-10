@@ -186,3 +186,8 @@ class StudentPromotionRequest(BaseModel):
 # =========================
 class StudentDeleteRequest(BaseModel):
     student_ids: list[int]
+
+class AlertStudentsRequest(BaseModel):
+    student_ids: list[int]
+    reason: str
+

@@ -4,9 +4,9 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 from security import hash_password, verify_password
 from mail import send_reset_email
-from schemas import  ResetPasswordRequest, StudentPromotionRequest,TimetableCreate, TimetableResponse,StudentDeleteRequest
+from schemas import  AlertStudentsRequest, ResetPasswordRequest, StudentPromotionRequest,TimetableCreate, TimetableResponse,StudentDeleteRequest
 from datetime import datetime
-from models import Timetable
+from models import StudentAlert, Timetable
 
 import pandas as pd
 import os
@@ -783,7 +783,31 @@ def delete_timetable(
 
     return {"message": "Timetable deleted successfully"}
 
+# =========================
+# ADMIN – ALERT STUDENTS
+# =========================    
+@app.post("/admin/alerts")
+def alert_students(
+    payload: AlertStudentsRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
 
+    for sid in payload.student_ids:
+        alert = StudentAlert(
+            student_id=sid,
+            reason=payload.reason
+        )
+        db.add(alert)
+
+    db.commit()
+
+    return {
+        "message": "Alerts sent successfully",
+        "count": len(payload.student_ids)
+    }
 
 
 # -------------------------

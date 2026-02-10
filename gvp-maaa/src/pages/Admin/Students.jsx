@@ -1431,18 +1431,20 @@ function AlertModal({ students, onClose }) {
 
   /* ===== ONLY AT-RISK STUDENTS ===== */
   const atRiskStudents = students.filter(
-    (s) => s.attendance < 75 || s.cgpa < 7
-  );
+  (s) => s.attendance < 75
+ );
+
 
   /* ===== FILTERED VIEW ===== */
   const filtered = atRiskStudents.filter((s) => {
-    return (
-      (year === "All" || s.year === year) &&
-      (section === "All" || s.section === section) &&
-      (s.name.toLowerCase().includes(search.toLowerCase()) ||
-        s.roll.toLowerCase().includes(search.toLowerCase()))
-    );
-  });
+  return (
+    (year === "All" || s.year === Number(year)) &&
+    (section === "All" || s.section === section) &&
+    (s.name.toLowerCase().includes(search.toLowerCase()) ||
+      s.roll.toLowerCase().includes(search.toLowerCase()))
+  );
+ });
+
 
   const getReason = (s) => {
     if (s.attendance < 75 && s.cgpa < 7) return "Low Attendance & CGPA";
@@ -1567,11 +1569,28 @@ function AlertModal({ students, onClose }) {
                 Back
               </button>
               <button
-                onClick={() => setStep("success")}
+                onClick={async () => {
+                  const token = localStorage.getItem("access_token");
+
+                  await fetch("http://127.0.0.1:8000/admin/alerts", {
+                    method: "POST",
+                    headers: {
+                      "Content-Type": "application/json",
+                      Authorization: `Bearer ${token}`,
+                    },
+                    body: JSON.stringify({
+                      student_ids: filtered.map(s => s.id),
+                      reason: "Attendance below 75%"
+                    })
+                  });
+
+                  setStep("success");
+                }}
                 className="px-4 py-2 bg-red-600 text-white rounded-lg"
               >
                 Confirm Send
               </button>
+
             </div>
           </div>
         )}

@@ -1,3 +1,4 @@
+from datetime import datetime
 from sqlalchemy import Column, Integer, String, Numeric, ForeignKey, Text, Boolean, DateTime
 from sqlalchemy.sql import func
 
@@ -48,6 +49,19 @@ class Student(Base):
      # ✅ NEW (SOFT DELETE)
     is_deleted = Column(Boolean, default=False)
     deleted_at = Column(DateTime, nullable=True)
+
+    
+# -------------------------
+# STUDENT ALERTS
+# -------------------------    
+class StudentAlert(Base):
+    __tablename__ = "student_alerts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    student_id = Column(Integer, ForeignKey("students.student_id"))
+    reason = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
 
 
 
