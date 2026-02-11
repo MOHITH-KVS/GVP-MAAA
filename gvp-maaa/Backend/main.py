@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 from security import hash_password, verify_password
 from mail import send_reset_email
-from schemas import  AlertStudentsRequest, ResetPasswordRequest, StudentPromotionRequest,TimetableCreate, TimetableResponse,StudentDeleteRequest
+from schemas import  AlertStudentsRequest, ResetPasswordRequest, StudentPromotionRequest, TeacherAdminUpdate,TimetableCreate, TimetableResponse,StudentDeleteRequest
 from datetime import datetime
 from models import StudentAlert, Timetable
 
@@ -808,6 +808,47 @@ def alert_students(
         "message": "Alerts sent successfully",
         "count": len(payload.student_ids)
     }
+
+# =========================
+# ADMIN – UPDATE TEACHER
+# =========================
+@app.put("/admin/teachers/{teacher_id}")
+def update_teacher(
+    teacher_id: int,
+    data: TeacherAdminUpdate,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    faculty = db.query(Faculty).filter(
+        Faculty.faculty_id == teacher_id
+    ).first()
+
+    user = db.query(User).filter(
+        User.user_id == teacher_id
+    ).first()
+
+    if not faculty or not user:
+        raise HTTPException(status_code=404, detail="Teacher not found")
+
+    # Update designation (Faculty table)
+    if data.designation is not None:
+     faculty.designation = data.designation
+
+
+    # Update department (User table)
+    if data.department_id is not None:
+        user.department_id = data.department_id
+
+    # Update subjects (if you store in Faculty)
+    if data.subjects is not None:
+        faculty.expertise = ",".join(data.subjects)
+
+    db.commit()
+
+    return {"message": "Teacher updated successfully"}
 
 
 # -------------------------

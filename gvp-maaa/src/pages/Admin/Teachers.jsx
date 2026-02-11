@@ -35,6 +35,16 @@ const TEACHERS = [
   },
 ];
 
+DEPARTMENT_MAP = {
+    11: "CSE",
+    12: "CSM",
+    14: "ECE",
+    15: "MECH",
+    1: "CIVIL"
+}
+
+
+
 /* ================= PAGE ================= */
 
 export default function Teachers() {
@@ -51,7 +61,7 @@ export default function Teachers() {
 
 
   /* ===== FILTER ===== */
-  const filtered = TEACHERS.filter((t) => {
+  const filtered = teachers.filter((t) => {
     const matchDept = department === "All" || t.department === department;
     const matchSearch =
       t.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -736,14 +746,11 @@ function UpdateTeacherModal({ teachers, setTeachers, onClose }) {
   const [selectedId, setSelectedId] = useState(null);
 
   const [editFields, setEditFields] = useState({
-    name: false,
-    department: false,
-    designation: false,
-    experience: false,
-    email: false,
-    phone: false,
-    subjects: false,
-  });
+  department: false,
+  designation: false,
+  subjects: false,
+ });
+
 
   const [updatedData, setUpdatedData] = useState({});
 
@@ -757,31 +764,76 @@ function UpdateTeacherModal({ teachers, setTeachers, onClose }) {
   });
 
   const selectedTeacher = teachers.find((t) => t.id === selectedId);
-
   /* ===== FINAL CONFIRM UPDATE (FIXED) ===== */
-  const confirmUpdate = () => {
-    setTeachers((prev) =>
-      prev.map((t) => {
+  const confirmUpdate = async () => {
+  try {
+    const token = localStorage.getItem("access_token");
+
+    const payload = {};
+
+    if (editFields.designation)
+      payload.designation = updatedData.designation;
+
+    if (editFields.department)
+      payload.department_id =
+      DEPARTMENT_MAP[updatedData.department];
+
+
+    if (editFields.subjects)
+      payload.subjects = updatedData.subjects
+        .split(",")
+        .map((s) => s.trim());
+
+    const res = await fetch(
+      `http://127.0.0.1:8000/admin/teachers/${selectedId}`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
+      }
+    );
+
+    if (!res.ok) throw new Error("Update failed");
+
+    const responseData = await res.json();
+
+    setTeachers(prev =>
+      prev.map(t => {
         if (t.id !== selectedId) return t;
 
         return {
           ...t,
           ...updatedData,
+          department: editFields.department
+            ? updatedData.department
+            : t.department,
+          designation: editFields.designation
+            ? updatedData.designation
+            : t.designation,
           subjects: editFields.subjects
-            ? updatedData.subjects
-                ?.split(",")
-                .map((s) => s.trim())
+            ? updatedData.subjects.split(",").map(s => s.trim())
             : t.subjects,
         };
       })
     );
+
 
     setStep("success");
 
     setTimeout(() => {
       onClose();
     }, 2200);
-  };
+
+  } catch (error) {
+    console.error(error);
+    alert("Failed to update teacher");
+  }
+ };
+
+
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
@@ -828,12 +880,8 @@ function UpdateTeacherModal({ teachers, setTeachers, onClose }) {
                     setSelectedId(t.id);
                     setUpdatedData({});
                     setEditFields({
-                      name: false,
                       department: false,
                       designation: false,
-                      experience: false,
-                      email: false,
-                      phone: false,
                       subjects: false,
                     });
                   }}
@@ -874,15 +922,6 @@ function UpdateTeacherModal({ teachers, setTeachers, onClose }) {
                   ))}
                 </div>
 
-                {editFields.name && (
-                  <input
-                    defaultValue={selectedTeacher.name}
-                    onChange={(e) =>
-                      setUpdatedData({ ...updatedData, name: e.target.value })
-                    }
-                    className="border px-3 py-2 rounded-lg w-full"
-                  />
-                )}
 
                 {editFields.department && (
                   <input
@@ -910,44 +949,6 @@ function UpdateTeacherModal({ teachers, setTeachers, onClose }) {
                   />
                 )}
 
-                {editFields.experience && (
-                  <input
-                    defaultValue={selectedTeacher.experience}
-                    onChange={(e) =>
-                      setUpdatedData({
-                        ...updatedData,
-                        experience: e.target.value,
-                      })
-                    }
-                    className="border px-3 py-2 rounded-lg w-full"
-                  />
-                )}
-
-                {editFields.email && (
-                  <input
-                    defaultValue={selectedTeacher.email}
-                    onChange={(e) =>
-                      setUpdatedData({
-                        ...updatedData,
-                        email: e.target.value,
-                      })
-                    }
-                    className="border px-3 py-2 rounded-lg w-full"
-                  />
-                )}
-
-                {editFields.phone && (
-                  <input
-                    defaultValue={selectedTeacher.phone}
-                    onChange={(e) =>
-                      setUpdatedData({
-                        ...updatedData,
-                        phone: e.target.value,
-                      })
-                    }
-                    className="border px-3 py-2 rounded-lg w-full"
-                  />
-                )}
 
                 {editFields.subjects && (
                   <input
@@ -983,15 +984,7 @@ function UpdateTeacherModal({ teachers, setTeachers, onClose }) {
             </p>
 
             <div className="border rounded-lg p-4 bg-gray-50 space-y-4">
-
-              {editFields.name && (
-                <ReviewRow
-                  label="Name"
-                  oldValue={selectedTeacher.name}
-                  newValue={updatedData.name}
-                />
-              )}
-
+            
               {editFields.department && (
                 <ReviewRow
                   label="Department"
@@ -1008,30 +1001,7 @@ function UpdateTeacherModal({ teachers, setTeachers, onClose }) {
                 />
               )}
 
-              {editFields.experience && (
-                <ReviewRow
-                  label="Experience"
-                  oldValue={selectedTeacher.experience}
-                  newValue={updatedData.experience}
-                />
-              )}
-
-              {editFields.email && (
-                <ReviewRow
-                  label="Email"
-                  oldValue={selectedTeacher.email}
-                  newValue={updatedData.email}
-                />
-              )}
-
-              {editFields.phone && (
-                <ReviewRow
-                  label="Phone"
-                  oldValue={selectedTeacher.phone}
-                  newValue={updatedData.phone}
-                />
-              )}
-
+            
               {editFields.subjects && (
                 <ReviewRow
                   label="Subjects"

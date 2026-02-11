@@ -191,3 +191,12 @@ class AlertStudentsRequest(BaseModel):
     student_ids: list[int]
     reason: str
 
+
+# =========================
+# TEACHER UPDATE (ADMIN)
+# =========================
+class TeacherAdminUpdate(BaseModel):
+    designation: Optional[str] = None
+    department_id: Optional[int] = None
+    subjects: Optional[List[str]] = None
+
