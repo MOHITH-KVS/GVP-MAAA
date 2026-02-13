@@ -4,9 +4,9 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 from security import hash_password, verify_password
 from mail import send_reset_email
-from schemas import  AlertStudentsRequest, ResetPasswordRequest, StudentPromotionRequest, TeacherAdminUpdate, TeacherDeleteRequest,TimetableCreate, TimetableResponse,StudentDeleteRequest
+from schemas import  AlertCreate, ResetPasswordRequest, StudentPromotionRequest, TeacherAdminUpdate, TeacherDeleteRequest,TimetableCreate, TimetableResponse,StudentDeleteRequest
 from datetime import datetime
-from models import StudentAlert, Timetable
+from models import Alert, StudentAlert, Timetable
 
 
 import pandas as pd
@@ -784,31 +784,6 @@ def delete_timetable(
 
     return {"message": "Timetable deleted successfully"}
 
-# =========================
-# ADMIN – ALERT STUDENTS
-# =========================    
-@app.post("/admin/alerts")
-def alert_students(
-    payload: AlertStudentsRequest,
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    if current_user["role"] != "admin":
-        raise HTTPException(status_code=403, detail="Admin only")
-
-    for sid in payload.student_ids:
-        alert = StudentAlert(
-            student_id=sid,
-            reason=payload.reason
-        )
-        db.add(alert)
-
-    db.commit()
-
-    return {
-        "message": "Alerts sent successfully",
-        "count": len(payload.student_ids)
-    }
 
 # =========================
 # ADMIN – UPDATE TEACHER
@@ -879,7 +854,34 @@ def delete_teachers(
         "deleted_count": len(teachers)
     }
 
+# =========================
+# ADMIN – CREATE ALERT
+# ======================== 
+@app.post("/admin/alerts")
+def create_alert(
+    payload: AlertCreate,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
 
+    new_alert = Alert(
+        title=payload.title,
+        message=payload.message,
+        type=payload.type,
+        target_role=payload.target_role,
+        target_type=payload.target_type,
+        department=payload.department,
+        faculty_id=payload.faculty_id,
+        student_id=payload.student_id
+    )
+
+    db.add(new_alert)
+    db.commit()
+    db.refresh(new_alert)
+
+    return {"message": "Alert created successfully"}
 
 
 # =========================

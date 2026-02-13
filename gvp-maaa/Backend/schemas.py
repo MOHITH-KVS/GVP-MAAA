@@ -187,10 +187,6 @@ class StudentPromotionRequest(BaseModel):
 class StudentDeleteRequest(BaseModel):
     student_ids: list[int]
 
-class AlertStudentsRequest(BaseModel):
-    student_ids: list[int]
-    reason: str
-
 
 # =========================
 # TEACHER UPDATE (ADMIN)
@@ -204,3 +200,17 @@ class TeacherAdminUpdate(BaseModel):
 # =========================
 class TeacherDeleteRequest(BaseModel):
     teacher_ids: List[int]
+
+# =========================
+# ALERT SCHEMA
+# =========================
+class AlertCreate(BaseModel):
+    title: str
+    message: str
+    type: str
+    target_role: str
+    target_type: str
+    department: Optional[str] = None
+    faculty_id: Optional[int] = None
+    student_id: Optional[int] = None
+   

@@ -948,24 +948,71 @@ function NotifyTeacherModal({ teachers, onClose }) {
   const [message, setMessage] = useState("");
   const [file, setFile] = useState(null);
 
+
   /* ===== FILTERED TEACHERS ===== */
   const departmentTeachers = teachers.filter(
     (t) => t.department === department
   );
 
   const selectedTeacher = teachers.find(
-    (t) => t.id === selectedTeacherId
-  );
+  (t) => t.faculty_id === selectedTeacherId
+ );
+
 
   /* ===== FINAL SEND ===== */
-  const sendNotification = () => {
-    // 🔹 Later connect to backend / email / push service
+  const sendNotification = async () => {
+  try {
+    const token = localStorage.getItem("access_token");
+
+    if (!token) {
+      alert("Admin not authenticated");
+      return;
+    }
+
+    const payload = {
+      title: title,
+      message: message,
+      type: type,
+      target_role: "faculty",   // IMPORTANT: since this modal is for faculty
+      target_type: target,
+      department: target === "department" ? department : null,
+      faculty_id: target === "individual" ? selectedTeacherId : null,
+      student_id: null
+    };
+    
+    console.log("FINAL PAYLOAD:", payload);
+
+    const res = await fetch("http://localhost:8000/admin/alerts", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) {
+  const errorData = await res.json();
+  console.log("FULL Backend Error:", JSON.stringify(errorData, null, 2));
+  alert("Check console for validation error");
+  return;
+ }
+
+
+    
+
     setStep("success");
 
     setTimeout(() => {
       onClose();
     }, 2200);
-  };
+
+  } catch (error) {
+    console.error(error);
+    alert("Something went wrong while sending alert");
+  }
+ };
+
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
@@ -1032,12 +1079,16 @@ function NotifyTeacherModal({ teachers, onClose }) {
             {/* INDIVIDUAL */}
             {target === "individual" && (
               <select
-                onChange={(e) => setSelectedTeacherId(Number(e.target.value))}
+                onChange={(e) =>
+                  setSelectedTeacherId(
+                    e.target.value ? Number(e.target.value) : null
+                  )
+                }
                 className="border px-3 py-2 rounded-lg w-full"
               >
                 <option value="">Select Teacher</option>
                 {teachers.map((t) => (
-                  <option key={t.id} value={t.id}>
+                  <option key={t.faculty_id} value={t.faculty_id}>
                     {t.name} — {t.department}
                   </option>
                 ))}

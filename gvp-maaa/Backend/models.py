@@ -132,4 +132,37 @@ class Timetable(Base):
     is_active = Column(Boolean, default=True)
 
 
+# =========================
+# ALERTS
+# =========================
+class Alert(Base):
+    __tablename__ = "alerts"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    title = Column(String(255), nullable=False)
+    message = Column(Text, nullable=False)
+
+    type = Column(String(50), nullable=False)
+
+    target_role = Column(String(50), nullable=False)
+    target_type = Column(String(50), nullable=False)
+
+    department = Column(String(50), nullable=True)
+
+    faculty_id = Column(
+        Integer,
+        ForeignKey("faculty.faculty_id"),
+        nullable=True
+    )
+
+    student_id = Column(
+        Integer,
+        ForeignKey("students.student_id"),
+        nullable=True
+    )
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 
