@@ -198,5 +198,9 @@ class AlertStudentsRequest(BaseModel):
 class TeacherAdminUpdate(BaseModel):
     designation: Optional[str] = None
     department_id: Optional[int] = None
-    subjects: Optional[List[str]] = None
 
+# =========================
+# TEACHER DELETE SCHEMA (ADMIN)
+# =========================
+class TeacherDeleteRequest(BaseModel):
+    teacher_ids: List[int]

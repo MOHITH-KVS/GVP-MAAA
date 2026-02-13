@@ -1,71 +1,62 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
-/* ===== TEMP DATA ===== */
-const TEACHERS = [
-  {
-    id: 1,
-    name: "Bhanu Prasad",
-    department: "CSE",
-    designation: "Associate Professor",
-    experience: "12 Years",
-    email: "bhanu@gvp.edu",
-    phone: "+91 XXXXX XXXXX",
-    subjects: ["DBMS", "OS", "CN"],
-    alertsSent: 5,
-    classes: [
-      { year: "3rd", section: "A", students: 60, attendance: 68 },
-      { year: "3rd", section: "B", students: 58, attendance: 70 },
-      { year: "4th", section: "A", students: 62, attendance: 72 },
-    ],
-  },
-  {
-    id: 2,
-    name: "Sowmya Rani",
-    department: "ECE",
-    designation: "Assistant Professor",
-    experience: "6 Years",
-    email: "sowmya@gvp.edu",
-    phone: "+91 XXXXX XXXXX",
-    subjects: ["Signals", "Networks"],
-    alertsSent: 2,
-    classes: [
-      { year: "2nd", section: "A", students: 55, attendance: 82 },
-      { year: "2nd", section: "B", students: 50, attendance: 80 },
-    ],
-  },
-];
-
-DEPARTMENT_MAP = {
-    11: "CSE",
-    12: "CSM",
-    14: "ECE",
-    15: "MECH",
-    1: "CIVIL"
-}
+const DEPARTMENT_MAP = {
+  CSE: 11,
+  CSM: 12,
+  ECE: 14,
+  MECH: 15,
+  CIVIL: 1
+};
 
 
 
 /* ================= PAGE ================= */
 
 export default function Teachers() {
-  const [teachers, setTeachers] = useState(TEACHERS);
-
+  const [teachers, setTeachers] = useState([]);
   const [department, setDepartment] = useState("All");
   const [search, setSearch] = useState("");
   const [selectedTeacher, setSelectedTeacher] = useState(null);
-  const [showAddTeacher, setShowAddTeacher] = useState(false);
   const [showUpdateTeacher, setShowUpdateTeacher] = useState(false);
   const [showDeleteTeacher, setShowDeleteTeacher] = useState(false);
   const [showNotifyTeacher, setShowNotifyTeacher] = useState(false);
 
+  const fetchTeachers = async () => {
+  try {
+    const token = localStorage.getItem("access_token");
 
+    if (!token) {
+      window.location.href = "/auth/admin/signin";
+      return;
+    }
+
+    const res = await fetch("http://127.0.0.1:8000/admin/teachers", {
+      headers: {
+        "Authorization": `Bearer ${token}`,
+      },
+    });
+
+    if (res.status === 401) {
+      localStorage.removeItem("access_token");
+      window.location.href = "/auth/admin/signin";
+      return;
+    }
+
+    const data = await res.json();
+    setTeachers(data);
+
+  } catch (error) {
+    console.error("Failed to fetch teachers", error);
+  }
+ };
 
   /* ===== FILTER ===== */
   const filtered = teachers.filter((t) => {
     const matchDept = department === "All" || t.department === department;
     const matchSearch =
-      t.name.toLowerCase().includes(search.toLowerCase()) ||
-      t.designation.toLowerCase().includes(search.toLowerCase());
+      (t.name?.toLowerCase() || "").includes(search.toLowerCase()) ||
+      (t.designation?.toLowerCase() || "").includes(search.toLowerCase());
+
     return matchDept && matchSearch;
   });
 
@@ -89,6 +80,10 @@ export default function Teachers() {
     return { label: "Stable", color: "bg-green-100 text-green-700" };
   };
 
+  useEffect(() => {
+  fetchTeachers();
+  }, []);
+
   return (
     <div className="space-y-8">
 
@@ -102,14 +97,6 @@ export default function Teachers() {
 
       {/* ================= ADMIN ACTIONS ================= */}
       <div className="bg-white px-4 py-3 rounded-xl border flex gap-3 flex-wrap items-center">
-
-        {/* PRIMARY */}
-        <button
-          onClick={() => setShowAddTeacher(true)}
-          className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm"
-         >
-          + Add Teacher
-        </button>
 
         {/* SECONDARY */}
         <button
@@ -248,7 +235,6 @@ export default function Teachers() {
         />
       )}
       {/* ================= TEACHER MODALS ================= */}
-      {showAddTeacher && (<AddTeacherModal onAdd={setTeachers} onClose={() => setShowAddTeacher(false)}/>)}
       {showUpdateTeacher && (<UpdateTeacherModal teachers={teachers} setTeachers={setTeachers} onClose={() => setShowUpdateTeacher(false)}/>)}
       {showDeleteTeacher && (<DeleteTeacherModal teachers={teachers} setTeachers={setTeachers} onClose={() => setShowDeleteTeacher(false)} />)}
       {showNotifyTeacher && (<NotifyTeacherModal teachers={teachers} onClose={() => setShowNotifyTeacher(false)}  />)}
@@ -352,198 +338,16 @@ function TeacherProfileModal({ teacher, onClose }) {
   );
 }
 
-/* ================= ADD TEACHER MODAL ================= */
-function AddTeacherModal({ onAdd, onClose }) {
-  const [step, setStep] = useState("form"); // form | review | success
-
-  const [teacher, setTeacher] = useState({
-    name: "",
-    department: "",
-    designation: "",
-    experience: "",
-    email: "",
-    phone: "",
-    subjects: "",
-  });
-
-  /* ===== HANDLE INPUT ===== */
-  const handleChange = (key, value) => {
-    setTeacher({ ...teacher, [key]: value });
-  };
-
-  /* ===== PREVIEW ===== */
-  const handlePreview = () => {
-    if (!teacher.name || !teacher.department || !teacher.email) return;
-    setStep("review");
-  };
-
-  /* ===== FINAL PUBLISH ===== */
-  const handleConfirm = () => {
-    onAdd((prev) => [
-      ...prev,
-      {
-        id: Date.now(),
-        ...teacher,
-        subjects: teacher.subjects.split(",").map((s) => s.trim()),
-        alertsSent: 0,
-        classes: [],
-      },
-    ]);
-
-    setStep("success");
-
-    setTimeout(() => {
-      onClose();
-    }, 2200);
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
-      <div className="bg-white w-full max-w-2xl rounded-2xl p-6 space-y-6">
-
-        {/* ================= HEADER ================= */}
-        <div className="flex justify-between items-center">
-          <h2 className="text-lg font-semibold">Add Teacher</h2>
-          <button onClick={onClose}>✕</button>
-        </div>
-
-        {/* ================= FORM ================= */}
-        {step === "form" && (
-          <div className="space-y-4">
-
-            <div className="grid grid-cols-2 gap-3">
-              <input
-                placeholder="Full Name"
-                className="border px-3 py-2 rounded-lg"
-                onChange={(e) => handleChange("name", e.target.value)}
-              />
-
-              <input
-                placeholder="Email"
-                className="border px-3 py-2 rounded-lg"
-                onChange={(e) => handleChange("email", e.target.value)}
-              />
-
-              <input
-                placeholder="Department (CSE / ECE / CSM)"
-                className="border px-3 py-2 rounded-lg"
-                onChange={(e) => handleChange("department", e.target.value)}
-              />
-
-              <input
-                placeholder="Designation"
-                className="border px-3 py-2 rounded-lg"
-                onChange={(e) => handleChange("designation", e.target.value)}
-              />
-
-              <input
-                placeholder="Experience (e.g. 6 Years)"
-                className="border px-3 py-2 rounded-lg"
-                onChange={(e) => handleChange("experience", e.target.value)}
-              />
-
-              <input
-                placeholder="Phone"
-                className="border px-3 py-2 rounded-lg"
-                onChange={(e) => handleChange("phone", e.target.value)}
-              />
-            </div>
-
-            <input
-              placeholder="Subjects (comma separated)"
-              className="border px-3 py-2 rounded-lg w-full"
-              onChange={(e) => handleChange("subjects", e.target.value)}
-            />
-
-            <div className="flex justify-end">
-              <button
-                onClick={handlePreview}
-                className="px-4 py-2 bg-indigo-600 text-white rounded-lg"
-              >
-                Preview Details
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* ================= REVIEW ================= */}
-        {step === "review" && (
-          <div className="space-y-5">
-
-            <p className="font-medium text-sm text-gray-700">
-              Please recheck the teacher details before final publishing
-            </p>
-
-            <div className="bg-gray-50 border rounded-lg p-4 space-y-2 text-sm">
-              <p><b>Name:</b> {teacher.name}</p>
-              <p><b>Email:</b> {teacher.email}</p>
-              <p><b>Department:</b> {teacher.department}</p>
-              <p><b>Designation:</b> {teacher.designation}</p>
-              <p><b>Experience:</b> {teacher.experience}</p>
-              <p><b>Subjects:</b> {teacher.subjects}</p>
-            </div>
-
-            <div className="flex justify-end gap-3">
-              <button
-                onClick={() => setStep("form")}
-                className="px-4 py-2 border rounded-lg"
-              >
-                Back & Edit
-              </button>
-
-              <button
-                onClick={handleConfirm}
-                className="px-4 py-2 bg-green-600 text-white rounded-lg"
-              >
-                Final Publish
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* ================= SUCCESS ================= */}
-        {step === "success" && (
-          <div className="text-center py-12 space-y-4">
-
-            <div className="mx-auto w-16 h-16 rounded-full bg-green-100 flex items-center justify-center animate-bounce">
-              <span className="text-3xl text-green-600">✓</span>
-            </div>
-
-            <h3 className="text-lg font-semibold text-green-700">
-              Successfully updated the database
-            </h3>
-
-            <p className="text-sm text-gray-500">
-              Teacher record has been added successfully
-            </p>
-
-            <div className="w-full h-1 bg-gray-200 rounded-full overflow-hidden">
-              <div className="h-full bg-green-500 animate-[progress_2s_linear]" />
-            </div>
-
-            <style>
-              {`
-                @keyframes progress {
-                  from { width: 0%; }
-                  to { width: 100%; }
-                }
-              `}
-            </style>
-
-          </div>
-        )}
-
-      </div>
-    </div>
-  );
-}
-
 /* ================= DELETE TEACHER MODAL ================= */
 function DeleteTeacherModal({ teachers, setTeachers, onClose }) {
   const [step, setStep] = useState("form"); // form | review | success
   const [department, setDepartment] = useState("All");
   const [search, setSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState([]);
+  const [confirmText, setConfirmText] = useState("");
+  const [recentlyDeleted, setRecentlyDeleted] = useState([]);
+  const [countdown, setCountdown] = useState(5);
+
 
   /* ===== FILTERED TEACHERS ===== */
   const filteredTeachers = teachers.filter((t) => {
@@ -564,17 +368,63 @@ function DeleteTeacherModal({ teachers, setTeachers, onClose }) {
   };
 
   /* ===== FINAL DELETE ===== */
-  const confirmDelete = () => {
-    setTeachers((prev) =>
-      prev.filter((t) => !selectedIds.includes(t.id))
+  const confirmDelete = async () => {
+  try {
+    const token = localStorage.getItem("access_token");
+
+    const res = await fetch(
+      "http://localhost:8000/admin/teachers",
+      {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          teacher_ids: selectedIds,
+        }),
+      }
+    );
+
+    if (!res.ok) throw new Error("Delete failed");
+
+    const deletedTeachers = teachers.filter(t =>
+      selectedIds.includes(t.id)
+    );
+
+    setRecentlyDeleted(deletedTeachers);
+
+    setTeachers(prev =>
+      prev.filter(t => !selectedIds.includes(t.id))
     );
 
     setStep("success");
+    setCountdown(5);
 
-    setTimeout(() => {
-      onClose();
-    }, 2200);
-  };
+  } catch (err) {
+    console.error(err);
+    alert("Failed to delete teacher");
+  }
+};
+ 
+  useEffect(() => {
+  if (step !== "success") return;
+
+  if (countdown === 0) {
+    setRecentlyDeleted([]);
+    onClose();
+    return;
+  }
+
+  const timer = setTimeout(() => {
+    setCountdown(prev => prev - 1);
+  }, 1000);
+
+  return () => clearTimeout(timer);
+ }, [step, countdown]);
+
+
+
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
@@ -683,6 +533,19 @@ function DeleteTeacherModal({ teachers, setTeachers, onClose }) {
                   </div>
                 ))}
             </div>
+            <div className="space-y-2">
+              <p className="text-sm text-red-600 font-medium">
+                Type DELETE to confirm
+              </p>
+
+              <input
+                type="text"
+                value={confirmText}
+                onChange={(e) => setConfirmText(e.target.value)}
+                placeholder="Type DELETE"
+                className="border px-3 py-2 rounded-lg w-full"
+              />
+            </div>
 
             <div className="flex justify-end gap-3">
               <button
@@ -693,8 +556,9 @@ function DeleteTeacherModal({ teachers, setTeachers, onClose }) {
               </button>
 
               <button
+                disabled={confirmText !== "DELETE"}
                 onClick={confirmDelete}
-                className="px-4 py-2 bg-red-600 text-white rounded-lg"
+                className="px-4 py-2 bg-red-600 text-white rounded-lg disabled:opacity-50"
               >
                 Confirm Delete
               </button>
@@ -704,37 +568,58 @@ function DeleteTeacherModal({ teachers, setTeachers, onClose }) {
 
         {/* ================= SUCCESS ================= */}
         {step === "success" && (
-          <div className="text-center py-12 space-y-4">
+              <div className="text-center py-12 space-y-4">
 
-            <div className="mx-auto w-16 h-16 rounded-full bg-red-100 flex items-center justify-center animate-bounce">
-              <span className="text-3xl text-red-600">🗑</span>
+                <div className="mx-auto w-16 h-16 rounded-full bg-red-100 flex items-center justify-center">
+                  <span className="text-3xl text-red-600">🗑</span>
+                </div>
+
+                <h3 className="text-lg font-semibold text-red-700">
+                  Teachers Deleted Successfully
+                </h3>
+
+                <p className="text-sm text-gray-500">
+                  You can undo this action within {countdown} seconds
+                </p>
+
+                {recentlyDeleted.length > 0 && (
+                  <button
+                    onClick={async () => {
+                      const token = localStorage.getItem("access_token");
+
+                      for (const teacher of recentlyDeleted) {
+                        await fetch(
+                          `http://localhost:8000/admin/teachers/${teacher.id}/restore`,
+                          {
+                            method: "PUT",
+                            headers: {
+                              Authorization: `Bearer ${token}`,
+                            },
+                          }
+                        );
+                      }
+
+                      setTeachers(prev => [...prev, ...recentlyDeleted]);
+                      setRecentlyDeleted([]);
+                      onClose();
+                    }}
+                    className="px-4 py-2 bg-gray-800 text-white rounded-lg"
+                  >
+                    Undo
+                  </button>
+                )}
+
+                {/* Countdown Progress Bar */}
+                <div className="w-full h-1 bg-gray-200 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-red-500 transition-all duration-1000"
+                    style={{ width: `${(countdown / 5) * 100}%` }}
+                  />
+                </div>
+              </div>
+            )}
             </div>
-
-            <h3 className="text-lg font-semibold text-red-700">
-              Teachers Deleted Successfully
-            </h3>
-
-            <p className="text-sm text-gray-500">
-              Selected teacher records have been removed
-            </p>
-
-            <div className="w-full h-1 bg-gray-200 rounded-full overflow-hidden">
-              <div className="h-full bg-red-500 animate-[progress_2s_linear]" />
-            </div>
-
-            <style>
-              {`
-                @keyframes progress {
-                  from { width: 0%; }
-                  to { width: 100%; }
-                }
-              `}
-            </style>
-
           </div>
-        )}
-      </div>
-    </div>
   );
 }
 
@@ -748,7 +633,6 @@ function UpdateTeacherModal({ teachers, setTeachers, onClose }) {
   const [editFields, setEditFields] = useState({
   department: false,
   designation: false,
-  subjects: false,
  });
 
 
@@ -756,12 +640,13 @@ function UpdateTeacherModal({ teachers, setTeachers, onClose }) {
 
   /* ===== FILTERED TEACHERS ===== */
   const filteredTeachers = teachers.filter((t) => {
-    const matchDept = department === "All" || t.department === department;
-    const matchSearch =
-      t.name.toLowerCase().includes(search.toLowerCase()) ||
-      t.designation.toLowerCase().includes(search.toLowerCase());
-    return matchDept && matchSearch;
-  });
+  const matchDept = department === "All" || t.department === department;
+  const matchSearch =
+    (t.name?.toLowerCase() || "").includes(search.toLowerCase()) ||
+    (t.designation?.toLowerCase() || "").includes(search.toLowerCase());
+  return matchDept && matchSearch;
+ });
+
 
   const selectedTeacher = teachers.find((t) => t.id === selectedId);
   /* ===== FINAL CONFIRM UPDATE (FIXED) ===== */
@@ -778,14 +663,8 @@ function UpdateTeacherModal({ teachers, setTeachers, onClose }) {
       payload.department_id =
       DEPARTMENT_MAP[updatedData.department];
 
-
-    if (editFields.subjects)
-      payload.subjects = updatedData.subjects
-        .split(",")
-        .map((s) => s.trim());
-
     const res = await fetch(
-      `http://127.0.0.1:8000/admin/teachers/${selectedId}`,
+      `http://localhost:8000/admin/teachers/${selectedId}`,
       {
         method: "PUT",
         headers: {
@@ -813,9 +692,6 @@ function UpdateTeacherModal({ teachers, setTeachers, onClose }) {
           designation: editFields.designation
             ? updatedData.designation
             : t.designation,
-          subjects: editFields.subjects
-            ? updatedData.subjects.split(",").map(s => s.trim())
-            : t.subjects,
         };
       })
     );
@@ -882,7 +758,6 @@ function UpdateTeacherModal({ teachers, setTeachers, onClose }) {
                     setEditFields({
                       department: false,
                       designation: false,
-                      subjects: false,
                     });
                   }}
                   className={`px-3 py-2 cursor-pointer border-b hover:bg-gray-50 ${
@@ -949,20 +824,6 @@ function UpdateTeacherModal({ teachers, setTeachers, onClose }) {
                   />
                 )}
 
-
-                {editFields.subjects && (
-                  <input
-                    defaultValue={selectedTeacher.subjects.join(", ")}
-                    onChange={(e) =>
-                      setUpdatedData({
-                        ...updatedData,
-                        subjects: e.target.value,
-                      })
-                    }
-                    className="border px-3 py-2 rounded-lg w-full"
-                  />
-                )}
-
                 <div className="flex justify-end">
                   <button
                     onClick={() => setStep("review")}
@@ -1001,14 +862,7 @@ function UpdateTeacherModal({ teachers, setTeachers, onClose }) {
                 />
               )}
 
-            
-              {editFields.subjects && (
-                <ReviewRow
-                  label="Subjects"
-                  oldValue={selectedTeacher.subjects.join(", ")}
-                  newValue={updatedData.subjects}
-                />
-              )}
+          
             </div>
 
             <div className="flex justify-end gap-3">

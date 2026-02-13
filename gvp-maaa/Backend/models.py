@@ -18,6 +18,10 @@ class User(Base):
     role = Column(String, nullable=False)   # student | faculty | admin
     department_id = Column(Integer, nullable=False)
 
+    # ✅ NEW (SOFT DELETE)
+    is_deleted = Column(Boolean, default=False)
+    deleted_at = Column(DateTime, nullable=True)
+
 
 # -------------------------
 # STUDENT (EXTENSION)
@@ -89,6 +93,11 @@ class Faculty(Base):
     linkedin = Column(String)
     github = Column(String)
     portfolio = Column(String)
+
+    # ✅ NEW (SOFT DELETE)
+    #is_deleted = Column(Boolean, default=False)
+    #deleted_at = Column(DateTime, nullable=True)
+
 
 # -------------------------
 # TIMETABLE

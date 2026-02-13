@@ -4,9 +4,10 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 from security import hash_password, verify_password
 from mail import send_reset_email
-from schemas import  AlertStudentsRequest, ResetPasswordRequest, StudentPromotionRequest, TeacherAdminUpdate,TimetableCreate, TimetableResponse,StudentDeleteRequest
+from schemas import  AlertStudentsRequest, ResetPasswordRequest, StudentPromotionRequest, TeacherAdminUpdate, TeacherDeleteRequest,TimetableCreate, TimetableResponse,StudentDeleteRequest
 from datetime import datetime
 from models import StudentAlert, Timetable
+
 
 import pandas as pd
 import os
@@ -19,7 +20,7 @@ DEPARTMENT_MAP = {
     12: "CSM",
     14: "ECE",
     15: "MECH",
-    16: "CIVIL"
+    1: "CIVIL"
 }
 
 
@@ -842,13 +843,86 @@ def update_teacher(
     if data.department_id is not None:
         user.department_id = data.department_id
 
-    # Update subjects (if you store in Faculty)
-    if data.subjects is not None:
-        faculty.expertise = ",".join(data.subjects)
-
     db.commit()
 
     return {"message": "Teacher updated successfully"}
+
+# =========================
+# ADMIN – DELETE TEACHERS (BULK + SOFT DELETE)
+# =========================
+@app.delete("/admin/teachers")
+def delete_teachers(
+    payload: TeacherDeleteRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    teachers = db.query(User).filter(
+        User.user_id.in_(payload.teacher_ids),
+        User.role == "faculty",
+        User.is_deleted == False
+    ).all()
+
+    if not teachers:
+        raise HTTPException(status_code=404, detail="Teachers not found")
+
+    for teacher in teachers:
+        teacher.is_deleted = True
+        teacher.deleted_at = datetime.utcnow()
+
+    db.commit()
+
+    return {
+        "message": "Teachers deleted successfully",
+        "deleted_count": len(teachers)
+    }
+
+
+
+
+# =========================
+# ADMIN – GET ALL TEACHERS
+# =========================
+@app.get("/admin/teachers")
+def get_all_teachers(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    teachers = (
+        db.query(Faculty, User)
+        .join(User, Faculty.faculty_id == User.user_id)
+        .filter(User.is_deleted == False)   # ✅ ADD THIS LINE
+        .all()
+    )
+
+
+    result = []
+
+    for faculty, user in teachers:
+        result.append({
+            "id": user.user_id,
+            "name": user.name,
+            "department": DEPARTMENT_MAP.get(user.department_id, "UNKNOWN"),
+            "designation": faculty.designation,
+            "experience": faculty.experience,
+            "email": user.email,
+            "phone": faculty.phone,
+            "subjects": faculty.expertise.split(",") if faculty.expertise else [],
+            "alertsSent": 0,
+            "classes": json.loads(faculty.classes) if faculty.classes else []
+        })
+
+    return result
+
+
+
+
+
 
 
 # -------------------------

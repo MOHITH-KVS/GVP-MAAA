@@ -21,13 +21,13 @@ export default function TeacherSignUp() {
 
 
   const DEPARTMENTS = [
-    { id: 12, name: "CSE" },
-    { id: 13, name: "IT" },
-    { id: 14, name: "ECE" },
-    { id: 15, name: "EEE" },
-    { id: 16, name: "MECH" },
-    { id: 17, name: "CIVIL" },
+  { id: 11, name: "CSE" },
+  { id: 12, name: "CSM" },
+  { id: 14, name: "ECE" },
+  { id: 15, name: "MECH" },
+  { id: 1,  name: "CIVIL" },
  ];
+
 
 
   const [showPassword, setShowPassword] = useState(false);
@@ -36,8 +36,6 @@ export default function TeacherSignUp() {
   const [fieldErrors, setFieldErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState("");
-
-
 
 
 
