@@ -30,11 +30,14 @@ export default function Teachers() {
       return;
     }
 
+    
+
     const res = await fetch("http://127.0.0.1:8000/admin/teachers", {
       headers: {
-        "Authorization": `Bearer ${token}`,
+        Authorization: `Bearer ${token}`,
       },
     });
+
 
     if (res.status === 401) {
       localStorage.removeItem("access_token");
@@ -44,6 +47,13 @@ export default function Teachers() {
 
     const data = await res.json();
     setTeachers(data);
+    if (Array.isArray(data)) {
+        setTeachers(data);
+      } else {
+        console.error("Invalid teacher data:", data);
+        setTeachers([]);
+      }
+
 
   } catch (error) {
     console.error("Failed to fetch teachers", error);

@@ -786,6 +786,44 @@ def delete_timetable(
 
 
 # =========================
+# ADMIN – GET ALL TEACHERS
+# =========================
+@app.get("/admin/teachers")
+def get_all_teachers(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    teachers = (
+        db.query(Faculty, User)
+        .join(User, Faculty.faculty_id == User.user_id)
+        .filter(User.is_deleted == False)
+        .all()
+    )
+
+    result = []
+
+    for faculty, user in teachers:
+        result.append({
+            "id": user.user_id,
+            "name": user.name,
+            "department": DEPARTMENT_MAP.get(user.department_id, "UNKNOWN"),
+            "designation": faculty.designation,
+            "experience": faculty.experience,
+            "email": user.email,
+            "phone": faculty.phone,
+            "subjects": faculty.expertise.split(",") if faculty.expertise else [],
+            "alertsSent": 0,
+            "classes": json.loads(faculty.classes) if faculty.classes else []
+        })
+
+    return result
+
+
+
+# =========================
 # ADMIN – UPDATE TEACHER
 # =========================
 @app.put("/admin/teachers/{teacher_id}")
@@ -866,6 +904,18 @@ def create_alert(
     if current_user["role"] != "admin":
         raise HTTPException(status_code=403, detail="Admin only")
 
+    # ---------- VALIDATION ----------
+    if payload.target_type == "individual":
+        if payload.target_role == "faculty" and not payload.faculty_id:
+            raise HTTPException(status_code=400, detail="Faculty ID required")
+
+        if payload.target_role == "student" and not payload.student_id:
+            raise HTTPException(status_code=400, detail="Student ID required")
+
+    if payload.target_type == "department":
+        if not payload.department:
+            raise HTTPException(status_code=400, detail="Department required")
+
     new_alert = Alert(
         title=payload.title,
         message=payload.message,
@@ -885,41 +935,57 @@ def create_alert(
 
 
 # =========================
-# ADMIN – GET ALL TEACHERS
+# FACULTY – GET ALERTS
 # =========================
-@app.get("/admin/teachers")
-def get_all_teachers(
+@app.get("/faculty/alerts")
+def get_faculty_alerts(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    if current_user["role"] != "admin":
-        raise HTTPException(status_code=403, detail="Admin only")
+    if current_user["role"] != "faculty":
+        raise HTTPException(status_code=403, detail="Faculty only")
 
-    teachers = (
-        db.query(Faculty, User)
-        .join(User, Faculty.faculty_id == User.user_id)
-        .filter(User.is_deleted == False)   # ✅ ADD THIS LINE
-        .all()
-    )
+    faculty_id = current_user["user_id"]
+    department_id = current_user["department_id"]
+    department_name = DEPARTMENT_MAP.get(department_id)
+
+    alerts = db.query(Alert).filter(
+        Alert.target_role == "faculty",
+        (
+            (Alert.target_type == "all") |
+            ((Alert.target_type == "individual") & (Alert.faculty_id == faculty_id)) |
+            ((Alert.target_type == "department") & (Alert.department == department_name))
+        )
+    ).order_by(Alert.created_at.desc()).all()
+
+    return alerts
 
 
-    result = []
+# =========================
+# STUDENT – GET ALERTS
+# =========================
+@app.get("/student/alerts")
+def get_student_alerts(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "student":
+        raise HTTPException(status_code=403, detail="Student only")
 
-    for faculty, user in teachers:
-        result.append({
-            "id": user.user_id,
-            "name": user.name,
-            "department": DEPARTMENT_MAP.get(user.department_id, "UNKNOWN"),
-            "designation": faculty.designation,
-            "experience": faculty.experience,
-            "email": user.email,
-            "phone": faculty.phone,
-            "subjects": faculty.expertise.split(",") if faculty.expertise else [],
-            "alertsSent": 0,
-            "classes": json.loads(faculty.classes) if faculty.classes else []
-        })
+    student_id = current_user["user_id"]
+    department_id = current_user["department_id"]
+    department_name = DEPARTMENT_MAP.get(department_id)
 
-    return result
+    alerts = db.query(Alert).filter(
+        Alert.target_role == "student",
+        (
+            (Alert.target_type == "all") |
+            ((Alert.target_type == "individual") & (Alert.student_id == student_id)) |
+            ((Alert.target_type == "department") & (Alert.department == department_name))
+        )
+    ).order_by(Alert.created_at.desc()).all()
+
+    return alerts
 
 
 

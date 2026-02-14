@@ -42,6 +42,9 @@ export default function TeacherDashboard() {
   const [showGiveAlert, setShowGiveAlert] = useState(false);
   const [showFullProfile, setShowFullProfile] = useState(false);
   const [profile, setProfile] = useState(null);
+  const [alerts, setAlerts] = useState([]);
+  const [loading, setLoading] = useState(true);
+
 
   useEffect(() => {
   const fetchProfile = async () => {
@@ -71,6 +74,35 @@ export default function TeacherDashboard() {
  }, []);
 
 
+ useEffect(() => {
+  const fetchAlerts = async () => {
+    try {
+      const token = localStorage.getItem("access_token");
+
+      const res = await fetch("http://127.0.0.1:8000/faculty/alerts", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!res.ok) {
+        console.error("Failed to fetch alerts");
+        return;
+      }
+
+      const data = await res.json();
+      setAlerts(data);
+    } catch (error) {
+      console.error("Error fetching alerts", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  fetchAlerts();
+ }, []);
+
+
 
   if (showLogout) {
   return <Logout onBack={() => setShowLogout(false)} role="teacher" />;
@@ -83,6 +115,8 @@ export default function TeacherDashboard() {
     </div>
   );
  }
+
+ 
 
   return (
     <div className="h-screen w-screen bg-gradient-to-br from-indigo-50 via-white to-cyan-50">
@@ -202,13 +236,22 @@ export default function TeacherDashboard() {
             </div>
 
             <SidebarSection title="System" open={sidebarOpen}>
-              <MenuItem
-                icon={NotificationsIcon}
-                label="Alerts"
-                open={sidebarOpen}
-                active={activePage === "alerts"}
-                onClick={() => setActivePage("alerts")}
-              />
+              <div className="relative">
+                <MenuItem
+                  icon={NotificationsIcon}
+                  label="Alerts"
+                  open={sidebarOpen}
+                  active={activePage === "alerts"}
+                  onClick={() => setActivePage("alerts")}
+                />
+
+                {alerts.length > 0 && (
+                  <span className="absolute top-0 right-4 bg-red-500 text-white text-xs px-2 py-0.5 rounded-full">
+                    {alerts.length}
+                  </span>
+                )}
+              </div>
+
 
               <MenuItem
                 icon={LogoutIcon}
@@ -238,7 +281,7 @@ export default function TeacherDashboard() {
             {activePage === "resources" && <Resources />}
             {activePage === "events" && <Events />}
             {activePage === "insights" && <Insights />}
-            {activePage === "alerts" && <Alerts />}
+            {activePage === "alerts" && <Alerts alerts={alerts} loading={loading} />}
           </div>
 
           {/* ================= PROFILE ================= */}

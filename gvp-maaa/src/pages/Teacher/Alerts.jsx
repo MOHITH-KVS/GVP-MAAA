@@ -1,61 +1,9 @@
 import { useState } from "react";
 
-/* ================= MOCK DATA ================= */
-
-const adminAlertsData = [
-  {
-    id: 1,
-    type: "Emergency",
-    title: "Mid Exams Postponed",
-    message:
-      "Due to unforeseen circumstances, mid exams are postponed.",
-    time: "2 hrs ago",
-    color: "border-red-500 bg-red-50",
-  },
-  {
-    id: 2,
-    type: "Announcement",
-    title: "Faculty Meeting",
-    message:
-      "Mandatory faculty meeting tomorrow at 10 AM in Seminar Hall.",
-    time: "1 day ago",
-    color: "border-amber-400 bg-amber-50",
-  },
-  {
-    id: 3,
-    type: "Info",
-    title: "Academic Calendar Updated",
-    message:
-      "Revised academic calendar is now available.",
-    time: "3 days ago",
-    color: "border-blue-400 bg-blue-50",
-  },
-];
-
-const sentAlertsData = [
-  {
-    id: 1,
-    type: "Announcement",
-    title: "DBMS Class Cancelled",
-    target: "3rd Year · Section B · DBMS",
-    students: "All Students",
-    time: "1 hr ago",
-    color: "border-amber-400 bg-amber-50",
-  },
-  {
-    id: 2,
-    type: "Emergency",
-    title: "Project Submission Deadline",
-    target: "4th Year · Section A · CN",
-    students: "Section A",
-    time: "2 days ago",
-    color: "border-red-500 bg-red-50",
-  },
-];
 
 /* ================= MAIN PAGE ================= */
 
-export default function Alerts() {
+export default function Alerts({ alerts = [], loading }) {
   const [filter, setFilter] = useState("All");
 
   const applyFilter = (list) =>
@@ -101,19 +49,23 @@ export default function Alerts() {
             📥 Alerts from Admin
           </h2>
 
-          {applyFilter(adminAlertsData).length === 0 ? (
+          {loading ? (
+            <EmptyState />
+          ) : applyFilter(alerts).length === 0 ? (
             <EmptyState />
           ) : (
-            applyFilter(adminAlertsData).map((alert) => (
+            applyFilter(alerts).map((alert) => (
               <div
                 key={alert.id}
-                className={`border-l-4 ${alert.color} rounded-xl p-4 space-y-2 transition hover:scale-[1.01]`}
+                className="border-l-4 border-indigo-500 bg-indigo-50 rounded-xl p-4 space-y-2"
               >
                 <div className="flex justify-between items-center">
                   <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-white border">
                     {alert.type}
                   </span>
-                  <span className="text-xs text-gray-500">{alert.time}</span>
+                  <span className="text-xs text-gray-500">
+                    {new Date(alert.created_at).toLocaleString()}
+                  </span>
                 </div>
 
                 <h3 className="font-semibold">{alert.title}</h3>
@@ -121,6 +73,7 @@ export default function Alerts() {
               </div>
             ))
           )}
+
         </section>
 
         {/* ===== RIGHT : SENT ALERTS ===== */}
