@@ -3,11 +3,44 @@ import { useState } from "react";
 
 /* ================= MAIN PAGE ================= */
 
-export default function Alerts({ alerts = [], loading }) {
+export default function Alerts({ alerts = [], setAlerts, loading }) {
   const [filter, setFilter] = useState("All");
 
+  const markAsRead = async (id) => {
+  try {
+    const token = localStorage.getItem("access_token");
+
+    const res = await fetch(
+      `http://localhost:8000/alerts/${id}/read`,
+      {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+
+    if (!res.ok) throw new Error("Failed");
+
+    setAlerts((prev) =>
+      prev.map((a) =>
+        a.id === id ? { ...a, is_read: true } : a
+      )
+    );
+  } catch (err) {
+    console.error("Failed to mark read", err);
+  }
+ };
+
+
+
   const applyFilter = (list) =>
-    filter === "All" ? list : list.filter((a) => a.type === filter);
+  filter === "All"
+    ? list
+    : list.filter(
+        (a) => a.type?.toLowerCase() === filter.toLowerCase()
+      );
+
 
   return (
     <div className="space-y-8">
@@ -24,7 +57,7 @@ export default function Alerts({ alerts = [], loading }) {
 
       {/* ================= FILTERS (FIXED POSITION) ================= */}
       <div className="flex gap-3 flex-wrap">
-        {["All", "Emergency", "Announcement", "Info"].map((t) => (
+        {["All", "notice", "reminder", "urgent"].map((t) => (
           <button
             key={t}
             onClick={() => setFilter(t)}
@@ -39,6 +72,8 @@ export default function Alerts({ alerts = [], loading }) {
           </button>
         ))}
       </div>
+
+      
 
       {/* ================= TWO COLUMN LAYOUT ================= */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
@@ -55,23 +90,61 @@ export default function Alerts({ alerts = [], loading }) {
             <EmptyState />
           ) : (
             applyFilter(alerts).map((alert) => (
-              <div
-                key={alert.id}
-                className="border-l-4 border-indigo-500 bg-indigo-50 rounded-xl p-4 space-y-2"
-              >
-                <div className="flex justify-between items-center">
-                  <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-white border">
-                    {alert.type}
-                  </span>
-                  <span className="text-xs text-gray-500">
-                    {new Date(alert.created_at).toLocaleString()}
-                  </span>
-                </div>
+            <div
+              key={alert.id}
+              className={`border-l-4 rounded-xl p-4 space-y-2 transition
+                ${alert.is_read 
+                  ? "bg-gray-100 border-gray-300 opacity-70"
+                  : "bg-indigo-50 border-indigo-500"}
+              `}
+            >
+              <div className="flex justify-between items-center">
+                <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-white border">
+                  {alert.type}
+                </span>
 
-                <h3 className="font-semibold">{alert.title}</h3>
-                <p className="text-sm text-gray-700">{alert.message}</p>
+                <span className="text-xs text-gray-500">
+                  {new Date(alert.created_at).toLocaleString()}
+                </span>
               </div>
-            ))
+
+              <h3 className="font-semibold">{alert.title}</h3>
+              <p className="text-sm text-gray-700">{alert.message}</p>
+
+              {alert.file_path && (
+                <div className="pt-2">
+                  <a
+                    href={`http://localhost:8000/${alert.file_path}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 text-sm text-indigo-600 hover:underline"
+                  >
+                    📎 {alert.file_name || "Open Attachment"}
+                  </a>
+                </div>
+              )}
+
+
+              {/* 🔥 NEW BUTTON SECTION */}
+              {!alert.is_read && (
+                <div className="pt-2">
+                  <button
+                    onClick={() => markAsRead(alert.id)}
+                    className="px-3 py-1 text-xs rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition"
+                  >
+                    Mark as Read
+                  </button>
+                </div>
+              )}
+
+              {alert.is_read && (
+                <p className="text-xs text-green-600 font-medium pt-1">
+                  ✔ Read
+                </p>
+              )}
+            </div>
+            
+          ))
           )}
 
         </section>
@@ -82,46 +155,9 @@ export default function Alerts({ alerts = [], loading }) {
             📤 Alerts Sent to Students
           </h2>
 
-          {applyFilter(sentAlertsData).length === 0 ? (
-            <EmptyState />
-          ) : (
-            applyFilter(sentAlertsData).map((alert) => (
-              <div
-                key={alert.id}
-                className={`border-l-4 ${alert.color} rounded-xl p-4 space-y-3 transition hover:scale-[1.01]`}
-              >
-                <div className="flex justify-between items-center">
-                  <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-white border">
-                    {alert.type}
-                  </span>
-                  <span className="text-xs text-gray-500">{alert.time}</span>
-                </div>
-
-                <h3 className="font-semibold">{alert.title}</h3>
-
-                <div className="text-sm text-gray-700 space-y-1">
-                  <p>
-                    <span className="font-medium">Target:</span>{" "}
-                    {alert.target}
-                  </p>
-                  <p>
-                    <span className="font-medium">Students:</span>{" "}
-                    {alert.students}
-                  </p>
-                </div>
-
-                <div className="flex gap-3 pt-2">
-                  <button className="px-4 py-1.5 rounded-lg text-sm bg-indigo-600 text-white hover:bg-indigo-700 transition">
-                    View
-                  </button>
-                  <button className="px-4 py-1.5 rounded-lg text-sm border hover:bg-gray-100 transition">
-                    Delete
-                  </button>
-                </div>
-              </div>
-            ))
-          )}
+          <EmptyState />
         </section>
+
 
       </div>
     </div>

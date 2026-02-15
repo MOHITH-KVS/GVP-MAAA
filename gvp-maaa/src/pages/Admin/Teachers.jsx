@@ -957,6 +957,11 @@ function NotifyTeacherModal({ teachers, onClose }) {
   const [title, setTitle] = useState("");
   const [message, setMessage] = useState("");
   const [file, setFile] = useState(null);
+  const [showHistory, setShowHistory] = useState(false);
+  const [history, setHistory] = useState([]);
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  
+
 
 
   /* ===== FILTERED TEACHERS ===== */
@@ -965,8 +970,69 @@ function NotifyTeacherModal({ teachers, onClose }) {
   );
 
   const selectedTeacher = teachers.find(
-  (t) => t.faculty_id === selectedTeacherId
+  (t) => t.id === selectedTeacherId
  );
+
+ /* ===== FETCH HISTORY ===== */
+ const fetchHistory = async () => {
+  try {
+    const token = localStorage.getItem("access_token");
+
+    const res = await fetch("http://localhost:8000/admin/alerts", {
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    });
+
+    if (!res.ok) {
+      console.log("Failed to fetch history");
+      return;
+    }
+
+    const data = await res.json();
+    setHistory(data);
+  } catch (err) {
+    console.error("History fetch error", err);
+  }
+ };
+
+ /* ===== DELETE ALERT ===== */
+ const deleteAlert = async (id) => {
+  try {
+    const token = localStorage.getItem("access_token");
+
+    const res = await fetch(
+      `http://localhost:8000/admin/alerts/${id}`,
+      {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      }
+    );
+
+    if (!res.ok) {
+      console.error("Delete failed");
+      return false;
+    }
+
+    setHistory(prev => prev.filter(a => a.id !== id));
+
+    // 🔥 THIS IS THE IMPORTANT LINE
+    setStep("deleteSuccess");
+
+    setTimeout(() => {
+      onClose();   // close modal after animation
+    }, 2200);
+
+    return true;
+
+  } catch (err) {
+    console.error("Delete failed", err);
+    return false;
+  }
+ };
+
 
 
   /* ===== FINAL SEND ===== */
@@ -978,28 +1044,45 @@ function NotifyTeacherModal({ teachers, onClose }) {
       alert("Admin not authenticated");
       return;
     }
+    if (target === "individual" && !selectedTeacherId) {
+      alert("Please select a teacher");
+      return;
+    }
 
-    const payload = {
-      title: title,
-      message: message,
-      type: type,
-      target_role: "faculty",   // IMPORTANT: since this modal is for faculty
-      target_type: target,
-      department: target === "department" ? department : null,
-      faculty_id: target === "individual" ? selectedTeacherId : null,
-      student_id: null
-    };
-    
-    console.log("FINAL PAYLOAD:", payload);
+    if (target === "department" && !department) {
+      alert("Please select a department");
+      return;
+    }
+
+
+    const formData = new FormData();
+
+    formData.append("title", title);
+    formData.append("message", message);
+    formData.append("type", type); // don't use toUpperCase
+    formData.append("target_role", "faculty");
+    formData.append("target_type", target);
+
+    if (target === "department") {
+      formData.append("department", department);
+    }
+
+    if (target === "individual") {
+      formData.append("faculty_id", selectedTeacherId);
+    }
+
+    if (file) {
+      formData.append("file", file);
+    }
 
     const res = await fetch("http://localhost:8000/admin/alerts", {
       method: "POST",
       headers: {
-        "Content-Type": "application/json",
         Authorization: `Bearer ${token}`
       },
-      body: JSON.stringify(payload)
+      body: formData
     });
+
 
     if (!res.ok) {
   const errorData = await res.json();
@@ -1008,8 +1091,6 @@ function NotifyTeacherModal({ teachers, onClose }) {
   return;
  }
 
-
-    
 
     setStep("success");
 
@@ -1031,11 +1112,78 @@ function NotifyTeacherModal({ teachers, onClose }) {
         {/* HEADER */}
         <div className="flex justify-between items-center">
           <h2 className="text-lg font-semibold">Notify Teachers</h2>
-          <button onClick={onClose}>✕</button>
+
+          <div className="flex gap-3 items-center">
+            <button
+              onClick={() => {
+                setShowHistory(true);
+                fetchHistory();
+              }}
+              className="px-3 py-1 bg-gray-200 rounded-lg text-sm"
+            >
+              📜 History
+            </button>
+
+            <button onClick={onClose}>✕</button>
+          </div>
         </div>
 
+        
+        {/* ================= HISTORY ================= */}
+        {showHistory && step === "form" && (
+          <div className="space-y-4 max-h-[400px] overflow-y-auto">
+
+            <h3 className="text-lg font-semibold">Notification History</h3>
+            
+
+
+            {history.length === 0 && (
+              <p className="text-gray-500 text-sm">No notifications yet</p>
+            )}
+
+            {history.map((item) => (
+              <div
+                key={item.id}
+                className="border rounded-lg p-4 bg-gray-50 flex justify-between items-start"
+              >
+                <div>
+                  <p className="font-semibold">{item.title}</p>
+                  <p className="text-sm text-gray-600">{item.type}</p>
+                  <p className="text-xs text-gray-500">
+                    {new Date(item.created_at).toLocaleString()}
+                  </p>
+                  <p className="text-xs text-gray-400">
+                    Target: {item.target_type} ({item.target_role})
+                  </p>
+                </div>
+
+                <button
+                  onClick={() => setConfirmDeleteId(item.id)}
+                  className="text-red-600 text-sm"
+                >
+                  Delete
+                </button>
+
+              </div>
+            ))}
+
+            <div className="flex justify-end">
+              <button
+                onClick={() => setShowHistory(false)}
+                className="px-3 py-1 bg-indigo-600 text-white rounded-lg text-sm"
+              >
+                Back
+              </button>
+            </div>
+
+          </div>
+        )}
+
+
+
+
         {/* ================= FORM ================= */}
-        {step === "form" && (
+        {step === "form" && !showHistory && (
           <div className="space-y-5">
 
             {/* TARGET */}
@@ -1098,7 +1246,7 @@ function NotifyTeacherModal({ teachers, onClose }) {
               >
                 <option value="">Select Teacher</option>
                 {teachers.map((t) => (
-                  <option key={t.faculty_id} value={t.faculty_id}>
+                  <option key={t.id} value={t.id}>
                     {t.name} — {t.department}
                   </option>
                 ))}
@@ -1240,6 +1388,72 @@ function NotifyTeacherModal({ teachers, onClose }) {
                 }
               `}
             </style>
+          </div>
+        )}
+        {/* ================= DELETE SUCCESS ================= */}
+        {step === "deleteSuccess" && (
+          <div className="text-center py-12 space-y-4">
+            <div className="mx-auto w-16 h-16 rounded-full bg-red-100 flex items-center justify-center animate-bounce">
+              <span className="text-3xl text-red-600">🗑</span>
+            </div>
+
+            <h3 className="text-lg font-semibold text-red-700">
+              Notification Deleted Successfully
+            </h3>
+
+            <p className="text-sm text-gray-500">
+              The notification has been removed
+            </p>
+
+            <div className="w-full h-1 bg-gray-200 rounded-full overflow-hidden">
+              <div className="h-full bg-red-500 animate-[progress_2s_linear]" />
+            </div>
+
+            <style>
+              {`
+                @keyframes progress {
+                  from { width: 0%; }
+                  to { width: 100%; }
+                }
+              `}
+            </style>
+          </div>
+        )}
+
+        {/* ================= CONFIRM DELETE MODAL ================= */}
+        {confirmDeleteId && (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+            <div className="bg-white p-6 rounded-xl w-[350px] space-y-4 shadow-lg">
+              
+              <h3 className="text-lg font-semibold text-gray-800">
+                Confirm Deletion
+              </h3>
+
+              <p className="text-sm text-gray-600">
+                Are you sure you want to delete this notification?
+              </p>
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  onClick={() => setConfirmDeleteId(null)}
+                  className="px-4 py-1 border rounded-lg text-sm"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  onClick={async () => {
+                    const success = await deleteAlert(confirmDeleteId);
+                    if (success) {
+                      setConfirmDeleteId(null);
+                    }
+                  }}
+                  className="px-4 py-1 bg-red-600 text-white rounded-lg text-sm"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
           </div>
         )}
 

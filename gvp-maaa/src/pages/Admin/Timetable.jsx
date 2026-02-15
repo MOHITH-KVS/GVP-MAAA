@@ -8,6 +8,14 @@ export default function Timetable() {
   const [timetables, setTimetables] = useState([]);
   const [showConfirm, setShowConfirm] = useState(false);
   const [uploadData, setUploadData] = useState(null);
+  const [department, setDepartment] = useState("");
+  const [year, setYear] = useState("");
+  const [section, setSection] = useState("");
+  const [semester, setSemester] = useState("");
+  const [timetableType, setTimetableType] = useState("");
+  const [filterAudience, setFilterAudience] = useState("");
+
+
 
 
 
@@ -32,7 +40,8 @@ export default function Timetable() {
 
   useEffect(() => {
   fetchTimetables();
- }, []);
+}, [department, section, semester, timetableType, filterAudience]);
+
 
 
 
@@ -40,24 +49,45 @@ const fetchTimetables = async () => {
   try {
     const token = localStorage.getItem("access_token");
 
-    const res = await fetch("http://127.0.0.1:8000/timetables", {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
+    const params = new URLSearchParams();
+
+    if (department) params.append("department", department);
+    if (section) params.append("section", section);
+    if (semester) params.append("semester", semester);
+    if (timetableType) params.append("timetable_type", timetableType);
+    if (filterAudience) params.append("audience", filterAudience);
+
+    const res = await fetch(
+      `http://localhost:8000/timetables?${params.toString()}`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
 
     const data = await res.json();
     setTimetables(data);
+
   } catch (err) {
     console.error("Error loading timetables", err);
   }
- };
+};
+
 
  // ================= UPLOAD TIMETABLE API =================
  const uploadTimetable = async (data) => {
   try {
     const formData = new FormData();
     formData.append("title", data.title);
+    formData.append("timetable_type", data.timetableType);
+    formData.append("department", data.department);
+    formData.append("year", data.year);
+    formData.append("section", data.section);
+    formData.append("semester", data.semester);
+    formData.append("audience", data.audience);
+    formData.append("file", data.file);
+
 
     if (data.file) {
       formData.append("file", data.file);
@@ -68,7 +98,7 @@ const fetchTimetables = async () => {
     const token = localStorage.getItem("access_token");
 
     const res = await fetch(
-      "http://127.0.0.1:8000/admin/timetables/upload",
+      "http://localhost:8000/admin/timetable/upload",
       {
         method: "POST",
         headers: {
@@ -105,45 +135,75 @@ const fetchTimetables = async () => {
 
       {/* FILTERS */}
       <div className="bg-white p-4 rounded-xl border grid grid-cols-2 md:grid-cols-5 gap-4">
-        <select className="border px-3 py-2 rounded-lg">
-          <option>Department</option>
-          <option>All</option>
-          <option>CSE</option>
-          <option>CSM</option>
-          <option>ECE</option>
+        <select
+          value={department}
+          onChange={(e) => setDepartment(e.target.value)}
+          className="border px-3 py-2 rounded-lg"
+        >
+          <option value="">All Departments</option>
+          <option value="CSE">CSE</option>
+          <option value="CSM">CSM</option>
+          <option value="ECE">ECE</option>
+          <option value="MECH">MECH</option>
+          <option value="CIVIL">CIVIL</option>
         </select>
 
-        <select className="border px-3 py-2 rounded-lg">
-          <option>Year</option>
-          <option>All</option>
-          <option>1st Year</option>
-          <option>2nd Year</option>
-          <option>3rd Year</option>
-          <option>4th Year</option>
+
+        <select
+          value={section}
+          onChange={(e) => setSection(e.target.value)}
+          className="border px-3 py-2 rounded-lg"
+        >
+          <option value="">All Sections</option>
+          <option value="A">A</option>
+          <option value="B">B</option>
+          <option value="C">C</option>
+          <option value="D">D</option>
         </select>
 
-        <select className="border px-3 py-2 rounded-lg">
-          <option>Section</option>
-          <option>All</option>
-          <option>A</option>
-          <option>B</option>
+
+
+        <select
+          value={semester}
+          onChange={(e) => setSemester(e.target.value)}
+          className="border px-3 py-2 rounded-lg"
+        >
+          <option value="">All Semesters</option>
+          <option value="1">Semester 1</option>
+          <option value="2">Semester 2</option>
+          <option value="3">Semester 3</option>
+          <option value="4">Semester 4</option>
+          <option value="5">Semester 5</option>
+          <option value="6">Semester 6</option>
+          <option value="7">Semester 7</option>
+          <option value="8">Semester 8</option>
         </select>
 
-        <select className="border px-3 py-2 rounded-lg">
-          <option>Semester</option>
-          <option>All</option>
-          <option>Sem 1</option>
-          <option>Sem 2</option>
+
+        <select
+          value={timetableType}
+          onChange={(e) => setTimetableType(e.target.value)}
+          className="border px-3 py-2 rounded-lg"
+        >
+          <option value="">All Types</option>
+          <option value="class">Class Timetable</option>
+          <option value="mid">Mid Exam</option>
+          <option value="semester">Semester Exam</option>
+          <option value="event">Event Timetable</option>
         </select>
 
-        <select className="border px-3 py-2 rounded-lg">
-          <option>Timetable Type</option>
-          <option>Class Timetable</option>
-          <option>Mid Exam Timetable</option>
-          <option>Semester Exam Timetable</option>
-          <option>Review Timetable</option>
-          <option>Event Timetable</option>
+        <select
+          value={filterAudience}
+          onChange={(e) => setFilterAudience(e.target.value)}
+          className="border px-3 py-2 rounded-lg"
+        >
+          <option value="">All Audience</option>
+          <option value="students">Students</option>
+          <option value="faculty">Faculty</option>
+          <option value="all">All</option>
         </select>
+
+
       </div>
 
       {/* UPLOAD SECTION */}
@@ -283,7 +343,7 @@ const fetchTimetables = async () => {
         </div>
       )}
 
-      {showUpload && (
+    {showUpload && (
     <UploadModal
       onCancel={() => setShowUpload(false)}
       onProceed={(data) => {
@@ -324,7 +384,48 @@ const fetchTimetables = async () => {
 function UploadModal({ onCancel, onProceed }) {
   const [title, setTitle] = useState("");
   const [file, setFile] = useState(null);
-  const [link, setLink] = useState("");
+
+  const [department, setDepartment] = useState("");
+  const [year, setYear] = useState("");
+  const [section, setSection] = useState("");
+  const [semester, setSemester] = useState("");
+  const [timetableType, setTimetableType] = useState("class");
+  const [audience, setAudience] = useState("");
+  const [teachers, setTeachers] = useState([]);
+  const [selectedTeacher, setSelectedTeacher] = useState("");
+
+  useEffect(() => {
+  if (audience === "faculty") {
+    fetchTeachers();
+  }
+ }, [audience, department]);
+
+
+ const fetchTeachers = async () => {
+  try {
+    const token = localStorage.getItem("access_token");
+
+    const res = await fetch("http://localhost:8000/admin/teachers", {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    const data = await res.json();
+
+    const filtered = department
+      ? data.filter((t) => t.department === department)
+      : data;
+
+    setTeachers(filtered);
+
+  } catch (err) {
+    console.error("Error fetching teachers", err);
+  }
+ };
+
+
+
 
   const handleProceed = () => {
     if (!title) {
@@ -332,16 +433,29 @@ function UploadModal({ onCancel, onProceed }) {
       return;
     }
 
-    if (!file && !link) {
-      alert("Please upload a file or provide a link");
+    if (!file) {
+      alert("Please upload a file");
       return;
     }
 
+    if (audience === "faculty" && !selectedTeacher) {
+      alert("Please select a teacher");
+      return;
+    }
+
+
     onProceed({
-      title,
-      file,
-      link,
-    });
+  title,
+  file,
+  department,
+  year,
+  section,
+  semester,
+  timetableType,
+  audience,
+  teacher_id: selectedTeacher
+ });
+
   };
 
   return (
@@ -358,19 +472,97 @@ function UploadModal({ onCancel, onProceed }) {
           onChange={(e) => setTitle(e.target.value)}
         />
 
+        {/* DEPARTMENT */}
+        <select
+          value={department}
+          onChange={(e) => setDepartment(e.target.value)}
+          className="w-full border px-3 py-2 rounded-lg"
+        >
+          <option value="">Select Department</option>
+          <option value="CSE">CSE</option>
+          <option value="CSM">CSM</option>
+          <option value="ECE">ECE</option>
+          <option value="MECH">MECH</option>
+        </select>
+
+        {/* YEAR */}
+        <select
+          value={year}
+          onChange={(e) => setYear(e.target.value)}
+          className="w-full border px-3 py-2 rounded-lg"
+        >
+          <option value="">Select Year</option>
+          <option value="1">1st Year</option>
+          <option value="2">2nd Year</option>
+          <option value="3">3rd Year</option>
+          <option value="4">4th Year</option>
+        </select>
+
+        {/* SECTION */}
+        <select
+          value={section}
+          onChange={(e) => setSection(e.target.value)}
+          className="w-full border px-3 py-2 rounded-lg"
+        >
+          <option value="">Select Section</option>
+          <option value="A">A</option>
+          <option value="B">B</option>
+        </select>
+
+        {/* SEMESTER */}
+        <select
+          value={semester}
+          onChange={(e) => setSemester(e.target.value)}
+          className="w-full border px-3 py-2 rounded-lg"
+        >
+          <option value="">Select Semester</option>
+          <option value="1">Sem 1</option>
+          <option value="2">Sem 2</option>
+        </select>
+
+        {/* TIMETABLE TYPE */}
+        <select
+          value={timetableType}
+          onChange={(e) => setTimetableType(e.target.value)}
+          className="w-full border px-3 py-2 rounded-lg"
+        >
+          <option value="class">Class Timetable</option>
+          <option value="mid">Mid Exam</option>
+          <option value="semester">Semester Exam</option>
+          <option value="event">Event Timetable</option>
+        </select>
+
+        {/* 🔥 AUDIENCE FILTER (THIS IS WHAT YOU WANTED) */}
+        <select
+          value={audience}
+          onChange={(e) => setAudience(e.target.value)}
+          className="w-full border px-3 py-2 rounded-lg"
+        >
+          {audience === "faculty" && (
+            <select
+              value={selectedTeacher}
+              onChange={(e) => setSelectedTeacher(e.target.value)}
+              className="w-full border px-3 py-2 rounded-lg"
+            >
+              <option value="">Select Teacher</option>
+              {teachers.map((teacher) => (
+                <option key={teacher.id} value={teacher.id}>
+                  {teacher.name} - {teacher.department}
+                </option>
+              ))}
+            </select>
+          )}
+
+          <option value="all">All</option>
+          <option value="students">Students</option>
+          <option value="faculty">Teachers</option>
+          <option value="both">Students & Teachers</option>
+        </select>
+
         {/* FILE */}
         <input
           type="file"
-          accept=".pdf,.xls,.xlsx,.doc,.docx,.png,.jpg,.jpeg"
           onChange={(e) => setFile(e.target.files[0])}
-        />
-
-        {/* LINK */}
-        <input
-          className="w-full border px-3 py-2 rounded-lg"
-          placeholder="Or paste link"
-          value={link}
-          onChange={(e) => setLink(e.target.value)}
         />
 
         <div className="flex justify-end gap-3 pt-4">
@@ -388,6 +580,7 @@ function UploadModal({ onCancel, onProceed }) {
     </div>
   );
 }
+
 
 
 function ConfirmUploadModal({ data, onBack, onUpload }) {

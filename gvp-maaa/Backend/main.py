@@ -6,7 +6,7 @@ from security import hash_password, verify_password
 from mail import send_reset_email
 from schemas import  AlertCreate, ResetPasswordRequest, StudentPromotionRequest, TeacherAdminUpdate, TeacherDeleteRequest,TimetableCreate, TimetableResponse,StudentDeleteRequest
 from datetime import datetime
-from models import Alert, StudentAlert, Timetable
+from models import Alert, AlertRecipient, StudentAlert, Timetable
 
 
 import pandas as pd
@@ -63,11 +63,12 @@ app.mount(
 # -------------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-)
+ )
+
 
 # -------------------------
 # Database Dependency
@@ -102,11 +103,12 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
 
     # 🔐 CREATE JWT TOKEN
     access_token = create_access_token(
-        data={
-            "user_id": user.user_id,
-            "role": user.role
-        }
-    )
+    data={
+        "user_id": user.user_id,
+        "role": user.role,
+        "department_id": user.department_id   # ✅ ADD THIS
+    }
+)
 
     return {
         "access_token": access_token,
@@ -465,8 +467,13 @@ def admin_login(data: AdminLoginRequest, db: Session = Depends(get_db)):
 
     # 4️⃣ Create JWT
     access_token = create_access_token(
-        data={"user_id": admin.user_id, "role": admin.role}
-    )
+    data={
+        "user_id": admin.user_id,
+        "role": admin.role,
+        "department_id": admin.department_id  # ✅ ADD THIS
+    }
+   )
+
 
     return {
         "access_token": access_token,
@@ -676,6 +683,8 @@ def admin_protected(user=Depends(get_current_user)):
 def upload_timetable(
     title: str = Form(...),
     timetable_type: str = Form(...),
+    faculty_id: int = Form(None),
+
 
     department: str = Form(None),
     year: str = Form(None),
@@ -708,10 +717,27 @@ def upload_timetable(
     # 📄 File type
     file_type = file.filename.split(".")[-1].lower()
 
-    # 🗄️ Save DB record
+    # 🔥 STEP 1: Deactivate existing active timetable with same filters
+    existing = db.query(Timetable).filter(
+        Timetable.timetable_type == timetable_type,
+        Timetable.department == department,
+        Timetable.year == year,
+        Timetable.section == section,
+        Timetable.semester == semester,
+        Timetable.is_active == True
+    ).all()
+
+    for old in existing:
+        old.is_active = False
+
+    db.commit()   # commit deactivation first
+
+    # 🔥 STEP 2: Create new timetable
     timetable = Timetable(
         title=title,
         timetable_type=timetable_type,
+        faculty_id=faculty_id,
+
 
         department=department,
         year=year,
@@ -719,11 +745,11 @@ def upload_timetable(
         semester=semester,
 
         file_name=file.filename,
-        file_path=file_path,
+        file_url=f"/uploads/timetables/{filename}",
         file_type=file_type,
 
         audience=audience,
-        uploaded_at=datetime.utcnow(),
+        uploaded_by=user["user_id"],
         is_active=True
     )
 
@@ -731,7 +757,86 @@ def upload_timetable(
     db.commit()
     db.refresh(timetable)
 
+    # =========================
+    # AUTO CREATE ALERT
+    # =========================
+
+    # CASE 1: Specific faculty selected
+    if audience == "faculty" and faculty_id:
+
+        new_alert = Alert(
+            title="New Timetable Uploaded",
+            message=f"{title} has been uploaded. Please check the timetable section.",
+            type="timetable",
+            target_role="faculty",
+            target_type="individual",
+            faculty_id=faculty_id
+        )
+
+        db.add(new_alert)
+        db.commit()
+        db.refresh(new_alert)
+
+        recipient = AlertRecipient(
+            alert_id=new_alert.id,
+            user_id=faculty_id,
+            is_read=False
+        )
+
+        db.add(recipient)
+        db.commit()
+
+
+    # CASE 2: Broadcast logic
+    else:
+
+        if audience == "students":
+            roles = ["student"]
+
+        elif audience == "faculty":
+            roles = ["faculty"]
+
+        elif audience == "both":
+            roles = ["student", "faculty"]
+
+        elif audience == "all":
+            roles = ["student", "faculty", "admin"]
+
+        else:
+            roles = []
+
+        for role in roles:
+
+            new_alert = Alert(
+                title="New Timetable Uploaded",
+                message=f"{title} has been uploaded. Please check the timetable section.",
+                type="timetable",
+                target_role=role,
+                target_type="all"
+            )
+
+            db.add(new_alert)
+            db.commit()
+            db.refresh(new_alert)
+
+            users = db.query(User).filter(
+                User.role == role,
+                User.is_deleted == False
+            ).all()
+
+            for user_obj in users:
+                recipient = AlertRecipient(
+                    alert_id=new_alert.id,
+                    user_id=user_obj.user_id,
+                    is_read=False
+                )
+                db.add(recipient)
+
+            db.commit()
+
+
     return timetable
+
 
 
 
@@ -740,22 +845,39 @@ def upload_timetable(
 # =========================
 @app.get("/timetables", response_model=list[TimetableResponse])
 def get_timetables(
+    faculty_id: int = None,
+    timetable_type: str = None,
     department: str = None,
     year: str = None,
+    semester: str = None,
     section: str = None,
     audience: str = None,
     db: Session = Depends(get_db)
 ):
+
     query = db.query(Timetable).filter(Timetable.is_active == True)
 
+    if faculty_id:
+        query = query.filter(Timetable.faculty_id == faculty_id)
+
+    if timetable_type:
+        query = query.filter(Timetable.timetable_type == timetable_type)
     if department:
         query = query.filter(Timetable.department == department)
     if year:
         query = query.filter(Timetable.year == year)
+    if semester:
+        query = query.filter(Timetable.semester == semester)
     if section:
         query = query.filter(Timetable.section == section)
     if audience:
-        query = query.filter(Timetable.audience.in_([audience, "all"]))
+        if audience == "students":
+            query = query.filter(Timetable.audience.in_(["students", "both", "all"]))
+        elif audience == "faculty":
+            query = query.filter(Timetable.audience.in_(["faculty", "both", "all"]))
+        else:
+            query = query.filter(Timetable.audience == "all")
+
 
     return query.order_by(Timetable.uploaded_at.desc()).all()
 
@@ -897,41 +1019,180 @@ def delete_teachers(
 # ======================== 
 @app.post("/admin/alerts")
 def create_alert(
-    payload: AlertCreate,
+    title: str = Form(...),
+    message: str = Form(...),
+    type: str = Form(...),
+    target_role: str = Form(...),
+    target_type: str = Form(...),
+
+    department: str = Form(None),
+    faculty_id: int = Form(None),
+    student_id: int = Form(None),
+
+    file: UploadFile = File(None),
+
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     if current_user["role"] != "admin":
         raise HTTPException(status_code=403, detail="Admin only")
 
-    # ---------- VALIDATION ----------
-    if payload.target_type == "individual":
-        if payload.target_role == "faculty" and not payload.faculty_id:
+    # -------------------------
+    # VALIDATION
+    # -------------------------
+    if target_type == "individual":
+        if target_role == "faculty" and not faculty_id:
             raise HTTPException(status_code=400, detail="Faculty ID required")
-
-        if payload.target_role == "student" and not payload.student_id:
+        if target_role == "student" and not student_id:
             raise HTTPException(status_code=400, detail="Student ID required")
 
-    if payload.target_type == "department":
-        if not payload.department:
-            raise HTTPException(status_code=400, detail="Department required")
+    if target_type == "department" and not department:
+        raise HTTPException(status_code=400, detail="Department required")
 
+    # -------------------------
+    # FILE HANDLING
+    # -------------------------
+    file_name = None
+    file_path = None
+    file_type = None
+
+    if file:
+        upload_dir = "uploads/alerts"
+        os.makedirs(upload_dir, exist_ok=True)
+
+        unique_filename = f"{uuid.uuid4()}_{file.filename}"
+        file_path = os.path.join(upload_dir, unique_filename)
+
+        with open(file_path, "wb") as f:
+            f.write(file.file.read())
+
+        file_name = file.filename
+        file_type = file.filename.split(".")[-1]
+
+    # -------------------------
+    # CREATE ALERT
+    # -------------------------
     new_alert = Alert(
-        title=payload.title,
-        message=payload.message,
-        type=payload.type,
-        target_role=payload.target_role,
-        target_type=payload.target_type,
-        department=payload.department,
-        faculty_id=payload.faculty_id,
-        student_id=payload.student_id
+        title=title,
+        message=message,
+        type=type.lower(),
+        target_role=target_role,
+        target_type=target_type,
+        department=department,
+        faculty_id=faculty_id,
+        student_id=student_id,
+        file_name=file_name,
+        file_path=file_path,
+        file_type=file_type
     )
 
     db.add(new_alert)
     db.commit()
     db.refresh(new_alert)
 
+    # -------------------------
+    # CREATE RECIPIENTS
+    # -------------------------
+    users = []
+
+    if target_type == "all":
+        users = db.query(User).filter(
+            User.role == target_role,
+            User.is_deleted == False
+        ).all()
+
+    elif target_type == "individual":
+        if target_role == "faculty":
+            users = db.query(User).filter(
+                User.user_id == faculty_id
+            ).all()
+        else:
+            users = db.query(User).filter(
+                User.user_id == student_id
+            ).all()
+
+    elif target_type == "department":
+        department_id = None
+        for key, value in DEPARTMENT_MAP.items():
+            if value == department:
+                department_id = key
+
+        users = db.query(User).filter(
+            User.role == target_role,
+            User.department_id == department_id,
+            User.is_deleted == False
+        ).all()
+
+    for user in users:
+        recipient = AlertRecipient(
+            alert_id=new_alert.id,
+            user_id=user.user_id,
+            is_read=False
+        )
+        db.add(recipient)
+
+    db.commit()
+
     return {"message": "Alert created successfully"}
+
+
+# =========================
+# ADMIN – GET ALL ALERTS
+# =========================
+@app.get("/admin/alerts")
+def get_all_alerts(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    alerts = db.query(Alert).order_by(Alert.created_at.desc()).all()
+
+    return [
+        {
+            "id": a.id,
+            "title": a.title,
+            "message": a.message,
+            "type": a.type,
+            "target_role": a.target_role,
+            "target_type": a.target_type,
+            "department": a.department,
+            "faculty_id": a.faculty_id,
+            "student_id": a.student_id,
+            "created_at": a.created_at,
+        }
+        for a in alerts
+    ]
+
+
+# =========================
+# ADMIN – DELETE ALERT
+# =========================
+@app.delete("/admin/alerts/{alert_id}")
+def delete_alert(
+    alert_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    alert = db.query(Alert).filter(Alert.id == alert_id).first()
+
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alert not found")
+
+    # delete recipients first
+    db.query(AlertRecipient).filter(
+        AlertRecipient.alert_id == alert_id
+    ).delete()
+
+    # delete alert
+    db.delete(alert)
+    db.commit()
+
+    return {"message": "Alert deleted successfully"}
 
 
 # =========================
@@ -945,20 +1206,32 @@ def get_faculty_alerts(
     if current_user["role"] != "faculty":
         raise HTTPException(status_code=403, detail="Faculty only")
 
-    faculty_id = current_user["user_id"]
-    department_id = current_user["department_id"]
-    department_name = DEPARTMENT_MAP.get(department_id)
+    alerts = (
+        db.query(Alert, AlertRecipient)
+        .join(AlertRecipient, Alert.id == AlertRecipient.alert_id)
+        .filter(AlertRecipient.user_id == current_user["user_id"])
+        .order_by(Alert.created_at.desc())
+        .all()
+    )
 
-    alerts = db.query(Alert).filter(
-        Alert.target_role == "faculty",
-        (
-            (Alert.target_type == "all") |
-            ((Alert.target_type == "individual") & (Alert.faculty_id == faculty_id)) |
-            ((Alert.target_type == "department") & (Alert.department == department_name))
-        )
-    ).order_by(Alert.created_at.desc()).all()
+    result = []
 
-    return alerts
+    for alert, recipient in alerts:
+        result.append({
+            "id": alert.id,
+            "title": alert.title,
+            "message": alert.message,
+            "type": alert.type,
+            "created_at": alert.created_at,
+            "is_read": recipient.is_read,
+            "file_name": alert.file_name,
+            "file_path": alert.file_path,
+            "file_type": alert.file_type
+        })
+
+
+    return result
+
 
 
 # =========================
@@ -972,23 +1245,46 @@ def get_student_alerts(
     if current_user["role"] != "student":
         raise HTTPException(status_code=403, detail="Student only")
 
-    student_id = current_user["user_id"]
-    department_id = current_user["department_id"]
-    department_name = DEPARTMENT_MAP.get(department_id)
+    alerts = (
+        db.query(Alert, AlertRecipient)
+        .join(AlertRecipient, Alert.id == AlertRecipient.alert_id)
+        .filter(AlertRecipient.user_id == current_user["user_id"])
+        .order_by(Alert.created_at.desc())
+        .all()
+    )
 
-    alerts = db.query(Alert).filter(
-        Alert.target_role == "student",
-        (
-            (Alert.target_type == "all") |
-            ((Alert.target_type == "individual") & (Alert.student_id == student_id)) |
-            ((Alert.target_type == "department") & (Alert.department == department_name))
-        )
-    ).order_by(Alert.created_at.desc()).all()
+    result = []
 
-    return alerts
+    for alert, recipient in alerts:
+        result.append({
+            "id": alert.id,
+            "title": alert.title,
+            "message": alert.message,
+            "type": alert.type,
+            "created_at": alert.created_at,
+            "is_read": recipient.is_read
+        })
+
+    return result
 
 
+# =========================
+# MARK ALERT AS READ
+# =========================
+@app.put("/alerts/{alert_id}/read")
+def mark_read(alert_id: int, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+    recipient = db.query(AlertRecipient).filter(
+        AlertRecipient.alert_id == alert_id,
+        AlertRecipient.user_id == current_user["user_id"]
+    ).first()
 
+    if not recipient:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    recipient.is_read = True
+    db.commit()
+
+    return {"message": "Marked as read"}
 
 
 

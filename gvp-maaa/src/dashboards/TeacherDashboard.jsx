@@ -43,6 +43,8 @@ export default function TeacherDashboard() {
   const [showFullProfile, setShowFullProfile] = useState(false);
   const [profile, setProfile] = useState(null);
   const [alerts, setAlerts] = useState([]);
+  const unreadCount = alerts.filter(a => !a.is_read).length;
+
   const [loading, setLoading] = useState(true);
 
 
@@ -55,7 +57,7 @@ export default function TeacherDashboard() {
       return;
     }
 
-    const res = await fetch("http://127.0.0.1:8000/faculty/profile", {
+    const res = await fetch("http://localhost:8000/faculty/profile", {
       headers: {
         Authorization: `Bearer ${token}`,
       },
@@ -79,7 +81,7 @@ export default function TeacherDashboard() {
     try {
       const token = localStorage.getItem("access_token");
 
-      const res = await fetch("http://127.0.0.1:8000/faculty/alerts", {
+      const res = await fetch("http://localhost:8000/faculty/alerts", {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -244,10 +246,9 @@ export default function TeacherDashboard() {
                   active={activePage === "alerts"}
                   onClick={() => setActivePage("alerts")}
                 />
-
-                {alerts.length > 0 && (
+                {unreadCount > 0 && (
                   <span className="absolute top-0 right-4 bg-red-500 text-white text-xs px-2 py-0.5 rounded-full">
-                    {alerts.length}
+                    {unreadCount}
                   </span>
                 )}
               </div>
@@ -281,7 +282,13 @@ export default function TeacherDashboard() {
             {activePage === "resources" && <Resources />}
             {activePage === "events" && <Events />}
             {activePage === "insights" && <Insights />}
-            {activePage === "alerts" && <Alerts alerts={alerts} loading={loading} />}
+            {activePage === "alerts" && (
+              <Alerts 
+                alerts={alerts} 
+                setAlerts={setAlerts}
+                loading={loading} 
+              />
+            )}
           </div>
 
           {/* ================= PROFILE ================= */}

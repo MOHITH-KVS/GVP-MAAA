@@ -1,10 +1,30 @@
 import { useNavigate } from "react-router-dom";
+import { useEffect } from "react";
+
 import LocalLibraryIcon from "@mui/icons-material/LocalLibrary";
 import CastForEducationIcon from "@mui/icons-material/CastForEducation";
 import AdminPanelSettingsIcon from "@mui/icons-material/AdminPanelSettings";
 
 export default function RoleSelect() {
   const navigate = useNavigate();
+
+  useEffect(() => {
+  const token = localStorage.getItem("access_token");
+  const role = localStorage.getItem("role");
+
+  if (token && role === "admin") {
+    navigate("/admin", { replace: true });
+  }
+
+  if (token && role === "student") {
+    navigate("/student", { replace: true });
+  }
+
+  if (token && role === "faculty") {
+    navigate("/teacher", { replace: true });
+  }
+ }, []);
+
 
   return (
     <div className="relative min-h-screen w-full flex items-center justify-center overflow-hidden bg-slate-50">

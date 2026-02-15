@@ -1,6 +1,7 @@
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, Numeric, ForeignKey, Text, Boolean, DateTime
 from sqlalchemy.sql import func
+from sqlalchemy.orm import relationship
 
 from database import Base
 
@@ -106,6 +107,7 @@ class Timetable(Base):
     __tablename__ = "timetables"
 
     id = Column(Integer, primary_key=True, index=True)
+    faculty_id = Column(Integer, ForeignKey("faculty.faculty_id"), nullable=True)
 
     # BASIC INFO
     title = Column(String(255), nullable=False)        # e.g. "III Year Class Timetable"
@@ -161,8 +163,20 @@ class Alert(Base):
         ForeignKey("students.student_id"),
         nullable=True
     )
+    file_name = Column(String, nullable=True)
+    file_path = Column(String, nullable=True)
+    file_type = Column(String, nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+# -------------------------
+# ALERT RECIPIENTS
+# -------------------------
+class AlertRecipient(Base):
+    __tablename__ = "alert_recipients"
 
+    id = Column(Integer, primary_key=True)
+    alert_id = Column(Integer, ForeignKey("alerts.id"))
+    user_id = Column(Integer, ForeignKey("users.user_id"))
+    is_read = Column(Boolean, default=False)
 
