@@ -817,24 +817,31 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
     // 🔹 BULK PROMOTION (FIXED)
     if (flow === "bulk" && selectedBulkIds.length > 0) {
 
-      if (selectedBulkIds.length === 0) {
-        alert("Please select at least one student");
+      // 🚨 prevent empty update
+      if (!bulkFilter.newYear && !bulkFilter.newSemester && !bulkFilter.newSection) {
+        alert("Please select at least one field to update");
+        setSubmitting(false);
         return;
       }
 
-      if (!bulkFilter.newYear || !bulkFilter.newSemester) {
-        alert("Please select both Year and Semester");
-        return;
-      }
-      
-
-      console.log("BULK PAYLOAD", {
+      const payload = {
         student_ids: selectedBulkIds.map(Number),
-        new_year: Number(bulkFilter.newYear),
-        new_semester: Number(bulkFilter.newSemester),
-        new_section: bulkFilter.newSection || null,
-      });
+      };
 
+      // Only add fields if admin selected them
+      if (bulkFilter.newYear) {
+        payload.new_year = Number(bulkFilter.newYear);
+      }
+
+      if (bulkFilter.newSemester) {
+        payload.new_semester = Number(bulkFilter.newSemester);
+      }
+
+      if (bulkFilter.newSection) {
+        payload.new_section = bulkFilter.newSection;
+      }
+
+      console.log("BULK PAYLOAD", payload);
 
       const response = await fetch(
         "http://127.0.0.1:8000/admin/students/bulk-promote",
@@ -844,31 +851,25 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
             "Content-Type": "application/json",
             Authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({
-            student_ids: selectedBulkIds,
-            current_semester: Number(bulkFilter.semester), // ✅ ADD THIS
-            new_year: Number(bulkFilter.newYear),
-            new_semester: Number(bulkFilter.newSemester),
-            new_section: bulkFilter.newSection || null,
-          })
-
+          body: JSON.stringify(payload),
         }
       );
 
       if (!response.ok) {
         const err = await response.json();
         console.error(err);
-        throw new Error("Bulk promotion failed");
+        throw new Error("Bulk update failed");
       }
 
-      // 🔄 Update UI locally
+      // 🔄 Update UI locally (only update selected fields)
       setStudents((prev) =>
         prev.map((s) =>
           selectedBulkIds.includes(s.id)
             ? {
                 ...s,
-                year: Number(bulkFilter.newYear),
-                section: bulkFilter.newSection || s.section,
+                year: bulkFilter.newYear ? Number(bulkFilter.newYear) : s.year,
+                semester: bulkFilter.newSemester ? Number(bulkFilter.newSemester) : s.semester,
+                section: bulkFilter.newSection ? bulkFilter.newSection : s.section,
               }
             : s
         )
@@ -881,11 +882,10 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
         section: "",
         newYear: "",
         newSemester: "",
-        newSection: ""
+        newSection: "",
       });
-
-
     }
+
 
 
     setStep("success");

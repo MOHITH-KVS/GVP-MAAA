@@ -572,24 +572,21 @@ def bulk_promote_students(
     if not students:
         raise HTTPException(status_code=404, detail="No students found")
 
-    # 🔐 VALIDATION (THIS IS THE ANSWER)
-    if payload.new_semester != payload.current_semester + 1:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid promotion sequence"
-        )
-
-    # ✅ SAFE PROMOTION
     for student in students:
-        student.year = payload.new_year
-        student.semester = payload.new_semester
-        if payload.new_section:
+
+        # ✅ Update semester if provided
+        if payload.new_semester is not None:
+            student.semester = payload.new_semester
+            student.year = (payload.new_semester + 1) // 2
+
+        # ✅ Update section if provided
+        if payload.new_section is not None:
             student.section = payload.new_section
 
     db.commit()
 
     return {
-        "message": "Students promoted successfully",
+        "message": "Students updated successfully",
         "updated_count": len(students)
     }
 
@@ -719,13 +716,15 @@ def upload_timetable(
 
     # 🔥 STEP 1: Deactivate existing active timetable with same filters
     existing = db.query(Timetable).filter(
-        Timetable.timetable_type == timetable_type,
-        Timetable.department == department,
-        Timetable.year == year,
-        Timetable.section == section,
-        Timetable.semester == semester,
-        Timetable.is_active == True
-    ).all()
+    Timetable.timetable_type == timetable_type,
+    Timetable.department == department,
+    Timetable.year == year,
+    Timetable.section == section,
+    Timetable.semester == semester,
+    Timetable.faculty_id == faculty_id,   # ✅ ADD THIS
+    Timetable.is_active == True
+ ).all()
+
 
     for old in existing:
         old.is_active = False
@@ -819,10 +818,23 @@ def upload_timetable(
             db.commit()
             db.refresh(new_alert)
 
-            users = db.query(User).filter(
+            query = db.query(User).filter(
                 User.role == role,
                 User.is_deleted == False
-            ).all()
+            )
+
+            # 🔥 Filter by department if provided
+            if department:
+                department_id = None
+                for key, value in DEPARTMENT_MAP.items():
+                    if value == department:
+                        department_id = key
+
+                if department_id:
+                    query = query.filter(User.department_id == department_id)
+
+            users = query.all()
+
 
             for user_obj in users:
                 recipient = AlertRecipient(
@@ -837,9 +849,6 @@ def upload_timetable(
 
     return timetable
 
-
-
-
 # =========================
 # GET PUBLISHED TIMETABLES
 # =========================
@@ -852,34 +861,56 @@ def get_timetables(
     semester: str = None,
     section: str = None,
     audience: str = None,
+    current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
 
+
     query = db.query(Timetable).filter(Timetable.is_active == True)
 
-    if faculty_id:
-        query = query.filter(Timetable.faculty_id == faculty_id)
+    # =============================
+    # ROLE BASED SECURITY FILTER
+    # =============================
 
-    if timetable_type:
-        query = query.filter(Timetable.timetable_type == timetable_type)
-    if department:
-        query = query.filter(Timetable.department == department)
-    if year:
-        query = query.filter(Timetable.year == year)
-    if semester:
-        query = query.filter(Timetable.semester == semester)
-    if section:
-        query = query.filter(Timetable.section == section)
-    if audience:
-        if audience == "students":
-            query = query.filter(Timetable.audience.in_(["students", "both", "all"]))
-        elif audience == "faculty":
-            query = query.filter(Timetable.audience.in_(["faculty", "both", "all"]))
-        else:
-            query = query.filter(Timetable.audience == "all")
+    user_role = current_user["role"]
+    user_department_id = current_user["department_id"]
+    user_department = None
+    if user_department_id:
+        user_department = DEPARTMENT_MAP.get(user_department_id)
 
+    if user_role == "student":
+        query = query.filter(
+            Timetable.department == user_department
+        ).filter(
+            Timetable.audience.in_(["students", "both", "all"])
+        )
+
+    elif user_role == "faculty":
+        query = query.filter(
+            (Timetable.department == user_department) |
+            (Timetable.faculty_id == current_user["user_id"])
+        ).filter(
+            Timetable.audience.in_(["faculty", "both", "all"])
+        )
+
+    elif user_role == "admin":
+        # admin can apply filters manually
+        if department:
+            query = query.filter(Timetable.department == department)
+        if year:
+            query = query.filter(Timetable.year == year)
+        if semester:
+            query = query.filter(Timetable.semester == semester)
+        if section:
+            query = query.filter(Timetable.section == section)
+        if audience:
+            query = query.filter(Timetable.audience == audience)
+
+        if timetable_type:
+            query = query.filter(Timetable.timetable_type == timetable_type)
 
     return query.order_by(Timetable.uploaded_at.desc()).all()
+
 
 
 # =========================

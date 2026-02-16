@@ -141,6 +141,8 @@ class TimetableResponse(BaseModel):
     title: str
     timetable_type: str
 
+    faculty_id: Optional[int] = None   # ✅ ADD THIS
+
     department: Optional[str]
     year: Optional[str]
     section: Optional[str]
@@ -154,9 +156,6 @@ class TimetableResponse(BaseModel):
     uploaded_at: datetime
     is_active: bool
 
-    class Config:
-        orm_mode = True
-
 
 # 🔹 Timetable List Response
 class TimetableListResponse(BaseModel):
@@ -168,10 +167,11 @@ class TimetableListResponse(BaseModel):
 # =========================
 class StudentPromotionRequest(BaseModel):
     student_ids: list[int]
-    current_semester: int
-    new_year: int
-    new_semester: int
+    new_semester: int | None = None
     new_section: str | None = None
+
+
+
 
 
 #class BulkPromoteRequest(BaseModel):

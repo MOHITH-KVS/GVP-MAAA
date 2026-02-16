@@ -1,172 +1,111 @@
-import { useState } from "react";
-
-/* ===== SAMPLE TEACHER TIMETABLE DATA ===== */
-const TIMETABLE = {
-  Monday: [
-    {
-      time: "09:00 - 09:50",
-      subject: "DBMS",
-      year: "3rd Year",
-      section: "A",
-      type: "Lecture",
-    },
-    {
-      time: "10:00 - 10:50",
-      subject: "OS",
-      year: "3rd Year",
-      section: "B",
-      type: "Lecture",
-    },
-    {
-      time: "11:00 - 11:50",
-      subject: "CN",
-      year: "4th Year",
-      section: "A",
-      type: "Lecture",
-    },
-    {
-      time: "12:50 - 01:40",
-      subject: "Lunch Break",
-      type: "Break",
-    },
-    {
-      time: "02:40 - 04:40",
-      subject: "DBMS LAB",
-      year: "4th Year",
-      section: "B",
-      type: "Lab",
-    },
-  ],
-
-  Tuesday: [
-    {
-      time: "09:00 - 09:50",
-      subject: "DBMS",
-      year: "3rd Year",
-      section: "A",
-      type: "Lecture",
-    },
-  ],
-  Wednesday: [],
-  Thursday: [],
-  Friday: [],
-};
-
-const DAYS = ["All", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+import { useEffect, useState } from "react";
 
 export default function Timetable() {
-  const [activeDay, setActiveDay] = useState("Monday");
+  const [timetables, setTimetables] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-  const daysToRender =
-    activeDay === "All" ? Object.keys(TIMETABLE) : [activeDay];
+  useEffect(() => {
+    fetchTimetables();
+  }, []);
+
+  const fetchTimetables = async () => {
+    try {
+      const token = localStorage.getItem("access_token");
+
+      const res = await fetch(
+        "http://localhost:8000/timetables?audience=faculty",
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      if (!res.ok) {
+        console.error("Failed to fetch timetables");
+        return;
+      }
+
+      const data = await res.json();
+      setTimetables(data);
+    } catch (err) {
+      console.error("Error fetching timetables", err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className="space-y-8">
 
       {/* ================= HEADER ================= */}
       <div className="rounded-3xl p-6 bg-gradient-to-r from-indigo-50 to-cyan-50 border">
-        <h1 className="text-2xl font-semibold">🕒 Teacher Timetable</h1>
+        <h1 className="text-2xl font-semibold">🕒 My Timetables</h1>
         <p className="text-gray-600 mt-1">
-          Your teaching schedule across years and sections
+          View all timetable documents assigned to you
         </p>
       </div>
 
-      {/* ================= DAY FILTER ================= */}
-      <div className="flex gap-3 flex-wrap">
-        {DAYS.map((day) => (
-          <button
-            key={day}
-            onClick={() => setActiveDay(day)}
-            className={`px-4 py-2 rounded-xl text-sm font-medium transition
-              ${
-                activeDay === day
-                  ? "bg-indigo-600 text-white"
-                  : "bg-white hover:bg-gray-100"
-              }`}
-          >
-            {day}
-          </button>
-        ))}
-      </div>
+      {/* ================= CONTENT ================= */}
+      {loading ? (
+        <div className="bg-white rounded-2xl border p-6 text-center text-gray-500">
+          Loading timetables...
+        </div>
+      ) : timetables.length === 0 ? (
+        <div className="bg-white rounded-2xl border p-6 text-center text-gray-400">
+          No timetable assigned yet.
+        </div>
+      ) : (
+        <div className="bg-white rounded-2xl border overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-4 py-3 text-left">Title</th>
+                <th className="px-4 py-3 text-left">Type</th>
+                <th className="px-4 py-3 text-left">Department</th>
+                <th className="px-4 py-3 text-left">Uploaded On</th>
+                <th className="px-4 py-3 text-left">Action</th>
+              </tr>
+            </thead>
 
-      {/* ================= TIMETABLE ================= */}
-      <div className="space-y-6">
-        {daysToRender.map((day) => (
-          <div key={day} className="space-y-4">
+            <tbody>
+              {timetables.map((t) => (
+                <tr key={t.id} className="border-t">
+                  <td className="px-4 py-3 font-medium">
+                    {t.title}
+                  </td>
 
-            {/* DAY HEADER */}
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold">{day}</h2>
-            </div>
+                  <td className="px-4 py-3 capitalize">
+                    {t.timetable_type}
+                  </td>
 
-            {/* SLOTS */}
-            {TIMETABLE[day]?.length > 0 ? (
-              <div className="space-y-3">
-                {TIMETABLE[day].map((slot, index) => (
-                  <TimetableCard key={index} slot={slot} />
-                ))}
-              </div>
-            ) : (
-              <p className="text-sm text-gray-400">
-                No classes scheduled
-              </p>
-            )}
-          </div>
-        ))}
-      </div>
+                  <td className="px-4 py-3">
+                    {t.department}
+                  </td>
 
-      {/* ================= ANALYTICS PLACEHOLDER ================= */}
-      <div className="rounded-2xl p-6 bg-white border">
-        <h3 className="font-semibold mb-1">📊 Timetable Analytics</h3>
-        <p className="text-sm text-gray-500">
-          Insights will appear here once timetable data is analyzed.
-        </p>
-      </div>
-    </div>
-  );
-}
+                  <td className="px-4 py-3">
+                    {new Date(t.uploaded_at).toLocaleDateString()}
+                  </td>
 
-/* ================= TIMETABLE CARD ================= */
-
-function TimetableCard({ slot }) {
-  if (slot.type === "Break") {
-    return (
-      <div className="rounded-xl border border-yellow-300 bg-yellow-50 px-5 py-4 text-center">
-        <p className="font-semibold">🍽 {slot.subject}</p>
-        <p className="text-sm text-gray-600">{slot.time} • Relax & Recharge</p>
-      </div>
-    );
-  }
-
-  const isLab = slot.type === "Lab";
-
-  return (
-    <div
-      className={`rounded-xl border px-5 py-4 space-y-1
-        ${isLab ? "bg-green-50 border-green-300" : "bg-blue-50 border-blue-300"}
-      `}
-    >
-      <div className="flex justify-between text-sm text-gray-500">
-        <span>{slot.time}</span>
-        <span
-          className={`px-2 py-0.5 rounded-full text-xs
-            ${
-              isLab
-                ? "bg-green-100 text-green-700"
-                : "bg-indigo-100 text-indigo-700"
-            }`}
-        >
-          {slot.type}
-        </span>
-      </div>
-
-      <h3 className="font-semibold text-gray-800">
-        {slot.subject}
-      </h3>
-
-      <p className="text-sm text-gray-600">
-        {slot.year} • Section {slot.section}
-      </p>
+                  <td className="px-4 py-3">
+                    <button
+                      onClick={() =>
+                        window.open(
+                          `http://127.0.0.1:8000${t.file_url}`,
+                          "_blank"
+                        )
+                      }
+                      className="px-3 py-1 text-xs rounded-lg border hover:bg-gray-100"
+                    >
+                      View
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

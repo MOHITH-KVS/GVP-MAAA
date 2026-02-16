@@ -60,11 +60,27 @@ const fetchTimetables = async () => {
     const res = await fetch(
       `http://localhost:8000/timetables?${params.toString()}`,
       {
+        method: "GET",
         headers: {
-          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          Authorization: token ? `Bearer ${token}` : "",
         },
       }
     );
+
+  if (!res.ok) {
+    console.error("Server error:", res.status);
+    return;
+  }
+
+  if (!token) {
+  console.log("No token found");
+  return;
+ }
+ console.log("Using token:", token);
+
+
+
 
     const data = await res.json();
     setTimetables(data);
@@ -82,17 +98,15 @@ const fetchTimetables = async () => {
     formData.append("title", data.title);
     formData.append("timetable_type", data.timetableType);
     formData.append("department", data.department);
-    formData.append("year", data.year);
-    formData.append("section", data.section);
-    formData.append("semester", data.semester);
     formData.append("audience", data.audience);
     formData.append("file", data.file);
 
+    if (data.year) formData.append("year", data.year);
+    if (data.section) formData.append("section", data.section);
+    if (data.semester) formData.append("semester", data.semester);
 
-    if (data.file) {
-      formData.append("file", data.file);
-    } else {
-      formData.append("link", data.link);
+    if (data.teacher_id) {
+      formData.append("faculty_id", Number(data.teacher_id));
     }
 
     const token = localStorage.getItem("access_token");
@@ -109,8 +123,12 @@ const fetchTimetables = async () => {
     );
 
     if (!res.ok) {
+      const err = await res.text();
+      console.error("Upload failed:", err);
       throw new Error("Upload failed");
     }
+
+    console.log("Upload success");
 
   } catch (err) {
     console.error("Upload error:", err);
@@ -390,7 +408,7 @@ function UploadModal({ onCancel, onProceed }) {
   const [section, setSection] = useState("");
   const [semester, setSemester] = useState("");
   const [timetableType, setTimetableType] = useState("class");
-  const [audience, setAudience] = useState("");
+  const [audience, setAudience] = useState("students");
   const [teachers, setTeachers] = useState([]);
   const [selectedTeacher, setSelectedTeacher] = useState("");
 
@@ -424,9 +442,6 @@ function UploadModal({ onCancel, onProceed }) {
   }
  };
 
-
-
-
   const handleProceed = () => {
     if (!title) {
       alert("Title is required");
@@ -438,23 +453,34 @@ function UploadModal({ onCancel, onProceed }) {
       return;
     }
 
+    if (!department) {
+      alert("Please select department");
+      return;
+    }
+
+    if ((audience === "students" || audience === "both") &&
+        (!year || !section || !semester)) {
+      alert("Please select year, section and semester");
+      return;
+    }
+
     if (audience === "faculty" && !selectedTeacher) {
       alert("Please select a teacher");
       return;
     }
 
 
-    onProceed({
-  title,
-  file,
-  department,
-  year,
-  section,
-  semester,
-  timetableType,
-  audience,
-  teacher_id: selectedTeacher
- });
+     onProceed({
+      title,
+      file,
+      department,
+      year: audience !== "faculty" ? year : null,
+      section: audience !== "faculty" ? section : null,
+      semester: audience !== "faculty" ? semester : null,
+      timetableType,
+      audience,
+      teacher_id: audience === "faculty" ? Number(selectedTeacher) : null
+    });
 
   };
 
@@ -485,40 +511,52 @@ function UploadModal({ onCancel, onProceed }) {
           <option value="MECH">MECH</option>
         </select>
 
-        {/* YEAR */}
-        <select
-          value={year}
-          onChange={(e) => setYear(e.target.value)}
-          className="w-full border px-3 py-2 rounded-lg"
-        >
-          <option value="">Select Year</option>
-          <option value="1">1st Year</option>
-          <option value="2">2nd Year</option>
-          <option value="3">3rd Year</option>
-          <option value="4">4th Year</option>
-        </select>
+        {/* SHOW ONLY FOR STUDENTS OR BOTH */}
+        {(audience === "students" || audience === "both") && (
+          <>
+            {/* YEAR */}
+            <select
+              value={year}
+              onChange={(e) => setYear(e.target.value)}
+              className="w-full border px-3 py-2 rounded-lg"
+            >
+              <option value="">Select Year</option>
+              <option value="1">1st Year</option>
+              <option value="2">2nd Year</option>
+              <option value="3">3rd Year</option>
+              <option value="4">4th Year</option>
+            </select>
 
-        {/* SECTION */}
-        <select
-          value={section}
-          onChange={(e) => setSection(e.target.value)}
-          className="w-full border px-3 py-2 rounded-lg"
-        >
-          <option value="">Select Section</option>
-          <option value="A">A</option>
-          <option value="B">B</option>
-        </select>
+            {/* SECTION */}
+            <select
+              value={section}
+              onChange={(e) => setSection(e.target.value)}
+              className="w-full border px-3 py-2 rounded-lg"
+            >
+              <option value="">Select Section</option>
+              <option value="A">A</option>
+              <option value="B">B</option>
+            </select>
 
-        {/* SEMESTER */}
-        <select
-          value={semester}
-          onChange={(e) => setSemester(e.target.value)}
-          className="w-full border px-3 py-2 rounded-lg"
-        >
-          <option value="">Select Semester</option>
-          <option value="1">Sem 1</option>
-          <option value="2">Sem 2</option>
-        </select>
+            {/* SEMESTER */}
+            <select
+              value={semester}
+              onChange={(e) => setSemester(e.target.value)}
+              className="w-full border px-3 py-2 rounded-lg"
+            >
+              <option value="">Select Semester</option>
+              <option value="1">Semester 1</option>
+              <option value="2">Semester 2</option>
+              <option value="3">Semester 3</option>
+              <option value="4">Semester 4</option>
+              <option value="5">Semester 5</option>
+              <option value="6">Semester 6</option>
+              <option value="7">Semester 7</option>
+              <option value="8">Semester 8</option>
+            </select>
+          </>
+        )}
+
 
         {/* TIMETABLE TYPE */}
         <select
@@ -538,26 +576,29 @@ function UploadModal({ onCancel, onProceed }) {
           onChange={(e) => setAudience(e.target.value)}
           className="w-full border px-3 py-2 rounded-lg"
         >
-          {audience === "faculty" && (
-            <select
-              value={selectedTeacher}
-              onChange={(e) => setSelectedTeacher(e.target.value)}
-              className="w-full border px-3 py-2 rounded-lg"
-            >
-              <option value="">Select Teacher</option>
-              {teachers.map((teacher) => (
-                <option key={teacher.id} value={teacher.id}>
-                  {teacher.name} - {teacher.department}
-                </option>
-              ))}
-            </select>
-          )}
-
-          <option value="all">All</option>
+          <option value="">Select Audience</option>
           <option value="students">Students</option>
           <option value="faculty">Teachers</option>
           <option value="both">Students & Teachers</option>
         </select>
+
+        {audience === "faculty" && (
+        <select
+          value={selectedTeacher}
+          onChange={(e) => setSelectedTeacher(e.target.value)}
+          className="w-full border px-3 py-2 rounded-lg"
+        >
+          <option value="">Select Teacher</option>
+
+          {teachers.map((teacher) => (
+            <option key={teacher.id} value={teacher.id}>
+              {teacher.name} - {teacher.department}
+            </option>
+          ))}
+
+        </select>
+      )}
+
 
         {/* FILE */}
         <input
