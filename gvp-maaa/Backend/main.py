@@ -766,7 +766,7 @@ def upload_timetable(
         new_alert = Alert(
             title="New Timetable Uploaded",
             message=f"{title} has been uploaded. Please check the timetable section.",
-            type="timetable",
+           type=timetable_type.lower(),
             target_role="faculty",
             target_type="individual",
             faculty_id=faculty_id

@@ -1,229 +1,156 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
-/* ===== SAMPLE ALERT DATA ===== */
-const ALERTS = [
-  {
-    id: 1,
-    type: "Academic",
-    priority: "High",
-    label: "🚨 Needs Action Now",
-    title: "Attendance Below Safe Limit",
-    message:
-      "Attendance is at 73%. Attend at least 3 more classes to stay eligible.",
-    metrics: ["Attendance: 73%", "Safe Limit: 75%", "Classes Needed: 3"],
-    action: "View Attendance",
-    unread: true,
-    createdAt: Date.now(), // Just now
-  },
-  {
-    id: 2,
-    type: "Placement",
-    priority: "High",
-    label: "🚨 Needs Action Now",
-    title: "Interview Update Pending",
-    message:
-      "You attended an interview. Updating the outcome helps generate better insights.",
-    metrics: ["Interview: Completed", "Status: Not Updated"],
-    action: "Update Interview",
-    unread: true,
-    createdAt: Date.now() - 2 * 60 * 60 * 1000, // 2 hours ago
-  },
-  {
-    id: 3,
-    type: "Placement",
-    priority: "Medium",
-    label: "⚠️ Important – Review Soon",
-    title: "New Company Eligibility",
-    message:
-      "You are now eligible for TCS based on your CGPA and attendance.",
-    metrics: ["CGPA: 8.02", "Attendance: 82%"],
-    action: "View Details",
-    unread: true,
-    createdAt: Date.now() - 5 * 24 * 60 * 60 * 1000, // 5 days ago
-  },
-  {
-    id: 4,
-    type: "Academic",
-    priority: "Medium",
-    label: "⚠️ Important – Review Soon",
-    title: "Marks Dropped in Mid Exam",
-    message: "Your performance dropped compared to the previous exam.",
-    metrics: ["Mid-1: 18", "Mid-2: 14"],
-    action: "View Marks",
-    unread: false,
-    createdAt: Date.now() - 2 * 7 * 24 * 60 * 60 * 1000, // 2 weeks ago
-  },
-  {
-    id: 5,
-    type: "System",
-    priority: "Low",
-    label: "ℹ️ For Your Information",
-    title: "New Resources Uploaded",
-    message: "Operating Systems notes were uploaded by faculty.",
-    metrics: [],
-    action: "View Resources",
-    unread: false,
-    createdAt: Date.now() - 2 * 30 * 24 * 60 * 60 * 1000, // 2 months ago
-  },
-];
-
-/* ===== PRIORITY STYLES ===== */
-const PRIORITY_STYLE = {
-  High: { border: "border-red-500", bg: "bg-red-50" },
-  Medium: { border: "border-yellow-400", bg: "bg-yellow-50" },
-  Low: { border: "border-blue-400", bg: "bg-blue-50" },
-};
-
-export default function Alerts() {
-  const [alerts] = useState(ALERTS);
+export default function Alerts({ alerts = [], setAlerts, loading }) {
   const [filter, setFilter] = useState("All");
 
-  const filteredAlerts =
-    filter === "All"
-      ? alerts
-      : alerts.filter((a) => a.type === filter);
+  const fetchAlerts = async () => {
+    try {
+      const token = localStorage.getItem("access_token");
 
-  const urgentAlerts = filteredAlerts.filter(
-    (a) => a.priority === "High"
-  );
+      const res = await fetch("http://localhost:8000/student/alerts", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!res.ok) throw new Error("Failed to fetch alerts");
+
+      const data = await res.json();
+      setAlerts(data);
+    } catch (err) {
+      console.error("Error loading alerts:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const markAsRead = async (id) => {
+    try {
+      const token = localStorage.getItem("access_token");
+
+      await fetch(`http://localhost:8000/alerts/${id}/read`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      setAlerts((prev) =>
+        prev.map((a) =>
+          a.id === id ? { ...a, is_read: true } : a
+        )
+      );
+    } catch (err) {
+      console.error("Failed to mark read", err);
+    }
+  };
+
+  const filteredAlerts =
+  filter === "All"
+    ? alerts
+    : alerts.filter(
+        (a) =>
+          a.type &&
+          a.type.toLowerCase() === filter.toLowerCase()
+      );
+
 
   return (
-    <div className="space-y-10">
+    <div className="space-y-8">
 
-      {/* ================= HEADER ================= */}
-      <div className="rounded-3xl p-6 bg-gradient-to-r from-red-50 to-orange-50 border border-red-100">
+      {/* HEADER */}
+      <div className="rounded-3xl p-6 bg-gradient-to-r from-indigo-50 to-cyan-50 border border-indigo-100">
         <h1 className="text-2xl font-semibold">🔔 Alerts Center</h1>
         <p className="text-gray-600 mt-1">
-          Warnings, reminders, and opportunities you should not miss
+          Alerts received from admin
         </p>
       </div>
 
-      {/* ================= FILTERS ================= */}
-      <div className="flex gap-3 overflow-x-auto">
-        {["All", "Academic", "Placement", "System"].map((tab) => (
+      {/* FILTERS */}
+      <div className="flex gap-3 flex-wrap">
+        {[
+            "All",
+            "class timetable",
+            "mid exam",
+            "semester exam",
+            "event timetable"
+          ].map((tab) => (
+
           <button
             key={tab}
             onClick={() => setFilter(tab)}
-            className={`px-5 py-2 rounded-xl text-sm font-medium transition
+            className={`px-4 py-1.5 rounded-full text-sm border transition
               ${
                 filter === tab
-                  ? "bg-indigo-600 text-white"
+                  ? "bg-indigo-600 text-white border-indigo-600"
                   : "bg-white hover:bg-gray-100"
-              }`}
+              }
+            `}
           >
             {tab}
           </button>
         ))}
       </div>
 
-      {/* ================= REQUIRES ATTENTION ================= */}
-      {urgentAlerts.length > 0 && (
-        <div className="space-y-4">
-          <h2 className="text-lg font-semibold text-red-600">
-            🚨 Requires Your Attention
-          </h2>
+      {/* ALERT LIST */}
+      <div className="glass rounded-3xl p-6 space-y-5">
+        {loading ? (
+          <EmptyState />
+        ) : filteredAlerts.length === 0 ? (
+          <EmptyState />
+        ) : (
+          filteredAlerts.map((alert) => (
+            <div
+              key={alert.id}
+              className={`border-l-4 rounded-xl p-4 space-y-2 transition
+                ${
+                  alert.is_read
+                    ? "bg-gray-100 border-gray-300 opacity-70"
+                    : "bg-indigo-50 border-indigo-500"
+                }
+              `}
+            >
+              <div className="flex justify-between items-center">
+                <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-white border">
+                  {alert.type?.replace(/\b\w/g, c => c.toUpperCase())}
+                </span>
 
-          {urgentAlerts.map((alert) => (
-            <AlertCard key={alert.id} alert={alert} />
-          ))}
-        </div>
-      )}
+                <span className="text-xs text-gray-500">
+                  {new Date(alert.created_at).toLocaleString()}
+                </span>
+              </div>
 
-      {/* ================= ALL ALERTS ================= */}
-      <div className="space-y-4">
-        <h2 className="text-lg font-semibold">All Alerts</h2>
+              <h3 className="font-semibold">{alert.title}</h3>
+              <p className="text-sm text-gray-700">{alert.message}</p>
 
-        {filteredAlerts.map((alert) => (
-          <AlertCard key={alert.id} alert={alert} />
-        ))}
-      </div>
+              {!alert.is_read && (
+                <button
+                  onClick={() => markAsRead(alert.id)}
+                  className="px-3 py-1 text-xs rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition"
+                >
+                  Mark as Read
+                </button>
+              )}
 
-    </div>
-  );
-}
-
-/* ================= ALERT CARD ================= */
-
-function AlertCard({ alert }) {
-  const style = PRIORITY_STYLE[alert.priority];
-
-  return (
-    <div
-      className={`rounded-2xl p-5 flex justify-between items-start gap-4
-      border-l-4 ${style.border} ${style.bg}
-      ${alert.priority === "High" && alert.unread ? "alert-pulse" : ""}`}
-    >
-      <div className="space-y-3">
-
-        {/* TAGS */}
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs px-2 py-0.5 rounded-full bg-white border">
-            {alert.type}
-          </span>
-          <span className="text-xs px-2 py-0.5 rounded-full bg-gray-200">
-            {alert.label}
-          </span>
-          {alert.unread && (
-            <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-200 text-indigo-700">
-              NEW
-            </span>
-          )}
-        </div>
-
-        {/* CONTENT */}
-        <h3 className="font-semibold">{alert.title}</h3>
-        <p className="text-sm text-gray-700">{alert.message}</p>
-
-        {/* METRICS */}
-        {alert.metrics.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {alert.metrics.map((m, i) => (
-              <span
-                key={i}
-                className="text-xs px-2 py-1 rounded-lg bg-white border"
-              >
-                {m}
-              </span>
-            ))}
-          </div>
+              {alert.is_read && (
+                <p className="text-xs text-green-600 font-medium">
+                  ✔ Read
+                </p>
+              )}
+            </div>
+          ))
         )}
-
-        {/* TIME */}
-        <p className="text-xs text-gray-500">
-          ⏱ {formatTime(alert.createdAt)}
-        </p>
       </div>
-
-      {/* ACTION */}
-      <button className="px-4 py-2 text-sm rounded-xl bg-indigo-600 text-white hover:bg-indigo-700">
-        {alert.action}
-      </button>
     </div>
   );
 }
 
-/* ================= TIME FORMAT (SAFE) ================= */
-
-function formatTime(timestamp) {
-  // 🔒 Defensive: never allow NaN
-  if (!timestamp || typeof timestamp !== "number") {
-    return "Just now";
-  }
-
-  const diff = Date.now() - timestamp;
-  if (diff < 0) return "Just now";
-
-  const minute = 60 * 1000;
-  const hour = 60 * minute;
-  const day = 24 * hour;
-  const week = 7 * day;
-  const month = 30 * day;
-
-  if (diff < minute) return "Just now";
-  if (diff < hour) return `${Math.floor(diff / minute)} min ago`;
-  if (diff < day) return `${Math.floor(diff / hour)} hrs ago`;
-  if (diff < week) return `${Math.floor(diff / day)} days ago`;
-  if (diff < month) return `${Math.floor(diff / week)} weeks ago`;
-
-  return `${Math.floor(diff / month)} months ago`;
+function EmptyState() {
+  return (
+    <div className="text-center py-12 text-gray-400">
+      <div className="text-3xl mb-2">🔔</div>
+      <p className="font-medium">No alerts found</p>
+      <p className="text-sm">Try a different filter</p>
+    </div>
+  );
 }

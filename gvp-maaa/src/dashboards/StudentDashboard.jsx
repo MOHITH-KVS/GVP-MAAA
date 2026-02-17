@@ -45,6 +45,11 @@ export default function StudentDashboard() {
   const [showFullProfile, setShowFullProfile] = useState(false);
   const [showLogout, setShowLogout] = useState(false);
   const [profile, setProfile] = useState(null);
+  const [alerts, setAlerts] = useState([]);
+  const [loadingAlerts, setLoadingAlerts] = useState(true);
+
+  const unreadCount = alerts.filter(a => !a.is_read).length;
+
   const navigate = useNavigate();
 
 
@@ -66,6 +71,35 @@ export default function StudentDashboard() {
   useEffect(() => {
   fetchProfile();
  }, []);
+
+ useEffect(() => {
+  const fetchAlerts = async () => {
+    try {
+      const token = localStorage.getItem("access_token");
+
+      const res = await fetch("http://localhost:8000/student/alerts", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!res.ok) {
+        console.error("Failed to fetch alerts");
+        return;
+      }
+
+      const data = await res.json();
+      setAlerts(data);
+    } catch (error) {
+      console.error("Error fetching alerts", error);
+    } finally {
+      setLoadingAlerts(false);
+    }
+  };
+
+  fetchAlerts();
+ }, []);
+
 
 
   // Prevent back navigation
@@ -160,8 +194,21 @@ export default function StudentDashboard() {
             </SidebarSection>
 
             <SidebarSection title="System" open={sidebarOpen}>
-              <MenuItem icon={NotificationsIcon} label="Alerts" open={sidebarOpen}
-                active={activePage === "alerts"} onClick={() => setActivePage("alerts")} />
+              <div className="relative">
+                <MenuItem
+                  icon={NotificationsIcon}
+                  label="Alerts"
+                  open={sidebarOpen}
+                  active={activePage === "alerts"}
+                  onClick={() => setActivePage("alerts")}
+                />
+                {unreadCount > 0 && (
+                  <span className="absolute top-0 right-4 bg-red-500 text-white text-xs px-2 py-0.5 rounded-full">
+                    {unreadCount}
+                  </span>
+                )}
+              </div>
+
               <MenuItem icon={NotificationsIcon} label="Submissions" open={sidebarOpen}
                 active={activePage === "submissions"} onClick={() => setActivePage("submissions")} />
             </SidebarSection>
@@ -191,7 +238,7 @@ export default function StudentDashboard() {
             {activePage === "resources" && <Resources />}
             {activePage === "placement" && <Placement />}
             {activePage === "insights" && <Insights />}
-            {activePage === "alerts" && <Alerts />}
+            {activePage === "alerts" && (<Alerts alerts={alerts} setAlerts={setAlerts} loading={loadingAlerts} />)}
             {activePage === "submissions" && <Submissions />}
           </div>
 
