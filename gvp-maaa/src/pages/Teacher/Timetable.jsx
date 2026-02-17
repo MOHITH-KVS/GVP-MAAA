@@ -3,10 +3,21 @@ import { useEffect, useState } from "react";
 export default function Timetable() {
   const [timetables, setTimetables] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [now, setNow] = useState(Date.now());
+
 
   useEffect(() => {
     fetchTimetables();
   }, []);
+
+  useEffect(() => {
+  const interval = setInterval(() => {
+    setNow(Date.now());
+  }, 60000);
+
+  return () => clearInterval(interval);
+ }, []);
+
 
   const fetchTimetables = async () => {
     try {
@@ -84,8 +95,14 @@ export default function Timetable() {
                   </td>
 
                   <td className="px-4 py-3">
-                    {new Date(t.uploaded_at).toLocaleDateString()}
+                    <div>
+                      {formatDateTime(t.uploaded_at)}
+                      <div className="text-xs text-gray-400">
+                        {getRelativeTime(t.uploaded_at, now)}
+                      </div>
+                    </div>
                   </td>
+
 
                   <td className="px-4 py-3">
                     <button
@@ -109,3 +126,23 @@ export default function Timetable() {
     </div>
   );
 }
+
+/*time formatting functions */
+function formatDateTime(dateString) {
+  const date = new Date(dateString);
+  return `${date.toLocaleDateString()} at ${date.toLocaleTimeString()}`;
+}
+
+function getRelativeTime(dateString, nowValue) {
+  const past = new Date(dateString);
+  const diff = Math.floor((nowValue - past) / 1000);
+
+
+  if (diff < 60) return "Just now";
+  if (diff < 3600) return `${Math.floor(diff / 60)} minutes ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)} hours ago`;
+  if (diff < 604800) return `${Math.floor(diff / 86400)} days ago`;
+
+  return `${Math.floor(diff / 604800)} weeks ago`;
+}
+

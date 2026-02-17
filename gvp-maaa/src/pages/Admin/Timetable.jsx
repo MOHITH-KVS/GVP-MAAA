@@ -564,10 +564,10 @@ function UploadModal({ onCancel, onProceed }) {
           onChange={(e) => setTimetableType(e.target.value)}
           className="w-full border px-3 py-2 rounded-lg"
         >
-          <option value="class">Class Timetable</option>
-          <option value="mid">Mid Exam</option>
-          <option value="semester">Semester Exam</option>
-          <option value="event">Event Timetable</option>
+          <option value="class timetable">Class Timetable</option>
+          <option value="mid exam">Mid Exam</option>
+          <option value="semester exam">Semester Exam</option>
+          <option value="event timetable">Event Timetable</option>
         </select>
 
         {/* 🔥 AUDIENCE FILTER (THIS IS WHAT YOU WANTED) */}

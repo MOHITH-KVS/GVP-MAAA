@@ -18,6 +18,8 @@ export default function Timetable() {
   const [timetables, setTimetables] = useState([]);
   const [activeType, setActiveType] = useState("all");
   const [loading, setLoading] = useState(false);
+  const [now, setNow] = useState(Date.now());
+
 
   const token = localStorage.getItem("access_token");
 
@@ -55,6 +57,15 @@ export default function Timetable() {
   useEffect(() => {
     fetchTimetables();
   }, [activeType]);
+
+  useEffect(() => {
+  const interval = setInterval(() => {
+    setNow(Date.now());
+  }, 60000); // updates every 1 minute
+
+  return () => clearInterval(interval);
+ }, []);
+
 
   // 🔥 GROUP DATA BY TYPE
   const grouped = timetables.reduce((acc, t) => {
@@ -113,7 +124,7 @@ export default function Timetable() {
 
               <div className="grid md:grid-cols-2 gap-4">
                 {grouped[type].map((t) => (
-                  <TimetableCard key={t.id} t={t} type={type} />
+                  <TimetableCard key={t.id} t={t} type={type} now={now} />
                 ))}
               </div>
             </div>
@@ -128,6 +139,7 @@ export default function Timetable() {
               key={t.id}
               t={t}
               type={activeType}
+              now={now}
             />
           ))}
         </div>
@@ -139,7 +151,7 @@ export default function Timetable() {
 
 /* ================= CARD ================= */
 
-function TimetableCard({ t, type }) {
+function TimetableCard({ t, type, now }) {
   return (
     <div
       className={`rounded-2xl border p-5 transition hover:shadow-md
@@ -148,8 +160,13 @@ function TimetableCard({ t, type }) {
       <h3 className="font-semibold text-lg">{t.title}</h3>
 
       <p className="text-sm text-gray-600 mt-1">
-        Uploaded on {new Date(t.uploaded_at).toLocaleDateString()}
+        {formatDateTime(t.uploaded_at)}
+        <span className="block text-xs text-gray-400">
+          {getRelativeTime(t.uploaded_at, now)}
+        </span>
       </p>
+
+
 
       <div className="mt-4">
         <button
@@ -167,3 +184,23 @@ function TimetableCard({ t, type }) {
     </div>
   );
 }
+
+/*time formatting functions */
+function formatDateTime(dateString) {
+  const date = new Date(dateString);
+  return `Uploaded on ${date.toLocaleDateString()} at ${date.toLocaleTimeString()}`;
+}
+
+function getRelativeTime(dateString, now) {
+  const past = new Date(dateString);
+  const diff = Math.floor((now - past) / 1000);
+
+  if (diff < 60) return "Just now";
+  if (diff < 3600) return `${Math.floor(diff / 60)} min ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)} hrs ago`;
+  if (diff < 604800) return `${Math.floor(diff / 86400)} days ago`;
+
+  return `${Math.floor(diff / 604800)} weeks ago`;
+}
+
+

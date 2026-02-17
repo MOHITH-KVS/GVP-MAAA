@@ -714,22 +714,7 @@ def upload_timetable(
     # 📄 File type
     file_type = file.filename.split(".")[-1].lower()
 
-    # 🔥 STEP 1: Deactivate existing active timetable with same filters
-    existing = db.query(Timetable).filter(
-    Timetable.timetable_type == timetable_type,
-    Timetable.department == department,
-    Timetable.year == year,
-    Timetable.section == section,
-    Timetable.semester == semester,
-    Timetable.faculty_id == faculty_id,   # ✅ ADD THIS
-    Timetable.is_active == True
- ).all()
-
-
-    for old in existing:
-        old.is_active = False
-
-    db.commit()   # commit deactivation first
+   
 
     # 🔥 STEP 2: Create new timetable
     timetable = Timetable(
@@ -885,6 +870,12 @@ def get_timetables(
             Timetable.audience.in_(["students", "both", "all"])
         )
 
+        if timetable_type:
+            query = query.filter(
+                Timetable.timetable_type.ilike(f"%{timetable_type}%")
+            )
+
+
     elif user_role == "faculty":
         query = query.filter(
             (Timetable.department == user_department) |
@@ -907,7 +898,10 @@ def get_timetables(
             query = query.filter(Timetable.audience == audience)
 
         if timetable_type:
-            query = query.filter(Timetable.timetable_type == timetable_type)
+            query = query.filter(
+               Timetable.timetable_type.ilike(f"%{timetable_type}%")
+            )
+
 
     return query.order_by(Timetable.uploaded_at.desc()).all()
 
