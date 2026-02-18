@@ -213,4 +213,21 @@ class AlertCreate(BaseModel):
     department: Optional[str] = None
     faculty_id: Optional[int] = None
     student_id: Optional[int] = None
+
+# =========================
+# ATTENDANCE SCHEMAS
+# =========================
+class AttendanceItem(BaseModel):
+    student_id: int
+    status: bool   # TRUE = present, FALSE = absent
+
+
+class AttendanceCreate(BaseModel):
+    subject_id: int
+    date: date
+    department: str
+    year: int
+    section: str
+    records: List[AttendanceItem]
+
    

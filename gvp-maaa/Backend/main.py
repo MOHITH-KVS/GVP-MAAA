@@ -4,9 +4,9 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 from security import hash_password, verify_password
 from mail import send_reset_email
-from schemas import  AlertCreate, ResetPasswordRequest, StudentPromotionRequest, TeacherAdminUpdate, TeacherDeleteRequest,TimetableCreate, TimetableResponse,StudentDeleteRequest
+from schemas import  AlertCreate, AttendanceCreate, ResetPasswordRequest, StudentPromotionRequest, TeacherAdminUpdate, TeacherDeleteRequest,TimetableCreate, TimetableResponse,StudentDeleteRequest
 from datetime import datetime
-from models import Alert, AlertRecipient, StudentAlert, Timetable
+from models import Alert, AlertRecipient, StudentAlert, Timetable, Attendance
 
 
 import pandas as pd
@@ -440,6 +440,129 @@ def update_faculty_profile(
 
     db.commit()
     return {"message": "Profile updated successfully"}
+
+
+# -------------------------
+# FACULTY – MARK ATTENDANCE
+# -------------------------    
+@app.post("/faculty/attendance")
+def mark_attendance(
+    payload: AttendanceCreate,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "faculty":
+        raise HTTPException(status_code=403, detail="Faculty only")
+
+    for record in payload.records:
+
+        existing = db.query(Attendance).filter(
+            Attendance.student_id == record.student_id,
+            Attendance.subject_id == payload.subject_id,
+            Attendance.attendance_date == payload.date
+        ).first()
+
+        if existing:
+            existing.status = record.status
+        else:
+            new_attendance = Attendance(
+                student_id=record.student_id,
+                subject_id=payload.subject_id,
+                faculty_id=current_user["user_id"],
+                attendance_date=payload.date,
+                status=record.status
+            )
+            db.add(new_attendance)
+
+    db.commit()
+
+    return {"message": "Attendance saved successfully"}
+
+
+# -------------------------
+# FACULTY – GET STUDENTS FOR ATTENDANCE
+# -------------------------
+@app.get("/faculty/attendance/students")
+def get_students_for_attendance(
+    department: str,
+    year: int,
+    section: str,
+    subject_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "faculty":
+        raise HTTPException(status_code=403, detail="Faculty only")
+
+    # convert department to id
+    department_id = None
+    for key, value in DEPARTMENT_MAP.items():
+        if value == department:
+            department_id = key
+
+    students = (
+        db.query(Student, User)
+        .join(User, Student.student_id == User.user_id)
+        .filter(
+            User.department_id == department_id,
+            Student.year == year,
+            Student.section == section,
+            User.is_deleted == False
+        )
+        .all()
+    )
+
+    result = []
+
+    for student, user in students:
+
+        # last 5 records
+        last_5 = (
+            db.query(Attendance)
+            .filter(
+                Attendance.student_id == student.student_id,
+                Attendance.subject_id == subject_id
+            )
+            .order_by(Attendance.attendance_date.desc())
+            .limit(5)
+            .all()
+        )
+
+        last_5_status = [a.status for a in last_5]
+
+        # semester percentage
+        total = (
+            db.query(Attendance)
+            .filter(
+                Attendance.student_id == student.student_id,
+                Attendance.subject_id == subject_id
+            )
+            .count()
+        )
+
+        present = (
+            db.query(Attendance)
+            .filter(
+                Attendance.student_id == student.student_id,
+                Attendance.subject_id == subject_id,
+                Attendance.status == True
+            )
+            .count()
+        )
+
+        percentage = round((present / total) * 100, 2) if total > 0 else 0
+
+        result.append({
+            "id": student.student_id,
+            "roll": student.roll_no,
+            "name": user.name,
+            "last_5": last_5_status,
+            "percentage": percentage
+        })
+
+    return result
+
+
 
 
 # -------------------------
@@ -1216,8 +1339,6 @@ def get_all_alerts(
     ]
 
 
-
-
 # =========================
 # ADMIN – DELETE ALERT
 # =========================
@@ -1337,8 +1458,6 @@ def mark_read(alert_id: int, current_user=Depends(get_current_user), db: Session
     db.commit()
 
     return {"message": "Marked as read"}
-
-
 
 
 # -------------------------
