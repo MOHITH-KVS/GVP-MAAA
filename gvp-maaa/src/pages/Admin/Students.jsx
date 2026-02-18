@@ -8,10 +8,12 @@ export default function Students() {
   const [section, setSection] = useState("All");
   const [search, setSearch] = useState("");
 
-  const [showAlertModal, setShowAlertModal] = useState(false);
+ 
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [showDeleteStudent, setShowDeleteStudent] = useState(false);
   const [showUpdateStudent, setShowUpdateStudent] = useState(false);
+  const [showNotifyStudent, setShowNotifyStudent] = useState(false);
+
 
   const fetchStudents = async () => {
   try {
@@ -113,13 +115,16 @@ export default function Students() {
           Delete Students
         </button>
 
-        {/* WARNING / ATTENTION ACTION (push to right) */}
+        {/* NOTIFY ACTION */}
         <button
-          onClick={() => setShowAlertModal(true)}
-          className="ml-auto px-4 py-2 rounded-lg border border-amber-300 text-amber-600 text-sm hover:bg-amber-50 transition"
-        >
-          Alert At-Risk
+            onClick={() => setShowNotifyStudent(true)}
+            className="ml-auto px-4 py-2 rounded-lg border border-amber-300 text-amber-600 text-sm hover:bg-amber-50 transition"
+          >
+            Notify Students
         </button>
+
+
+        
 
       </div>
 
@@ -269,10 +274,11 @@ export default function Students() {
       </div>
 
       {/* ================= MODALS ================= */}
-      {showAlertModal && (<AlertModal students={students} onClose={() => setShowAlertModal(false)}/>)}
+      
       {selectedStudent && <StudentProfile student={selectedStudent} onClose={() => setSelectedStudent(null)} />}
       {showDeleteStudent && (<DeleteStudentModal students={students} onDelete={setStudents} onClose={() => setShowDeleteStudent(false)} /> )}
       {showUpdateStudent && (<UpdateStudentModal students={students} setStudents={setStudents} onClose={() => setShowUpdateStudent(false)}/>)}
+      {showNotifyStudent && (<NotifyStudentModal students={students} onClose={() => setShowNotifyStudent(false)} />)}
 
 
     </div>
@@ -1423,179 +1429,407 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
   );
 }
 
-function AlertModal({ students, onClose }) {
-  const [step, setStep] = useState("list"); // list | review | success
-  const [year, setYear] = useState("All");
-  const [section, setSection] = useState("All");
-  const [search, setSearch] = useState("");
 
-  /* ===== ONLY AT-RISK STUDENTS ===== */
-  const atRiskStudents = students.filter(
-  (s) => s.attendance < 75
- );
+function NotifyStudentModal({ students, onClose }) {
+  const [step, setStep] = useState("form"); // form | review | success | deleteSuccess
+  const [target, setTarget] = useState("all"); // all | department | individual
+  const [department, setDepartment] = useState("CSE");
+  const [selectedStudentId, setSelectedStudentId] = useState(null);
 
+  const [type, setType] = useState("notice"); // notice | reminder | urgent
+  const [title, setTitle] = useState("");
+  const [message, setMessage] = useState("");
+  const [file, setFile] = useState(null);
 
-  /* ===== FILTERED VIEW ===== */
-  const filtered = atRiskStudents.filter((s) => {
-  return (
-    (year === "All" || s.year === Number(year)) &&
-    (section === "All" || s.section === section) &&
-    (s.name.toLowerCase().includes(search.toLowerCase()) ||
-      s.roll.toLowerCase().includes(search.toLowerCase()))
-  );
- });
+  const [showHistory, setShowHistory] = useState(false);
+  const [history, setHistory] = useState([]);
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
 
+  /* ===== FETCH HISTORY ===== */
+  const fetchHistory = async () => {
+    try {
+      const token = localStorage.getItem("access_token");
 
-  const getReason = (s) => {
-    if (s.attendance < 75 && s.cgpa < 7) return "Low Attendance & CGPA";
-    if (s.attendance < 75) return "Low Attendance";
-    return "Low CGPA";
+      const res = await fetch("http://localhost:8000/admin/alerts?role=student", {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+
+      if (!res.ok) return;
+
+      const data = await res.json();
+      setHistory(data.filter(h => h.target_role === "student"));
+    } catch (err) {
+      console.error("History fetch error", err);
+    }
+  };
+
+  /* ===== DELETE ALERT ===== */
+  const deleteAlert = async (id) => {
+    try {
+      const token = localStorage.getItem("access_token");
+
+      const res = await fetch(
+        `http://localhost:8000/admin/alerts/${id}`,
+        {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        }
+      );
+
+      if (!res.ok) return false;
+
+      setHistory(prev => prev.filter(a => a.id !== id));
+      setStep("deleteSuccess");
+
+      setTimeout(() => {
+        onClose();
+      }, 2200);
+
+      return true;
+
+    } catch (err) {
+      console.error("Delete failed", err);
+      return false;
+    }
+  };
+
+  /* ===== SEND NOTIFICATION ===== */
+  const sendNotification = async () => {
+    try {
+      const token = localStorage.getItem("access_token");
+
+      if (!token) {
+        alert("Admin not authenticated");
+        return;
+      }
+
+      if (target === "individual" && !selectedStudentId) {
+        alert("Please select a student");
+        return;
+      }
+
+      if (!title || !message) {
+        alert("Title and message are required");
+        return;
+      }
+
+      const formData = new FormData();
+
+      formData.append("title", title);
+      formData.append("message", message);
+      formData.append("type", type);
+      formData.append("target_role", "student"); // 🔥 IMPORTANT
+      formData.append("target_type", target);
+
+      if (target === "department") {
+        formData.append("department", department);
+      }
+
+      if (target === "individual") {
+        formData.append("student_id", selectedStudentId);
+      }
+
+      if (file) {
+        formData.append("file", file);
+      }
+
+      const res = await fetch("http://localhost:8000/admin/alerts", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`
+        },
+        body: formData
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json();
+        console.log("Backend Error:", errorData);
+        alert("Validation error. Check console.");
+        return;
+      }
+
+      setStep("success");
+
+      setTimeout(() => {
+        onClose();
+      }, 2200);
+
+    } catch (error) {
+      console.error(error);
+      alert("Something went wrong");
+    }
   };
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-      <div className="bg-white w-full max-w-4xl rounded-2xl p-6 space-y-6">
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
+      <div className="bg-white w-full max-w-3xl rounded-2xl p-6 space-y-6">
 
         {/* HEADER */}
         <div className="flex justify-between items-center">
-          <h2 className="text-lg font-semibold text-red-600">
-            Alert At-Risk Students
-          </h2>
-          <button onClick={onClose}>✕</button>
+          <h2 className="text-lg font-semibold">Notify Students</h2>
+
+          <div className="flex gap-3 items-center">
+            <button
+              onClick={() => {
+                setShowHistory(true);
+                fetchHistory();
+              }}
+              className="px-3 py-1 bg-gray-200 rounded-lg text-sm"
+            >
+              📜 History
+            </button>
+            <button onClick={onClose}>✕</button>
+          </div>
         </div>
 
-        {/* ================= LIST ================= */}
-        {step === "list" && (
-          <>
-            {/* FILTERS */}
-            <div className="flex gap-3 flex-wrap">
-              <select
-                value={year}
-                onChange={(e) => setYear(e.target.value)}
-                className="border px-3 py-2 rounded-lg"
-              >
-                <option value="All">All</option>
-                <option value={1}>1st Year</option>
-                <option value={2}>2nd Year</option>
-                <option value={3}>3rd Year</option>
-                <option value={4}>4th Year</option>
-              </select>
+        {/* ================= HISTORY ================= */}
+        {showHistory && step === "form" && (
+          <div className="space-y-4 max-h-[400px] overflow-y-auto">
 
+            <h3 className="text-lg font-semibold">Notification History</h3>
 
-              <select
-                value={section}
-                onChange={(e) => setSection(e.target.value)}
-                className="border px-3 py-2 rounded-lg"
-              >
-                <option>All</option>
-                <option>A</option>
-                <option>B</option>
-              </select>
-
-              <input
-                placeholder="Search by name or roll"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="border px-3 py-2 rounded-lg flex-1"
-              />
-            </div>
-
-            {/* TABLE */}
-            {filtered.length === 0 ? (
-              <p className="text-center text-gray-500 py-6">
-                🎉 No at-risk students found
-              </p>
-            ) : (
-              <div className="border rounded-lg overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="p-2 text-left">Roll</th>
-                      <th className="p-2 text-left">Name</th>
-                      <th className="p-2 text-center">Attendance</th>
-                      <th className="p-2 text-center">CGPA</th>
-                      <th className="p-2 text-left">Reason</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filtered.map((s) => (
-                      <tr key={s.id} className="border-t">
-                        <td className="p-2">{s.roll}</td>
-                        <td className="p-2">{s.name}</td>
-                        <td className="p-2 text-center">{s.attendance}%</td>
-                        <td className="p-2 text-center">{s.cgpa}</td>
-                        <td className="p-2 text-red-600">
-                          {getReason(s)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+            {history.length === 0 && (
+              <p className="text-gray-500 text-sm">No notifications yet</p>
             )}
 
-            {/* FOOTER */}
-            <div className="flex justify-end gap-3">
-              <button
-                onClick={onClose}
-                className="px-4 py-2 border rounded-lg"
+            {history.map((item) => (
+              <div
+                key={item.id}
+                className="border rounded-lg p-4 bg-gray-50 flex justify-between items-start"
               >
-                Cancel
-              </button>
-              <button
-                disabled={filtered.length === 0}
-                onClick={() => setStep("review")}
-                className="px-4 py-2 bg-red-600 text-white rounded-lg disabled:opacity-50"
-              >
-                Send Warning Notification
-              </button>
-            </div>
-          </>
-        )}
+                <div>
+                  <p className="font-semibold">{item.title}</p>
+                  <p className="text-sm text-gray-600">{item.type}</p>
+                  <p className="text-xs text-gray-500">
+                    {new Date(item.created_at).toLocaleString()}
+                  </p>
+                  <p className="text-xs text-gray-400">
+                    Target: {item.target_type}
+                  </p>
+                </div>
 
-        {/* ================= REVIEW ================= */}
-        {step === "review" && (
-          <div className="space-y-4">
-            <p className="font-medium">
-              You are about to send warnings to{" "}
-              <b>{filtered.length}</b> students.
-            </p>
+                <button
+                  onClick={() => setConfirmDeleteId(item.id)}
+                  className="text-red-600 text-sm"
+                >
+                  Delete
+                </button>
+              </div>
+            ))}
 
-            <div className="flex justify-end gap-3">
+            <div className="flex justify-end">
               <button
-                onClick={() => setStep("list")}
-                className="px-4 py-2 border rounded-lg"
+                onClick={() => setShowHistory(false)}
+                className="px-3 py-1 bg-indigo-600 text-white rounded-lg text-sm"
               >
                 Back
               </button>
-              <button
-                onClick={async () => {
-                  const token = localStorage.getItem("access_token");
-
-                  await fetch("http://127.0.0.1:8000/admin/alerts", {
-                    method: "POST",
-                    headers: {
-                      "Content-Type": "application/json",
-                      Authorization: `Bearer ${token}`,
-                    },
-                    body: JSON.stringify({
-                      student_ids: filtered.map(s => s.id),
-                      reason: "Attendance below 75%"
-                    })
-                  });
-
-                  setStep("success");
-                }}
-                className="px-4 py-2 bg-red-600 text-white rounded-lg"
-              >
-                Confirm Send
-              </button>
-
             </div>
           </div>
         )}
 
-        {/* ================= SUCCESS ================= */}
+        {/* ================= FORM ================= */}
+        {step === "form" && !showHistory && (
+          <div className="space-y-5">
+
+            {/* TARGET */}
+            <div>
+              <p className="text-sm font-medium mb-2">Send To</p>
+              <div className="flex gap-4 text-sm">
+                <label className="flex gap-2 items-center">
+                  <input
+                    type="radio"
+                    checked={target === "all"}
+                    onChange={() => setTarget("all")}
+                  />
+                  All Students
+                </label>
+
+                <label className="flex gap-2 items-center">
+                  <input
+                    type="radio"
+                    checked={target === "department"}
+                    onChange={() => setTarget("department")}
+                  />
+                  Department
+                </label>
+
+                <label className="flex gap-2 items-center">
+                  <input
+                    type="radio"
+                    checked={target === "individual"}
+                    onChange={() => setTarget("individual")}
+                  />
+                  Individual Student
+                </label>
+              </div>
+            </div>
+
+            {/* DEPARTMENT */}
+            {target === "department" && (
+              <select
+                value={department}
+                onChange={(e) => setDepartment(e.target.value)}
+                className="border px-3 py-2 rounded-lg w-full"
+              >
+                <option>CSE</option>
+                <option>CSM</option>
+                <option>ECE</option>
+                <option>MECH</option>
+                <option>CIVIL</option>
+              </select>
+            )}
+
+            {/* INDIVIDUAL */}
+            {target === "individual" && (
+              <select
+                onChange={(e) =>
+                  setSelectedStudentId(
+                    e.target.value ? Number(e.target.value) : null
+                  )
+                }
+                className="border px-3 py-2 rounded-lg w-full"
+              >
+                <option value="">Select Student</option>
+                {students.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name} — {s.roll}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            {/* TYPE */}
+            <div>
+              <p className="text-sm font-medium mb-2">Notification Type</p>
+              <div className="flex gap-4 text-sm">
+                <label className="flex gap-2 items-center">
+                  <input
+                    type="radio"
+                    checked={type === "notice"}
+                    onChange={() => setType("notice")}
+                  />
+                  📢 Notice
+                </label>
+
+                <label className="flex gap-2 items-center">
+                  <input
+                    type="radio"
+                    checked={type === "reminder"}
+                    onChange={() => setType("reminder")}
+                  />
+                  ⏰ Reminder
+                </label>
+
+                <label className="flex gap-2 items-center">
+                  <input
+                    type="radio"
+                    checked={type === "urgent"}
+                    onChange={() => setType("urgent")}
+                  />
+                  🚨 Urgent Alert
+                </label>
+              </div>
+            </div>
+
+            {/* TITLE */}
+            <input
+              placeholder="Notification Title"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              className="border px-3 py-2 rounded-lg w-full"
+            />
+
+            {/* MESSAGE */}
+            <textarea
+              placeholder="Write message for students..."
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              className="border px-3 py-2 rounded-lg w-full h-28"
+            />
+
+            {/* FILE */}
+            <div>
+              <label className="text-sm font-medium">
+                Attach Document (optional)
+              </label>
+              <input
+                type="file"
+                onChange={(e) => setFile(e.target.files[0])}
+                className="mt-1 text-sm"
+              />
+            </div>
+
+            <div className="flex justify-end">
+              <button
+                onClick={() => {
+                  if (!title || !message) {
+                    alert("Title and message are required");
+                    return;
+                  }
+                  setStep("review");
+                }}
+                className="px-4 py-2 bg-indigo-600 text-white rounded-lg"
+              >
+                Review Notification
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ================= REVIEW ================= */}
+        {step === "review" && (
+          <div className="space-y-4 text-sm">
+            <p className="font-medium">Please review notification details</p>
+
+            <div className="border rounded-lg p-4 bg-gray-50 space-y-2">
+              <p><b>Target:</b> {target}</p>
+
+              {target === "department" && (
+                <p><b>Department:</b> {department}</p>
+              )}
+
+              {target === "individual" && (
+                <p>
+                  <b>Student:</b>{" "}
+                  {students.find(s => s.id === selectedStudentId)?.name}
+                </p>
+              )}
+
+              <p><b>Type:</b> {type.toUpperCase()}</p>
+              <p><b>Title:</b> {title}</p>
+              <p><b>Message:</b> {message}</p>
+              {file && <p><b>Attachment:</b> {file.name}</p>}
+            </div>
+
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setStep("form")}
+                className="px-4 py-2 border rounded-lg"
+              >
+                Back & Edit
+              </button>
+
+              <button
+                onClick={sendNotification}
+                className={`px-4 py-2 text-white rounded-lg ${
+                  type === "urgent"
+                    ? "bg-red-600"
+                    : "bg-green-600"
+                }`}
+              >
+                Send Notification
+              </button>
+            </div>
+          </div>
+        )}
+
+
+        {/* SUCCESS */}
         {step === "success" && (
           <div className="text-center py-12 space-y-4">
             <div className="mx-auto w-16 h-16 rounded-full bg-green-100 flex items-center justify-center animate-bounce">
@@ -1603,32 +1837,33 @@ function AlertModal({ students, onClose }) {
             </div>
 
             <h3 className="text-lg font-semibold text-green-700">
-              Warning Notifications Sent
+              Notification Sent Successfully
             </h3>
 
             <p className="text-sm text-gray-500">
-              All selected at-risk students have been notified
+              Students have been notified
             </p>
-
-            <div className="w-full h-1 bg-gray-200 rounded-full overflow-hidden">
-              <div className="h-full bg-green-500 animate-[progress_2s_linear]" />
-            </div>
-
-            <style>
-              {`
-                @keyframes progress {
-                  from { width: 0%; }
-                  to { width: 100%; }
-                }
-              `}
-            </style>
           </div>
         )}
 
+        {/* DELETE SUCCESS */}
+        {step === "deleteSuccess" && (
+          <div className="text-center py-12 space-y-4">
+            <div className="mx-auto w-16 h-16 rounded-full bg-red-100 flex items-center justify-center animate-bounce">
+              <span className="text-3xl text-red-600">🗑</span>
+            </div>
+
+            <h3 className="text-lg font-semibold text-red-700">
+              Notification Deleted Successfully
+            </h3>
+          </div>
+        )}
       </div>
     </div>
   );
 }
+
+
 
 /* ================= REUSABLE ================= */
 function Modal({ title, children, onClose }) {

@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 
 export default function Alerts({ alerts = [], setAlerts, loading }) {
-  const [filter, setFilter] = useState("All");
 
   const fetchAlerts = async () => {
     try {
@@ -19,9 +18,7 @@ export default function Alerts({ alerts = [], setAlerts, loading }) {
       setAlerts(data);
     } catch (err) {
       console.error("Error loading alerts:", err);
-    } finally {
-      setLoading(false);
-    }
+    } 
   };
 
   const markAsRead = async (id) => {
@@ -45,14 +42,10 @@ export default function Alerts({ alerts = [], setAlerts, loading }) {
     }
   };
 
-  const filteredAlerts =
-  filter === "All"
-    ? alerts
-    : alerts.filter(
-        (a) =>
-          a.type &&
-          a.type.toLowerCase() === filter.toLowerCase()
-      );
+  
+  useEffect(() => {
+    fetchAlerts();
+  }, []);
 
 
   return (
@@ -66,40 +59,12 @@ export default function Alerts({ alerts = [], setAlerts, loading }) {
         </p>
       </div>
 
-      {/* FILTERS */}
-      <div className="flex gap-3 flex-wrap">
-        {[
-            "All",
-            "class timetable",
-            "mid exam",
-            "semester exam",
-            "event timetable"
-          ].map((tab) => (
-
-          <button
-            key={tab}
-            onClick={() => setFilter(tab)}
-            className={`px-4 py-1.5 rounded-full text-sm border transition
-              ${
-                filter === tab
-                  ? "bg-indigo-600 text-white border-indigo-600"
-                  : "bg-white hover:bg-gray-100"
-              }
-            `}
-          >
-            {tab}
-          </button>
-        ))}
-      </div>
-
       {/* ALERT LIST */}
       <div className="glass rounded-3xl p-6 space-y-5">
-        {loading ? (
-          <EmptyState />
-        ) : filteredAlerts.length === 0 ? (
+        {alerts.length === 0 ? (
           <EmptyState />
         ) : (
-          filteredAlerts.map((alert) => (
+         alerts.map((alert) => (
             <div
               key={alert.id}
               className={`border-l-4 rounded-xl p-4 space-y-2 transition

@@ -1,9 +1,10 @@
-export default function Overview() {
+export default function Overview({ profile }) {
   return (
     <>
       {/* HEADER */}
       <h1 className="text-2xl font-semibold mb-2">
-        Welcome, <span className="text-indigo-600">Bhanu Sir</span> 👋
+        Welcome,
+        <span className="text-indigo-600"> {profile?.name || ""}</span> 👋
       </h1>
       <p className="text-gray-500 mb-8">
         Here’s a high-level snapshot of your teaching impact

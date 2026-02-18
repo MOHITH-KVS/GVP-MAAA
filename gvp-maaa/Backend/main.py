@@ -1127,14 +1127,24 @@ def create_alert(
         ).all()
 
     elif target_type == "individual":
-        if target_role == "faculty":
+
+        if target_role == "faculty" and faculty_id:
             users = db.query(User).filter(
-                User.user_id == faculty_id
+                User.user_id == faculty_id,
+                User.role == "faculty",
+                User.is_deleted == False
             ).all()
+
+        elif target_role == "student" and student_id:
+            users = db.query(User).filter(
+                User.user_id == student_id,
+                User.role == "student",
+                User.is_deleted == False
+            ).all()
+
         else:
-            users = db.query(User).filter(
-                User.user_id == student_id
-            ).all()
+            users = []
+
 
     elif target_type == "department":
         department_id = None
@@ -1154,6 +1164,11 @@ def create_alert(
             user_id=user.user_id,
             is_read=False
         )
+        print("TARGET ROLE:", target_role)
+        print("TARGET TYPE:", target_type)
+        print("STUDENT ID:", student_id)
+        print("USERS FOUND:", users)
+
         db.add(recipient)
 
     db.commit()
@@ -1166,13 +1181,23 @@ def create_alert(
 # =========================
 @app.get("/admin/alerts")
 def get_all_alerts(
+    role: str = None,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     if current_user["role"] != "admin":
         raise HTTPException(status_code=403, detail="Admin only")
 
-    alerts = db.query(Alert).order_by(Alert.created_at.desc()).all()
+    query = db.query(Alert)
+
+    # ❌ Exclude timetable auto alerts
+    query = query.filter(Alert.type != "timetable")
+
+    # ✅ Filter by role (faculty or student)
+    if role:
+        query = query.filter(Alert.target_role == role)
+
+    alerts = query.order_by(Alert.created_at.desc()).all()
 
     return [
         {
@@ -1189,6 +1214,8 @@ def get_all_alerts(
         }
         for a in alerts
     ]
+
+
 
 
 # =========================

@@ -978,7 +978,7 @@ function NotifyTeacherModal({ teachers, onClose }) {
   try {
     const token = localStorage.getItem("access_token");
 
-    const res = await fetch("http://localhost:8000/admin/alerts", {
+    const res = await fetch("http://localhost:8000/admin/alerts?role=faculty", {
       headers: {
         Authorization: `Bearer ${token}`
       }

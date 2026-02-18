@@ -274,7 +274,7 @@ export default function TeacherDashboard() {
               !showProfile ? "pr-16" : ""
             }`}
           >
-            {activePage === "overview" && <Overview />}
+            {activePage === "overview" && <Overview profile={profile} />}
             {activePage === "timetable" && <Timetable />}
             {activePage === "attendance" && <Attendance />}
             {activePage === "assignments" && <Assignment />}
