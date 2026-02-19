@@ -8,6 +8,15 @@ from schemas import  AlertCreate, AttendanceCreate, ResetPasswordRequest, Studen
 from datetime import datetime
 from models import Alert, AlertRecipient, StudentAlert, Timetable, Subject,FacultySubject,Attendance
 
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.units import inch
+from reportlab.platypus import Table, TableStyle
+from fastapi.responses import FileResponse
+
+
 
 import pandas as pd
 import os
@@ -1556,6 +1565,44 @@ def get_faculty_alerts(
     return result
 
 
+# =========================
+# FACULTY – GET MY ASSIGNED SUBJECTS
+# =========================
+@app.get("/faculty/my-subjects")
+def get_my_subjects(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "faculty":
+        raise HTTPException(status_code=403, detail="Faculty only")
+
+    assignments = (
+        db.query(FacultySubject, Subject)
+        .join(Subject, FacultySubject.subject_id == Subject.subject_id)
+        .filter(
+            FacultySubject.faculty_id == current_user["user_id"],
+            FacultySubject.is_active == True
+        )
+        .all()
+    )
+
+    return [
+    {
+        "subject_id": s.subject_id,
+        "subject_name": s.subject_name,
+        "year": fs.year,
+        "section": fs.section,
+        "semester": s.semester,
+        "department": DEPARTMENT_MAP.get(
+            db.query(User)
+            .filter(User.user_id == current_user["user_id"])
+            .first()
+            .department_id
+        )
+    }
+    for fs, s in assignments
+ ]
+
 
 # =========================
 # STUDENT – GET ALERTS
@@ -1793,6 +1840,200 @@ def update_assignment(
     return {"message": "Assignment updated successfully"}
 
 
+
+# =========================
+# FACULTY – WEEKLY REPORT
+# =========================
+@app.get("/faculty/attendance/weekly/{subject_id}")
+def weekly_report(
+    subject_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "faculty":
+        raise HTTPException(status_code=403, detail="Faculty only")
+
+    from datetime import date, timedelta
+
+    today = date.today()
+    start_week = today - timedelta(days=today.weekday())
+
+    records = db.query(Attendance).filter(
+        Attendance.subject_id == subject_id,
+        Attendance.attendance_date >= start_week
+    ).all()
+
+    if not records:
+        return {"message": "No records this week"}
+
+    total = len(records)
+    present = len([r for r in records if r.status])
+
+    average = round((present / total) * 100, 2)
+
+    return {
+        "week_start": start_week,
+        "class_average": average,
+        "total_records": total
+    }
+
+
+# =========================
+# FACULTY – MONTHLY REPORT
+# =========================
+@app.get("/faculty/attendance/monthly/{subject_id}")
+def monthly_report(
+    subject_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "faculty":
+        raise HTTPException(status_code=403, detail="Faculty only")
+
+    from datetime import date
+
+    today = date.today()
+    month = today.month
+    year = today.year
+
+    records = db.query(Attendance).filter(
+        Attendance.subject_id == subject_id
+    ).all()
+
+    monthly_records = [
+        r for r in records
+        if r.attendance_date.month == month
+        and r.attendance_date.year == year
+    ]
+
+    if not monthly_records:
+        return {"message": "No records this month"}
+
+    total = len(monthly_records)
+    present = len([r for r in monthly_records if r.status])
+
+    average = round((present / total) * 100, 2)
+
+    return {
+        "month": month,
+        "class_average": average,
+        "total_records": total
+    }
+
+
+
+# =========================
+# FACULTY – DOWNLOAD WEEKLY PDF
+# =========================
+@app.get("/faculty/attendance/weekly/{subject_id}/download")
+def download_weekly_pdf(
+    subject_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "faculty":
+        raise HTTPException(status_code=403, detail="Faculty only")
+
+    from datetime import date, timedelta
+
+    today = date.today()
+    start_week = today - timedelta(days=today.weekday())
+
+    records = db.query(Attendance).filter(
+        Attendance.subject_id == subject_id,
+        Attendance.attendance_date >= start_week
+    ).all()
+
+    total = len(records)
+    present = len([r for r in records if r.status])
+    average = round((present / total) * 100, 2) if total > 0 else 0
+
+    file_path = f"weekly_report_{subject_id}.pdf"
+    doc = SimpleDocTemplate(file_path)
+    elements = []
+
+    styles = getSampleStyleSheet()
+    elements.append(Paragraph("Weekly Attendance Report", styles["Title"]))
+    elements.append(Spacer(1, 0.3 * inch))
+
+    data = [
+        ["Subject ID", subject_id],
+        ["Week Start", str(start_week)],
+        ["Total Records", total],
+        ["Class Average %", f"{average}%"]
+    ]
+
+    table = Table(data)
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+        ("GRID", (0, 0), (-1, -1), 1, colors.grey),
+        ("ALIGN", (1, 0), (-1, -1), "CENTER")
+    ]))
+
+    elements.append(table)
+    doc.build(elements)
+
+    return FileResponse(file_path, media_type="application/pdf", filename=file_path)
+
+
+# =========================
+# FACULTY – DOWNLOAD MONTHLY PDF
+# =========================
+@app.get("/faculty/attendance/monthly/{subject_id}/download")
+def download_monthly_pdf(
+    subject_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "faculty":
+        raise HTTPException(status_code=403, detail="Faculty only")
+
+    from datetime import date
+
+    today = date.today()
+    month = today.month
+    year = today.year
+
+    records = db.query(Attendance).filter(
+        Attendance.subject_id == subject_id
+    ).all()
+
+    monthly_records = [
+        r for r in records
+        if r.attendance_date.month == month
+        and r.attendance_date.year == year
+    ]
+
+    total = len(monthly_records)
+    present = len([r for r in monthly_records if r.status])
+    average = round((present / total) * 100, 2) if total > 0 else 0
+
+    file_path = f"monthly_report_{subject_id}.pdf"
+    doc = SimpleDocTemplate(file_path)
+    elements = []
+
+    styles = getSampleStyleSheet()
+    elements.append(Paragraph("Monthly Attendance Report", styles["Title"]))
+    elements.append(Spacer(1, 0.3 * inch))
+
+    data = [
+        ["Subject ID", subject_id],
+        ["Month", month],
+        ["Total Records", total],
+        ["Class Average %", f"{average}%"]
+    ]
+
+    table = Table(data)
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+        ("GRID", (0, 0), (-1, -1), 1, colors.grey),
+        ("ALIGN", (1, 0), (-1, -1), "CENTER")
+    ]))
+
+    elements.append(table)
+    doc.build(elements)
+
+    return FileResponse(file_path, media_type="application/pdf", filename=file_path)
 
 
 
