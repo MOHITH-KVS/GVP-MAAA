@@ -6,7 +6,7 @@ from security import hash_password, verify_password
 from mail import send_reset_email
 from schemas import  AlertCreate, AttendanceCreate, ResetPasswordRequest, StudentPromotionRequest, TeacherAdminUpdate, TeacherDeleteRequest,TimetableCreate, TimetableResponse,StudentDeleteRequest
 from datetime import datetime
-from models import Alert, AlertRecipient, StudentAlert, Timetable, Attendance
+from models import Alert, AlertRecipient, StudentAlert, Timetable, Subject,FacultySubject,Attendance
 
 
 import pandas as pd
@@ -454,6 +454,18 @@ def mark_attendance(
     if current_user["role"] != "faculty":
         raise HTTPException(status_code=403, detail="Faculty only")
 
+    # 🔒 Check faculty teaches this subject for that class
+    subject_check = db.query(FacultySubject).filter(
+        FacultySubject.faculty_id == current_user["user_id"],
+        FacultySubject.subject_id == payload.subject_id,
+        FacultySubject.year == payload.year,
+        FacultySubject.section == payload.section,
+        FacultySubject.is_active == True
+    ).first()
+
+    if not subject_check:
+        raise HTTPException(status_code=403, detail="Not assigned to this class")
+
     for record in payload.records:
 
         existing = db.query(Attendance).filter(
@@ -479,6 +491,8 @@ def mark_attendance(
     return {"message": "Attendance saved successfully"}
 
 
+
+
 # -------------------------
 # FACULTY – GET STUDENTS FOR ATTENDANCE
 # -------------------------
@@ -493,6 +507,21 @@ def get_students_for_attendance(
 ):
     if current_user["role"] != "faculty":
         raise HTTPException(status_code=403, detail="Faculty only")
+    
+
+    # 🔒 Check faculty is assigned to this class
+    assignment_check = db.query(FacultySubject).filter(
+        FacultySubject.faculty_id == current_user["user_id"],
+        FacultySubject.subject_id == subject_id,
+        FacultySubject.year == year,
+        FacultySubject.section == section,
+        FacultySubject.is_active == True
+    ).first()
+
+    if not assignment_check:
+        raise HTTPException(status_code=403, detail="Not assigned to this class")
+
+    
 
     # convert department to id
     department_id = None
@@ -562,6 +591,127 @@ def get_students_for_attendance(
 
     return result
 
+# -------------------------
+# FACULTY – GET LAST 5 ATTENDANCE RECORDS FOR A STUDENT
+# -------------------------
+@app.get("/faculty/attendance/last5")
+def get_last_5_classes(
+    subject_id: int,
+    student_id: int,
+    db: Session = Depends(get_db)
+):
+    records = db.query(Attendance).filter(
+        Attendance.subject_id == subject_id,
+        Attendance.student_id == student_id
+    ).order_by(Attendance.attendance_date.desc()).limit(5).all()
+
+    return records
+
+# -------------------------
+# FACULTY – GET SEMESTER ATTENDANCE PERCENTAGE FOR ALL STUDENTS
+# -------------------------
+@app.get("/faculty/attendance/semester/{subject_id}")
+def get_semester_attendance(
+    subject_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "faculty":
+        raise HTTPException(status_code=403, detail="Faculty only")
+
+    students = (
+        db.query(Student)
+        .join(FacultySubject, FacultySubject.year == Student.year)
+        .filter(
+            FacultySubject.faculty_id == current_user["user_id"],
+            FacultySubject.subject_id == subject_id,
+            FacultySubject.is_active == True
+        )
+        .all()
+    )
+
+    result = []
+
+    for student in students:
+        total = db.query(Attendance).filter(
+            Attendance.student_id == student.student_id,
+            Attendance.subject_id == subject_id
+        ).count()
+
+        present = db.query(Attendance).filter(
+            Attendance.student_id == student.student_id,
+            Attendance.subject_id == subject_id,
+            Attendance.status == True
+        ).count()
+
+        percentage = round((present / total) * 100, 2) if total > 0 else 0
+
+        result.append({
+            "student_id": student.student_id,
+            "percentage": percentage
+        })
+
+    return result
+
+
+
+# =========================
+# FACULTY – CLASS ATTENDANCE SUMMARY
+# =========================
+@app.get("/faculty/attendance/class-summary")
+def get_class_attendance_summary(
+    subject_id: int,
+    department: str,
+    year: int,
+    section: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "faculty":
+        raise HTTPException(status_code=403, detail="Faculty only")
+
+    # convert department to id
+    department_id = None
+    for key, value in DEPARTMENT_MAP.items():
+        if value == department:
+            department_id = key
+
+    students = (
+        db.query(Student, User)
+        .join(User, Student.student_id == User.user_id)
+        .filter(
+            User.department_id == department_id,
+            Student.year == year,
+            Student.section == section,
+            User.is_deleted == False
+        )
+        .all()
+    )
+
+    results = []
+
+    for student, user in students:
+
+        total = db.query(Attendance).filter(
+            Attendance.student_id == student.student_id,
+            Attendance.subject_id == subject_id
+        ).count()
+
+        present = db.query(Attendance).filter(
+            Attendance.student_id == student.student_id,
+            Attendance.subject_id == subject_id,
+            Attendance.status == True
+        ).count()
+
+        percentage = (present / total * 100) if total > 0 else 0
+
+        results.append({
+            "student_id": student.student_id,
+            "name": user.name,
+            "percentage": round(percentage, 2)
+        })
+
+    return results
 
 
 
@@ -1458,6 +1608,192 @@ def mark_read(alert_id: int, current_user=Depends(get_current_user), db: Session
     db.commit()
 
     return {"message": "Marked as read"}
+
+
+# =========================
+# ADMIN – GET ALL SUBJECTS
+# =========================
+@app.get("/admin/subjects")
+def get_all_subjects(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    subjects = db.query(Subject).all()
+
+    return [
+        {
+            "subject_id": s.subject_id,
+            "subject_name": s.subject_name,
+            "semester": s.semester,
+            "department_id": s.department_id
+        }
+        for s in subjects
+    ]
+
+# =========================
+# ADMIN – ASSIGN SUBJECT TO FACULTY
+# =========================
+@app.post("/admin/assign-subject")
+def assign_subject(
+    faculty_id: int,
+    subject_id: int,
+    year: int,
+    section: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    # Prevent duplicate active assignment
+    existing = db.query(FacultySubject).filter(
+        FacultySubject.faculty_id == faculty_id,
+        FacultySubject.subject_id == subject_id,
+        FacultySubject.year == year,
+        FacultySubject.section == section,
+        FacultySubject.is_active == True
+    ).first()
+
+    if existing:
+        raise HTTPException(status_code=400, detail="Already assigned")
+
+    new_assignment = FacultySubject(
+        faculty_id=faculty_id,
+        subject_id=subject_id,
+        year=year,
+        section=section
+    )
+
+    db.add(new_assignment)
+    db.commit()
+
+    return {"message": "Subject assigned successfully"}
+
+
+
+# =========================
+# ADMIN – GET SUBJECTS ASSIGNED TO A FACULTY
+# =========================
+@app.get("/admin/faculty/{faculty_id}/subjects")
+def get_faculty_subjects(
+    faculty_id: int,
+    db: Session = Depends(get_db)
+):
+    assignments = (
+        db.query(FacultySubject, Subject)
+        .join(Subject, FacultySubject.subject_id == Subject.subject_id)
+        .filter(
+            FacultySubject.faculty_id == faculty_id,
+            FacultySubject.is_active == True
+        )
+        .all()
+    )
+
+    return [
+    {
+        "id": fs.id,
+        "subject_name": s.subject_name,
+        "semester": s.semester,   # ✅ from Subject table
+        "year": fs.year,
+        "section": fs.section,
+        "assigned_at": fs.assigned_at
+    }
+    for fs, s in assignments
+    ]
+
+
+
+
+# =========================
+# ADMIN – GET FACULTY-SUBJECT ASSIGNMENT HISTORY
+# =========================
+@app.get("/admin/faculty/{faculty_id}/subjects/history")
+def get_faculty_subject_history(
+    faculty_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    assignments = (
+        db.query(FacultySubject, Subject)
+        .join(Subject, FacultySubject.subject_id == Subject.subject_id)
+        .filter(FacultySubject.faculty_id == faculty_id)
+        .order_by(FacultySubject.assigned_at.desc())
+        .all()
+    )
+
+    return [
+        {
+            "assignment_id": fs.id,
+            "subject_name": subject.subject_name,
+            "year": fs.year,
+            "section": fs.section,
+            "is_active": fs.is_active,
+            "assigned_at": fs.assigned_at
+        }
+        for fs, subject in assignments
+    ]
+
+
+# =========================
+# ADMIN – DELETE FACULTY-SUBJECT ASSIGNMENT
+# =========================
+@app.delete("/admin/remove-assignment/{assignment_id}")
+def remove_assignment(
+    assignment_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    assignment = db.query(FacultySubject).filter(
+        FacultySubject.id == assignment_id
+    ).first()
+
+    if not assignment:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    assignment.is_active = False
+    db.commit()
+
+    return {"message": "Assignment removed (soft delete)"}
+
+# =========================
+# ADMIN – UPDATE FACULTY-SUBJECT ASSIGNMENT
+# =========================
+@app.put("/admin/update-assignment/{assignment_id}")
+def update_assignment(
+    assignment_id: int,
+    year: int,
+    section: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    assignment = db.query(FacultySubject).filter(
+        FacultySubject.id == assignment_id
+    ).first()
+
+    if not assignment:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+
+    assignment.year = year
+    assignment.section = section
+
+    db.commit()
+
+    return {"message": "Assignment updated successfully"}
+
+
+
 
 
 # -------------------------

@@ -1,5 +1,6 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Numeric, ForeignKey, Text, Boolean, DateTime
+from sqlite3 import Date
+from sqlalchemy import Column, Integer, String, Numeric, ForeignKey, Text, Boolean, DateTime, Date
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 
@@ -179,4 +180,59 @@ class AlertRecipient(Base):
     alert_id = Column(Integer, ForeignKey("alerts.id"))
     user_id = Column(Integer, ForeignKey("users.user_id"))
     is_read = Column(Boolean, default=False)
+
+# -------------------------
+# FACULTY SUBJECTS (MANY-TO-MANY)
+# -------------------------
+class FacultySubject(Base):
+    __tablename__ = "faculty_subjects"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    faculty_id = Column(Integer, ForeignKey("faculty.faculty_id"))
+    subject_id = Column(Integer, ForeignKey("subjects.subject_id"))
+
+    year = Column(Integer, nullable=False)
+    section = Column(String, nullable=False)
+
+    is_active = Column(Boolean, default=True)
+
+    assigned_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+
+# -------------------------
+# SUBJECTS
+# -------------------------
+class Subject(Base):
+    __tablename__ = "subjects"
+
+    subject_id = Column(Integer, primary_key=True, index=True)
+    subject_code = Column(String(20), unique=True, nullable=False)
+    subject_name = Column(String(100), nullable=False)
+    semester = Column(Integer, nullable=False)
+    credits = Column(Integer, nullable=False)
+    department_id = Column(Integer, nullable=False)
+
+
+
+class Attendance(Base):
+    __tablename__ = "attendance"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    student_id = Column(Integer, ForeignKey("students.student_id"), nullable=False)
+    subject_id = Column(Integer, ForeignKey("subjects.subject_id"), nullable=False)
+    faculty_id = Column(Integer, ForeignKey("faculty.faculty_id"), nullable=False)
+
+    attendance_date = Column(Date, nullable=False)
+
+    status = Column(Boolean, nullable=False)
+
+    # optional relationships (recommended)
+    student = relationship("Student")
+    subject = relationship("Subject")
+    faculty = relationship("Faculty")
+
+
 
