@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 from security import hash_password, verify_password
 from mail import send_reset_email
-from schemas import  AlertCreate, AttendanceCreate, ResetPasswordRequest, StudentPromotionRequest, TeacherAdminUpdate, TeacherDeleteRequest,TimetableCreate, TimetableResponse,StudentDeleteRequest
+from schemas import  AlertCreate, AssignSubjectRequest, AttendanceCreate, ResetPasswordRequest, StudentPromotionRequest, TeacherAdminUpdate, TeacherDeleteRequest,TimetableCreate, TimetableResponse,StudentDeleteRequest
 from datetime import datetime
 from models import Alert, AlertRecipient, StudentAlert, Timetable, Subject,FacultySubject,Attendance
 
@@ -1240,6 +1240,26 @@ def get_all_teachers(
     result = []
 
     for faculty, user in teachers:
+        assignments = (
+            db.query(FacultySubject, Subject)
+            .join(Subject, FacultySubject.subject_id == Subject.subject_id)
+            .filter(
+                FacultySubject.faculty_id == user.user_id,
+                FacultySubject.is_active == True
+            )
+            .all()
+        )
+
+        assigned_subjects = [
+            {
+                "assignment_id": fs.id,
+                "subject_name": subject.subject_name,
+                "year": fs.year,
+                "section": fs.section,
+                "semester": subject.semester
+            }
+            for fs, subject in assignments
+        ]
         result.append({
             "id": user.user_id,
             "name": user.name,
@@ -1250,7 +1270,8 @@ def get_all_teachers(
             "phone": faculty.phone,
             "subjects": faculty.expertise.split(",") if faculty.expertise else [],
             "alertsSent": 0,
-            "classes": json.loads(faculty.classes) if faculty.classes else []
+            "classes": json.loads(faculty.classes) if faculty.classes else [],
+            "assigned_subjects": assigned_subjects 
         })
 
     return result
@@ -1690,22 +1711,18 @@ def get_all_subjects(
 # =========================
 @app.post("/admin/assign-subject")
 def assign_subject(
-    faculty_id: int,
-    subject_id: int,
-    year: int,
-    section: str,
+    data: AssignSubjectRequest,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     if current_user["role"] != "admin":
         raise HTTPException(status_code=403, detail="Admin only")
 
-    # Prevent duplicate active assignment
     existing = db.query(FacultySubject).filter(
-        FacultySubject.faculty_id == faculty_id,
-        FacultySubject.subject_id == subject_id,
-        FacultySubject.year == year,
-        FacultySubject.section == section,
+        FacultySubject.faculty_id == data.faculty_id,
+        FacultySubject.subject_id == data.subject_id,
+        FacultySubject.year == data.year,
+        FacultySubject.section == data.section,
         FacultySubject.is_active == True
     ).first()
 
@@ -1713,17 +1730,16 @@ def assign_subject(
         raise HTTPException(status_code=400, detail="Already assigned")
 
     new_assignment = FacultySubject(
-        faculty_id=faculty_id,
-        subject_id=subject_id,
-        year=year,
-        section=section
+        faculty_id=data.faculty_id,
+        subject_id=data.subject_id,
+        year=data.year,
+        section=data.section
     )
 
     db.add(new_assignment)
     db.commit()
 
     return {"message": "Subject assigned successfully"}
-
 
 
 # =========================

@@ -19,6 +19,7 @@ export default function Teachers() {
   const [selectedTeacher, setSelectedTeacher] = useState(null);
   const [showUpdateTeacher, setShowUpdateTeacher] = useState(false);
   const [showDeleteTeacher, setShowDeleteTeacher] = useState(false);
+  const [showAssignWork, setShowAssignWork] = useState(false);
   const [showNotifyTeacher, setShowNotifyTeacher] = useState(false);
 
   const fetchTeachers = async () => {
@@ -124,6 +125,15 @@ export default function Teachers() {
           Delete Teachers
         </button>
 
+        {/* ASSIGN WORK */}
+        <button
+          onClick={() => setShowAssignWork(true)}
+          className="px-4 py-2 rounded-lg border border-green-300 text-green-700 text-sm hover:bg-green-50 transition"
+        >
+          Assign Work
+        </button>
+
+
         {/* NOTIFY (RIGHT SIDE) */}
         <button
           onClick={() => setShowNotifyTeacher(true)}
@@ -131,6 +141,8 @@ export default function Teachers() {
         >
           Notify Teachers
         </button>
+
+        
 
       </div>
 
@@ -247,6 +259,7 @@ export default function Teachers() {
       {/* ================= TEACHER MODALS ================= */}
       {showUpdateTeacher && (<UpdateTeacherModal teachers={teachers} setTeachers={setTeachers} onClose={() => setShowUpdateTeacher(false)}/>)}
       {showDeleteTeacher && (<DeleteTeacherModal teachers={teachers} setTeachers={setTeachers} onClose={() => setShowDeleteTeacher(false)} />)}
+      {showAssignWork && (<AssignSubjectModal  teachers={teachers}  onClose={() => {    setShowAssignWork(false);    fetchTeachers();  }} />)}
       {showNotifyTeacher && (<NotifyTeacherModal teachers={teachers} onClose={() => setShowNotifyTeacher(false)}  />)}
 
     </div>
@@ -270,6 +283,7 @@ function AnalyticsCard({ title, description }) {
 /* ================= PROFILE MODAL ================= */
 
 function TeacherProfileModal({ teacher, onClose }) {
+  const [showAssignModal, setShowAssignModal] = useState(false);
   const totalStudents = teacher.classes.reduce((a, c) => a + c.students, 0);
   const avgAttendance =
     teacher.classes.reduce((a, c) => a + c.attendance, 0) /
@@ -338,11 +352,38 @@ function TeacherProfileModal({ teacher, onClose }) {
             </tbody>
           </table>
         </div>
+        {/* ===== ASSIGNED SUBJECTS ===== */}
+        <div>
+          <h3 className="font-medium mb-3">Assigned Subjects</h3>
+
+          {!teacher.assigned_subjects || teacher.assigned_subjects.length === 0 ? (
+            <p className="text-sm text-gray-400">
+              No subjects assigned yet
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {teacher.assigned_subjects.map((item, index) => (
+                <div
+                  key={index}
+                  className="border rounded-lg p-3 text-sm bg-gray-50"
+                >
+                  <p><b>Subject:</b> {item.subject_name}</p>
+                  <p><b>Year:</b> {item.year}</p>
+                  <p><b>Semester:</b> {item.semester}</p>
+                  <p><b>Section:</b> {item.section}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
         {/* ===== PROFILE ANALYTICS ===== */}
         <div className="bg-gray-50 border rounded-xl p-4 text-sm text-gray-400 text-center">
           📊 Individual teacher analytics will be rendered by Analytics Agent
         </div>
+
+        
+        
       </div>
     </div>
   );
@@ -1458,6 +1499,213 @@ function NotifyTeacherModal({ teachers, onClose }) {
         )}
 
       </div>
+    </div>
+  );
+}
+
+/* ================= ASSIGN SUBJECT MODAL ================= */
+function AssignSubjectModal({ teachers, onClose }) {
+  const token = localStorage.getItem("access_token");
+  const [department, setDepartment] = useState("All");
+  const [search, setSearch] = useState("");
+  const [selectedTeacherId, setSelectedTeacherId] = useState(null);
+  const [step, setStep] = useState("form"); // form | preview | success
+
+  const [subjects, setSubjects] = useState([]);
+  const [subjectId, setSubjectId] = useState("");
+  const [year, setYear] = useState("");
+  const [semester, setSemester] = useState("");
+  const [section, setSection] = useState("");
+
+  useEffect(() => {
+    fetch("http://localhost:8000/admin/subjects", {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    })
+      .then(res => res.json())
+      .then(data => setSubjects(data));
+  }, []);
+
+  const handleAssign = async () => {
+  const res = await fetch("http://localhost:8000/admin/assign-subject", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      faculty_id: selectedTeacherId,
+      subject_id: parseInt(subjectId),
+      year: parseInt(year),
+      semester: parseInt(semester),
+      section: section,
+    }),
+  });
+
+  if (!res.ok) {
+    alert("Assignment failed");
+    return;
+  }
+
+  setStep("success");
+
+  setTimeout(() => {
+    onClose();
+  }, 1500);
+ };
+
+  const filteredTeachers = teachers.filter((t) => {
+  const matchDept = department === "All" || t.department === department;
+  const matchSearch =
+    (t.name?.toLowerCase() || "").includes(search.toLowerCase());
+
+  return matchDept && matchSearch;
+ });
+
+  return (
+    <div className="bg-white w-[500px] p-6 rounded-xl space-y-4">
+
+      <h3 className="text-lg font-semibold">Assign Work</h3>
+
+      {step === "form" && (
+        <>
+          {/* FILTERS */}
+          <div className="flex gap-3">
+            <select
+              value={department}
+              onChange={(e) => setDepartment(e.target.value)}
+              className="border px-3 py-2 rounded-lg"
+            >
+              <option>All</option>
+              <option>CSE</option>
+              <option>CSM</option>
+              <option>ECE</option>
+              <option>MECH</option>
+              <option>CIVIL</option>
+            </select>
+
+            <input
+              placeholder="Search teacher"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="border px-3 py-2 rounded-lg flex-1"
+            />
+          </div>
+
+          {/* TEACHER LIST */}
+          <div className="border rounded-lg max-h-40 overflow-y-auto text-sm">
+            {filteredTeachers.map((t) => (
+              <label
+                key={t.id}
+                className="flex items-center gap-2 px-3 py-2 border-b cursor-pointer"
+              >
+                <input
+                  type="radio"
+                  checked={selectedTeacherId === t.id}
+                  onChange={() => setSelectedTeacherId(t.id)}
+                />
+                {t.name} — {t.department}
+              </label>
+            ))}
+          </div>
+
+          {/* SUBJECT SELECT */}
+          <select
+            value={subjectId}
+            onChange={(e) => setSubjectId(e.target.value)}
+            className="border px-3 py-2 rounded-lg w-full"
+          >
+            <option value="">Select Subject</option>
+            {subjects.map((s) => (
+              <option key={s.subject_id} value={s.subject_id}>
+                {s.subject_name}
+              </option>
+            ))}
+          </select>
+
+          {/* YEAR */}
+          <select
+            value={year}
+            onChange={(e) => setYear(e.target.value)}
+            className="border px-3 py-2 rounded-lg w-full"
+          >
+            <option value="">Select Year</option>
+            <option value="1">1st Year</option>
+            <option value="2">2nd Year</option>
+            <option value="3">3rd Year</option>
+            <option value="4">4th Year</option>
+          </select>
+
+          {/* SEMESTER */}
+          <select
+            value={semester}
+            onChange={(e) => setSemester(e.target.value)}
+            className="border px-3 py-2 rounded-lg w-full"
+          >
+            <option value="">Select Semester</option>
+            {[1,2,3,4,5,6,7,8].map(s => (
+              <option key={s} value={s}>Semester {s}</option>
+            ))}
+          </select>
+
+          <input
+            placeholder="Section"
+            value={section}
+            onChange={(e) => setSection(e.target.value)}
+            className="border px-3 py-2 rounded-lg w-full"
+          />
+
+          <div className="flex justify-end gap-3">
+            <button onClick={onClose} className="px-4 py-2 border rounded-lg">
+              Cancel
+            </button>
+
+            <button
+              onClick={() => {
+                if (!selectedTeacherId || !subjectId || !year || !semester || !section) {
+                  alert("Fill all fields");
+                  return;
+                }
+                setStep("preview");
+              }}
+              className="px-4 py-2 bg-indigo-600 text-white rounded-lg"
+            >
+              Preview
+            </button>
+          </div>
+        </>
+      )}
+
+      {step === "preview" && (
+        <div className="space-y-4 text-sm">
+          <p><b>Teacher:</b> {teachers.find(t => t.id === selectedTeacherId)?.name}</p>
+          <p><b>Subject:</b> {subjects.find(s => s.subject_id == subjectId)?.subject_name}</p>
+          <p><b>Year:</b> {year}</p>
+          <p><b>Semester:</b> {semester}</p>
+          <p><b>Section:</b> {section}</p>
+
+          <div className="flex justify-end gap-3">
+            <button onClick={() => setStep("form")} className="px-4 py-2 border rounded-lg">
+              Back
+            </button>
+
+            <button
+              onClick={handleAssign}
+              className="px-4 py-2 bg-green-600 text-white rounded-lg"
+            >
+              Confirm & Assign
+            </button>
+          </div>
+        </div>
+      )}
+
+      {step === "success" && (
+        <div className="text-center py-8">
+          <div className="text-4xl text-green-600">✓</div>
+          <p className="font-medium mt-2">Assignment Successful</p>
+        </div>
+      )}
     </div>
   );
 }

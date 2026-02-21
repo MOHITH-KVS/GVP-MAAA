@@ -230,4 +230,11 @@ class AttendanceCreate(BaseModel):
     section: str
     records: List[AttendanceItem]
 
+
+class AssignSubjectRequest(BaseModel):
+    faculty_id: int
+    subject_id: int
+    year: int
+    section: str
+
    
