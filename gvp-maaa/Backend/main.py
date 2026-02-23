@@ -524,13 +524,15 @@ def get_students_for_attendance(
     
 
     # 🔒 Check faculty is assigned to this class
-    assignment_check = db.query(FacultySubject).filter(
+    assignment = db.query(FacultySubject).filter(
         FacultySubject.faculty_id == current_user["user_id"],
         FacultySubject.subject_id == subject_id,
         FacultySubject.year == year,
         FacultySubject.section == section,
         FacultySubject.is_active == True
     ).first()
+
+    department_id = assignment.subject.department_id
 
     if not assignment_check:
         raise HTTPException(status_code=403, detail="Not assigned to this class")

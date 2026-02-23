@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 
 const DEPARTMENT_MAP = {
   CSE: 11,
@@ -1509,6 +1510,7 @@ function AssignSubjectModal({ teachers, onClose }) {
   const [department, setDepartment] = useState("All");
   const [search, setSearch] = useState("");
   const [selectedTeacherId, setSelectedTeacherId] = useState(null);
+  const [assignmentList, setAssignmentList] = useState([]);
   const [step, setStep] = useState("form"); // form | preview | success
 
   const [subjects, setSubjects] = useState([]);
@@ -1528,33 +1530,39 @@ function AssignSubjectModal({ teachers, onClose }) {
   }, []);
 
   const handleAssign = async () => {
-  const res = await fetch("http://localhost:8000/admin/assign-subject", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({
-      faculty_id: selectedTeacherId,
-      subject_id: parseInt(subjectId),
-      year: parseInt(year),
-      semester: parseInt(semester),
-      section: section,
-    }),
-  });
-
-  if (!res.ok) {
-    alert("Assignment failed");
+  if (assignmentList.length === 0) {
+    alert("No assignments added");
     return;
+  }
+
+  for (const item of assignmentList) {
+    const res = await fetch("http://localhost:8000/admin/assign-subject", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        faculty_id: selectedTeacherId,
+        subject_id: parseInt(item.subject_id),
+        year: parseInt(item.year),
+        semester: parseInt(item.semester),
+        section: item.section,
+      }),
+    });
+
+    if (!res.ok) {
+      alert("One assignment failed");
+      return;
+    }
   }
 
   setStep("success");
 
   setTimeout(() => {
-    onClose();
-  }, 1500);
+  onClose();
+ }, assignmentList.length * 500 + 2000);
  };
-
   const filteredTeachers = teachers.filter((t) => {
   const matchDept = department === "All" || t.department === department;
   const matchSearch =
@@ -1563,7 +1571,36 @@ function AssignSubjectModal({ teachers, onClose }) {
   return matchDept && matchSearch;
  });
 
+  const addToList = () => {
+  if (!selectedTeacherId || !subjectId || !year || !semester || !section) {
+    alert("Fill all fields");
+    return;
+  }
+
+  const subjectName =
+    subjects.find((s) => s.subject_id == subjectId)?.subject_name;
+
+  setAssignmentList((prev) => [
+    ...prev,
+    {
+      subject_id: subjectId,
+      subject_name: subjectName,
+      year,
+      semester,
+      section,
+    },
+  ]);
+
+  // Clear fields
+  setSubjectId("");
+  setYear("");
+  setSemester("");
+  setSection("");
+ };
+
+
   return (
+  <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
     <div className="bg-white w-[500px] p-6 rounded-xl space-y-4">
 
       <h3 className="text-lg font-semibold">Assign Work</h3>
@@ -1656,34 +1693,71 @@ function AssignSubjectModal({ teachers, onClose }) {
             className="border px-3 py-2 rounded-lg w-full"
           />
 
+
+          {/* 🔥 ADD THIS BLOCK HERE */}
+          {assignmentList.length > 0 && (
+            <div className="border rounded-lg p-3 text-sm space-y-2">
+              <p className="font-medium">Assignments Added:</p>
+
+              {assignmentList.map((item, index) => (
+                <div key={index} className="flex justify-between">
+                  <span>
+                    {item.subject_name} | Year {item.year} | Sem {item.semester} | Sec {item.section}
+                  </span>
+                  <button
+                    onClick={() =>
+                      setAssignmentList((prev) =>
+                        prev.filter((_, i) => i !== index)
+                      )
+                    }
+                    className="text-red-500 text-xs"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
           <div className="flex justify-end gap-3">
             <button onClick={onClose} className="px-4 py-2 border rounded-lg">
               Cancel
             </button>
 
             <button
+              onClick={addToList}
+              className="px-4 py-2 bg-indigo-600 text-white rounded-lg"
+            >
+              Add To List
+            </button>
+
+            <button
               onClick={() => {
-                if (!selectedTeacherId || !subjectId || !year || !semester || !section) {
-                  alert("Fill all fields");
+                if (assignmentList.length === 0) {
+                  alert("Add at least one subject");
                   return;
                 }
                 setStep("preview");
               }}
-              className="px-4 py-2 bg-indigo-600 text-white rounded-lg"
+              className="px-4 py-2 bg-green-600 text-white rounded-lg"
             >
               Preview
             </button>
-          </div>
-        </>
-      )}
+                      </div>
+                    </>
+                  )}
 
       {step === "preview" && (
         <div className="space-y-4 text-sm">
-          <p><b>Teacher:</b> {teachers.find(t => t.id === selectedTeacherId)?.name}</p>
-          <p><b>Subject:</b> {subjects.find(s => s.subject_id == subjectId)?.subject_name}</p>
-          <p><b>Year:</b> {year}</p>
-          <p><b>Semester:</b> {semester}</p>
-          <p><b>Section:</b> {section}</p>
+          <div className="border rounded-lg p-3 space-y-2">
+            {assignmentList.map((item, index) => (
+              <div key={index}>
+                <p><b>Subject:</b> {item.subject_name}</p>
+                <p>Year {item.year} | Semester {item.semester} | Section {item.section}</p>
+                <hr className="my-2" />
+              </div>
+            ))}
+          </div>
 
           <div className="flex justify-end gap-3">
             <button onClick={() => setStep("form")} className="px-4 py-2 border rounded-lg">
@@ -1701,12 +1775,78 @@ function AssignSubjectModal({ teachers, onClose }) {
       )}
 
       {step === "success" && (
-        <div className="text-center py-8">
-          <div className="text-4xl text-green-600">✓</div>
-          <p className="font-medium mt-2">Assignment Successful</p>
+        <div className="relative h-72 flex items-center justify-center overflow-hidden">
+
+          {/* CENTER WRAPPER (single alignment anchor) */}
+          <div className="relative w-32 h-32 flex items-center justify-center">
+
+            {/* Glow Ring */}
+            <motion.div
+              initial={{ scale: 0 }}
+              animate={{ scale: 1.4 }}
+              transition={{
+                delay: assignmentList.length * 0.5 + 0.6,
+                duration: 0.5,
+              }}
+              className="absolute w-32 h-32 rounded-full border-4 border-green-400"
+            />
+
+            {/* Avatar */}
+            <motion.div
+              initial={{ scale: 0.8 }}
+              animate={{ scale: 1 }}
+              transition={{ duration: 0.4 }}
+              className="absolute w-24 h-24 rounded-full bg-indigo-600 flex items-center justify-center text-white text-2xl font-bold shadow-lg"
+            >
+              👨‍🏫
+            </motion.div>
+
+            {/* Flying Books */}
+            {assignmentList.map((item, index) => (
+              <motion.div
+                key={index}
+                initial={{
+                  x: -250,
+                  y: index * 40 - 40,
+                  opacity: 1,
+                  scale: 1,
+                }}
+                animate={{
+                  x: 0,
+                  y: 0,
+                  scale: 0.2,
+                  opacity: 0,
+                }}
+                transition={{
+                  delay: index * 0.5,
+                  duration: 1,
+                  ease: "easeInOut",
+                }}
+                className="absolute bg-green-100 text-green-700 px-4 py-2 rounded-lg shadow-md"
+              >
+                📘 {item.subject_name}
+              </motion.div>
+            ))}
+
+          </div>
+
+          {/* Final Checkmark */}
+          <motion.div
+            initial={{ scale: 0 }}
+            animate={{ scale: 1 }}
+            transition={{
+              delay: assignmentList.length * 0.5 + 1.2,
+              duration: 0.4,
+            }}
+            className="absolute bottom-4 text-green-600 text-4xl"
+          >
+            ✓
+          </motion.div>
+
         </div>
       )}
     </div>
+  </div>
   );
 }
 
