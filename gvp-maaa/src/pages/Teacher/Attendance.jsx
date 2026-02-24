@@ -51,7 +51,7 @@ export default function Attendance() {
 
     try {
       const res = await fetch(
-        `http://localhost:8000/faculty/attendance/students?department=${subject.department}&year=${subject.year}&section=${subject.section}&subject_id=${subject.subject_id}`,
+        `http://localhost:8000/faculty/attendance/students?year=${subject.year}&section=${subject.section}&subject_id=${subject.subject_id}`,
         {
           headers: {
             Authorization: `Bearer ${token}`,

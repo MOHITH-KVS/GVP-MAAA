@@ -512,7 +512,6 @@ def mark_attendance(
 # -------------------------
 @app.get("/faculty/attendance/students")
 def get_students_for_attendance(
-    department: str,
     year: int,
     section: str,
     subject_id: int,
@@ -531,19 +530,19 @@ def get_students_for_attendance(
         FacultySubject.section == section,
         FacultySubject.is_active == True
     ).first()
-
-    department_id = assignment.subject.department_id
+    # 🔍 DEBUG PRINTS
+    print("USER:", current_user["user_id"])
+    print("SUBJECT:", subject_id)
+    print("YEAR:", year)
+    print("SECTION:", section)
+    print("ASSIGNMENT:", assignment_check)
 
     if not assignment_check:
         raise HTTPException(status_code=403, detail="Not assigned to this class")
-
     
+    department_id = assignment_check.subject.department_id
 
-    # convert department to id
-    department_id = None
-    for key, value in DEPARTMENT_MAP.items():
-        if value == department:
-            department_id = key
+
 
     students = (
         db.query(Student, User)
@@ -553,9 +552,9 @@ def get_students_for_attendance(
             Student.year == year,
             Student.section == section,
             User.is_deleted == False
-        )
-        .all()
     )
+    .all()
+ )
 
     result = []
 
