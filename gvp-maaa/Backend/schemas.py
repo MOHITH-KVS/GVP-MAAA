@@ -237,4 +237,10 @@ class AssignSubjectRequest(BaseModel):
     year: int
     section: str
 
-   
+
+class SubjectCreate(BaseModel):
+    subject_code: str
+    subject_name: str
+    semester: int
+    credits: int
+    department_id: int

@@ -60,14 +60,21 @@ export default function Attendance() {
       );
 
       const data = await res.json();
-      setStudents(data);
+console.log("STUDENTS RESPONSE:", data);
 
-      setAttendanceData(
-        data.map((s) => ({
-          student_id: s.id,
-          status: true,
-        }))
-      );
+if (Array.isArray(data)) {
+  setStudents(data);
+
+  setAttendanceData(
+    data.map((s) => ({
+      student_id: s.id,
+      status: true,
+    }))
+  );
+ } else {
+  console.log("Unexpected response:", data);
+  setStudents([]);
+ }
     } catch (err) {
       console.error("Error loading students", err);
     }

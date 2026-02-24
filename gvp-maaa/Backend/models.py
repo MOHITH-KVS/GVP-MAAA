@@ -208,13 +208,12 @@ class FacultySubject(Base):
 class Subject(Base):
     __tablename__ = "subjects"
 
-    subject_id = Column(Integer, primary_key=True, index=True)
-    subject_code = Column(String(20), unique=True, nullable=False)
-    subject_name = Column(String(100), nullable=False)
-    semester = Column(Integer, nullable=False)
-    credits = Column(Integer, nullable=False)
-    department_id = Column(Integer, nullable=False)
-
+    subject_id = Column(Integer, primary_key=True)
+    subject_code = Column(String)
+    subject_name = Column(String)
+    semester = Column(Integer)
+    credits = Column(Integer)
+    department_id = Column(Integer)
 
 
 class Attendance(Base):

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 /* ================= ADMIN ACADEMICS ================= */
 
@@ -136,7 +136,7 @@ export default function Academics() {
     </div>
   );
 }
-/* ================= MODAL ================= */
+
 /* ================= SIMPLE ACADEMIC MODAL ================= */
 function ManageSubjectsModal({ onClose }) {
   const [step, setStep] = useState("form"); // form | review | success
@@ -150,39 +150,27 @@ function ManageSubjectsModal({ onClose }) {
     section: "",
   });
 
-  /* ===== SUBJECT STORE (TEMP) ===== */
-  const [subjects, setSubjects] = useState([
-    {
-      id: 1,
-      code: "CS301",
-      name: "Database Management Systems",
-      credits: 4,
-      department: "CSE",
-      year: "3rd Year",
-      semester: "Sem 1",
-      section: "A",
-    },
-    {
-      id: 2,
-      code: "CS302",
-      name: "Operating Systems",
-      credits: 3,
-      department: "CSE",
-      year: "3rd Year",
-      semester: "Sem 1",
-      section: "A",
-    },
-    {
-      id: 3,
-      code: "CS401",
-      name: "Machine Learning",
-      credits: 4,
-      department: "CSE",
-      year: "4th Year",
-      semester: "Sem 1",
-      section: "A",
-    },
-  ]);
+  const [subjects, setSubjects] = useState([]);
+
+  const token = localStorage.getItem("access_token");
+  useEffect(() => {
+    fetchSubjects();
+  }, []);
+
+  const fetchSubjects = async () => {
+    try {
+      const res = await fetch("http://localhost:8000/admin/subjects", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const data = await res.json();
+      setSubjects(data);
+    } catch (err) {
+      console.error("Error loading subjects", err);
+    }
+  };
 
   /* ===== ADD SUBJECT ===== */
   const [newSubject, setNewSubject] = useState({
@@ -195,38 +183,49 @@ function ManageSubjectsModal({ onClose }) {
   const [selectedSubject, setSelectedSubject] = useState(null);
   const [deleteReason, setDeleteReason] = useState("");
 
-  /* ===== FILTERED SUBJECTS ===== */
-  const filteredSubjects = subjects.filter(
-    (s) =>
-      (!context.department || s.department === context.department) &&
-      (!context.year || s.year === context.year) &&
-      (!context.semester || s.semester === context.semester) &&
-      (!context.section || s.section === context.section)
-  );
-
   /* ===== FINAL CONFIRM ===== */
-  const confirmAction = () => {
+  const confirmAction = async () => {
+  try {
     if (action === "add") {
-      setSubjects((prev) => [
-        ...prev,
-        {
-          id: Date.now(),
-          ...newSubject,
-          credits: Number(newSubject.credits),
-          ...context,
+      await fetch("http://localhost:8000/admin/subjects", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
         },
-      ]);
+        body: JSON.stringify({
+          subject_code: newSubject.code,
+          subject_name: newSubject.name,
+          semester: 1, // hardcoded
+          credits: Number(newSubject.credits),
+          department_id: 1, // hardcoded
+        }),
+      });
+
+      await fetchSubjects();
     }
 
     if (action === "delete" && selectedSubject) {
-      setSubjects((prev) =>
-        prev.filter((s) => s.id !== selectedSubject.id)
+      await fetch(
+        `http://localhost:8000/admin/subjects/${selectedSubject.subject_id}`,
+        {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
       );
+
+      await fetchSubjects();
     }
 
     setStep("success");
-    setTimeout(onClose, 2200);
-  };
+    setTimeout(onClose, 1500);
+
+  } catch (err) {
+    console.error("Error:", err);
+  }
+ };
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
@@ -256,7 +255,7 @@ function ManageSubjectsModal({ onClose }) {
                   </option>
                   {key === "department" && ["CSE","CSM","ECE","MECH","CIVIL"].map(v => <option key={v}>{v}</option>)}
                   {key === "year" && ["1st Year","2nd Year","3rd Year","4th Year"].map(v => <option key={v}>{v}</option>)}
-                  {key === "semester" && ["Sem 1","Sem 2"].map(v => <option key={v}>{v}</option>)}
+                  {key === "semester" && ["Sem 1","Sem 2","Sem 3","Sem 4","Sem 5","Sem 6","Sem 7","Sem 8"].map(v => <option key={v}>{v}</option>)}
                   {key === "section" && ["A","B"].map(v => <option key={v}>{v}</option>)}
                 </select>
               ))}
@@ -302,22 +301,24 @@ function ManageSubjectsModal({ onClose }) {
             {action === "delete" && (
               <>
                 <div className="border rounded-lg max-h-40 overflow-y-auto text-sm">
-                  {filteredSubjects.length === 0 && (
+
+                  {subjects.length === 0 && (
                     <p className="text-center text-gray-400 py-3">
-                      No subjects found for selected filters
+                      No subjects found
                     </p>
                   )}
 
-                  {filteredSubjects.map((s) => (
+                  {subjects.map((s) => (
                     <div
-                      key={s.id}
+                      key={s.subject_id}
                       onClick={() => setSelectedSubject(s)}
                       className={`px-3 py-2 cursor-pointer border-b
-                      ${selectedSubject?.id === s.id ? "bg-red-50" : "hover:bg-gray-50"}`}
+                      ${selectedSubject?.subject_id === s.subject_id ? "bg-red-50" : "hover:bg-gray-50"}`}
                     >
-                      <b>{s.code}</b> – {s.name} ({s.credits} credits)
+                      <b>{s.subject_code}</b> – {s.subject_name} ({s.credits} credits)
                     </div>
                   ))}
+
                 </div>
 
                 {selectedSubject && (
@@ -351,7 +352,7 @@ function ManageSubjectsModal({ onClose }) {
 
             {action === "delete" && selectedSubject && (
               <div className="border rounded-lg p-4 bg-red-50 space-y-1">
-                <p><b>Subject:</b> {selectedSubject.code} – {selectedSubject.name}</p>
+                <p><b>Subject:</b> {selectedSubject.subject_code} – {selectedSubject.subject_name}</p>
                 <p><b>Context:</b> {context.department}, {context.year}, {context.semester}, {context.section}</p>
                 <p><b>Reason:</b> {deleteReason}</p>
               </div>

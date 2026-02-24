@@ -520,9 +520,8 @@ def get_students_for_attendance(
 ):
     if current_user["role"] != "faculty":
         raise HTTPException(status_code=403, detail="Faculty only")
-    
 
-    # 🔒 Check faculty is assigned to this class
+    # 🔒 Check faculty assignment
     assignment = db.query(FacultySubject).filter(
         FacultySubject.faculty_id == current_user["user_id"],
         FacultySubject.subject_id == subject_id,
@@ -530,28 +529,48 @@ def get_students_for_attendance(
         FacultySubject.section == section,
         FacultySubject.is_active == True
     ).first()
-    # 🔍 DEBUG PRINTS
+
     print("USER:", current_user["user_id"])
     print("SUBJECT:", subject_id)
     print("YEAR:", year)
     print("SECTION:", section)
-    print("ASSIGNMENT:", assignment_check)
+    print("ASSIGNMENT:", assignment)
 
-    if not assignment_check:
+    if not assignment:
         raise HTTPException(status_code=403, detail="Not assigned to this class")
-    
-    department_id = assignment_check.subject.department_id
 
+    # Get subject department properly
+    subject = db.query(Subject).filter(
+        Subject.subject_id == subject_id
+    ).first()
 
+    if not subject:
+        raise HTTPException(status_code=404, detail="Subject not found")
+
+    department_id = subject.department_id
+    print("Subject Department:", department_id)
+
+    test_students = db.query(Student).filter(
+        Student.year == year,
+        Student.section == section
+    ).all()
+
+    print("Students matching year & section:", len(test_students))
+
+    for s in test_students:
+        user_obj = db.query(User).filter(
+            User.user_id == s.student_id
+        ).first()
+        print("Student Roll:", s.roll_no, "Dept:", user_obj.department_id)
 
     students = (
-        db.query(Student, User)
-        .join(User, Student.student_id == User.user_id)
-        .filter(
-            User.department_id == department_id,
-            Student.year == year,
-            Student.section == section,
-            User.is_deleted == False
+    db.query(Student, User)
+    .join(User, Student.student_id == User.user_id)
+    .filter(
+        User.department_id == department_id,
+        Student.year == year,
+        Student.section == section,
+        User.is_deleted == False
     )
     .all()
  )
@@ -560,7 +579,6 @@ def get_students_for_attendance(
 
     for student, user in students:
 
-        # last 5 records
         last_5 = (
             db.query(Attendance)
             .filter(
@@ -574,25 +592,16 @@ def get_students_for_attendance(
 
         last_5_status = [a.status for a in last_5]
 
-        # semester percentage
-        total = (
-            db.query(Attendance)
-            .filter(
-                Attendance.student_id == student.student_id,
-                Attendance.subject_id == subject_id
-            )
-            .count()
-        )
+        total = db.query(Attendance).filter(
+            Attendance.student_id == student.student_id,
+            Attendance.subject_id == subject_id
+        ).count()
 
-        present = (
-            db.query(Attendance)
-            .filter(
-                Attendance.student_id == student.student_id,
-                Attendance.subject_id == subject_id,
-                Attendance.status == True
-            )
-            .count()
-        )
+        present = db.query(Attendance).filter(
+            Attendance.student_id == student.student_id,
+            Attendance.subject_id == subject_id,
+            Attendance.status == True
+        ).count()
 
         percentage = round((present / total) * 100, 2) if total > 0 else 0
 
@@ -1706,6 +1715,60 @@ def get_all_subjects(
         }
         for s in subjects
     ]
+
+
+# =========================
+# ADMIN – CREATE SUBJECT
+# =========================
+@app.post("/admin/subjects")
+def create_subject(
+    subject: SubjectCreate,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    new_subject = Subject(
+        subject_code=subject.subject_code,
+        subject_name=subject.subject_name,
+        semester=subject.semester,
+        credits=subject.credits,
+        department_id=subject.department_id
+    )
+
+    db.add(new_subject)
+    db.commit()
+    db.refresh(new_subject)
+
+    return {"message": "Subject created successfully"}
+
+
+# =========================
+# ADMIN – DELETE SUBJECT
+# =========================
+@app.delete("/admin/subjects/{subject_id}")
+def delete_subject(
+    subject_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    subject = db.query(Subject).filter(
+        Subject.subject_id == subject_id
+    ).first()
+
+    if not subject:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    db.delete(subject)
+    db.commit()
+
+    return {"message": "Deleted successfully"}
+
+
 
 # =========================
 # ADMIN – ASSIGN SUBJECT TO FACULTY
