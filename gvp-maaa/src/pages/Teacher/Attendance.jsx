@@ -12,7 +12,14 @@ export default function Attendance() {
   const [students, setStudents] = useState([]);
   const [attendanceData, setAttendanceData] = useState([]);
 
-  const [date, setDate] = useState("");
+  const getToday = () => {
+  const today = new Date();
+  const offset = today.getTimezoneOffset();
+  const localDate = new Date(today.getTime() - offset * 60 * 1000);
+  return localDate.toISOString().split("T")[0];
+ };
+ 
+ const [date, setDate] = useState(getToday());
   const [showPreview, setShowPreview] = useState(false);
   const [previewData, setPreviewData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -122,6 +129,8 @@ if (Array.isArray(data)) {
       }),
     });
 
+    await loadStudents(selectedSubject); // 🔥 refresh
+
     setShowPreview(false);
     setSuccess(true);
     setTimeout(() => setSuccess(false), 3000);
@@ -192,6 +201,7 @@ if (Array.isArray(data)) {
           <input
             type="date"
             value={date}
+            max={getToday()}
             onChange={(e) => setDate(e.target.value)}
             className="w-full mt-1 p-2 border rounded-xl"
           />

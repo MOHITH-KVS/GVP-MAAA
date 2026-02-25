@@ -5,7 +5,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 SECRET_KEY = "supersecretkey"   # later move to .env
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60
+ACCESS_TOKEN_EXPIRE_MINUTES = 120
 RESET_TOKEN_EXPIRE_MINUTES = 15
 
 
