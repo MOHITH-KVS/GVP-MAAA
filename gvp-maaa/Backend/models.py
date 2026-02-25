@@ -219,7 +219,7 @@ class Subject(Base):
 class Attendance(Base):
     __tablename__ = "attendance"
 
-    id = Column(Integer, primary_key=True, index=True)
+    attendance_id = Column(Integer, primary_key=True, index=True)
 
     student_id = Column(Integer, ForeignKey("students.student_id"), nullable=False)
     subject_id = Column(Integer, ForeignKey("subjects.subject_id"), nullable=False)

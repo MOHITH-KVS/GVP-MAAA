@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 from security import hash_password, verify_password
 from mail import send_reset_email
-from schemas import  AlertCreate, AssignSubjectRequest, AttendanceCreate, ResetPasswordRequest, StudentPromotionRequest, TeacherAdminUpdate, TeacherDeleteRequest,TimetableCreate, TimetableResponse,StudentDeleteRequest
+from schemas import  AlertCreate, AssignSubjectRequest, AttendanceCreate, ResetPasswordRequest, StudentPromotionRequest, TeacherAdminUpdate, TeacherDeleteRequest,TimetableCreate, TimetableResponse,StudentDeleteRequest,SubjectCreate
 from datetime import datetime
 from models import Alert, AlertRecipient, StudentAlert, Timetable, Subject,FacultySubject,Attendance
 
@@ -572,6 +572,7 @@ def get_students_for_attendance(
         Student.section == section,
         User.is_deleted == False
     )
+    .order_by(Student.roll_no.asc())   # ✅ SORT BY ROLL
     .all()
  )
 
@@ -590,8 +591,13 @@ def get_students_for_attendance(
             .all()
         )
 
-        last_5_status = [a.status for a in last_5]
-
+        last_5_status = [
+            {
+                "status": a.status,
+                "date": a.attendance_date
+            }
+            for a in last_5
+        ]
         total = db.query(Attendance).filter(
             Attendance.student_id == student.student_id,
             Attendance.subject_id == subject_id
@@ -610,7 +616,9 @@ def get_students_for_attendance(
             "roll": student.roll_no,
             "name": user.name,
             "last_5": last_5_status,
-            "percentage": percentage
+            "percentage": percentage,
+            "present": present,
+            "total": total
         })
 
     return result

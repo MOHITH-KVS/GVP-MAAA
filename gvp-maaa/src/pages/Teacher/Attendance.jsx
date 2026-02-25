@@ -13,6 +13,8 @@ export default function Attendance() {
   const [attendanceData, setAttendanceData] = useState([]);
 
   const [date, setDate] = useState("");
+  const [showPreview, setShowPreview] = useState(false);
+  const [previewData, setPreviewData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
 
@@ -104,17 +106,7 @@ if (Array.isArray(data)) {
   };
 
   /* ================= SAVE ================= */
-  const saveAttendance = async () => {
-    if (!date) {
-      alert("Select date");
-      return;
-    }
-
-    if (!selectedSubject) {
-      alert("Select subject");
-      return;
-    }
-
+  const confirmSaveAttendance = async () => {
     await fetch("http://localhost:8000/faculty/attendance", {
       method: "POST",
       headers: {
@@ -124,15 +116,15 @@ if (Array.isArray(data)) {
       body: JSON.stringify({
         subject_id: selectedSubject.subject_id,
         date: date,
-        department: selectedSubject.department,
         year: selectedSubject.year,
         section: selectedSubject.section,
         records: attendanceData,
       }),
     });
 
+    setShowPreview(false);
     setSuccess(true);
-    setTimeout(() => setSuccess(false), 2000);
+    setTimeout(() => setSuccess(false), 3000);
   };
 
   /* ================= LOAD REPORT ================= */
@@ -245,14 +237,13 @@ if (Array.isArray(data)) {
                     {s.roll} – {s.name}
                   </p>
 
-                  <div className="flex gap-1 mt-2">
-                    {s.last_5.map((status, i) => (
+                  <div className="flex gap-2 mt-2 items-center">
+                    {s.last_5.map((item, i) => (
                       <span
                         key={i}
-                        className={`w-3 h-3 rounded-full ${
-                          status
-                            ? "bg-green-500"
-                            : "bg-red-500"
+                        title={item.date}
+                        className={`w-4 h-4 rounded-full ${
+                          item.status ? "bg-green-500" : "bg-red-500"
                         }`}
                       />
                     ))}
@@ -260,9 +251,14 @@ if (Array.isArray(data)) {
                 </div>
 
                 <div className="flex items-center gap-4">
-                  <span className="text-sm font-semibold">
-                    {s.percentage}%
-                  </span>
+                  <div className="text-right">
+                    <p className="text-sm font-semibold">
+                      {s.present}/{s.total}
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      {s.percentage}%
+                    </p>
+                  </div>
 
                   <input
                     type="checkbox"
@@ -279,7 +275,7 @@ if (Array.isArray(data)) {
             ))}
 
             <button
-              onClick={saveAttendance}
+              onClick={confirmSaveAttendance}
               className="w-full mt-4 bg-green-600 text-white py-3 rounded-xl"
             >
               Save Attendance
@@ -300,10 +296,10 @@ if (Array.isArray(data)) {
             </h3>
 
             <div className="space-y-2 text-sm">
-              <p>Total Records: {reportData.total_records}</p>
-              <p>Present: {reportData.present}</p>
-              <p>Absent: {reportData.absent}</p>
-              <p>Average: {reportData.average}%</p>
+              <p>Total Classes: {reportData.total_records}</p>
+              <p>Present: {reportData.total_present}</p>
+              <p>Absent: {reportData.total_absent}</p>
+              <p>Class Average: {reportData.class_average}%</p>
             </div>
 
             <button
@@ -323,14 +319,82 @@ if (Array.isArray(data)) {
         </div>
       )}
 
+      {/*================= PREVIEW ================= */}
+      {showPreview && previewData && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white p-8 rounded-2xl w-full max-w-md text-center space-y-4">
+
+            <h3 className="text-lg font-semibold">
+              Attendance Preview
+            </h3>
+
+            <div className="space-y-2 text-sm">
+              <p>Total Students: {previewData.total}</p>
+              <p className="text-green-600">
+                Present: {previewData.present}
+              </p>
+              <p className="text-red-600">
+                Absent: {previewData.absent}
+              </p>
+            </div>
+
+            <div className="flex gap-3 mt-4">
+              <button
+                onClick={() => setShowPreview(false)}
+                className="w-full border py-2 rounded-xl"
+              >
+                Edit
+              </button>
+
+              <button
+                onClick={confirmSaveAttendance}
+                className="w-full bg-green-600 text-white py-2 rounded-xl"
+              >
+                Confirm & Submit
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ================= SUCCESS ================= */}
       {success && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center">
-          <div className="bg-white p-8 rounded-2xl text-center">
-            <CheckCircleIcon className="text-green-600 text-4xl mb-3" />
-            <p className="font-semibold">
-              Attendance Saved Successfully
-            </p>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm">
+          
+          <div className="relative bg-white w-[380px] h-[260px] rounded-2xl shadow-2xl overflow-hidden flex flex-col items-center justify-center">
+
+            {/* Register Slide In */}
+            <div className="absolute inset-0 flex items-center justify-center animate-registerIn">
+              <div className="w-64 h-40 bg-gradient-to-br from-indigo-100 to-indigo-200 rounded-lg shadow-inner relative p-6">
+
+                {/* Writing Line Animation */}
+                <div className="mt-6 space-y-3">
+                  <div className="h-1 bg-gray-300 w-full rounded overflow-hidden">
+                    <div className="h-full bg-indigo-600 animate-writingLine"></div>
+                  </div>
+                  <div className="h-1 bg-gray-300 w-full rounded overflow-hidden">
+                    <div className="h-full bg-indigo-600 animate-writingLine delay-300"></div>
+                  </div>
+                  <div className="h-1 bg-gray-300 w-full rounded overflow-hidden">
+                    <div className="h-full bg-indigo-600 animate-writingLine delay-500"></div>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+
+            {/* Final Stamp */}
+            <div className="absolute inset-0 flex items-center justify-center animate-stampIn pointer-events-none">
+              <div className="mt-16 text-center opacity-0 animate-fadeStamp">
+                <div className="text-3xl text-green-600 font-bold tracking-wide">
+                  ✔
+                </div>
+                <p className="text-sm font-semibold mt-2">
+                  Attendance Recorded
+                </p>
+              </div>
+            </div>
+
           </div>
         </div>
       )}

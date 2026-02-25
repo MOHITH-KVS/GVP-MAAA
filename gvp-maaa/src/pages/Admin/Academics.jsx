@@ -10,7 +10,6 @@ export default function Academics() {
   const [showNoticeModal, setShowNoticeModal] = useState(false);
 
 
-
   return (
     <div className="space-y-10">
 
@@ -139,16 +138,14 @@ export default function Academics() {
 
 /* ================= SIMPLE ACADEMIC MODAL ================= */
 function ManageSubjectsModal({ onClose }) {
-  const [step, setStep] = useState("form"); // form | review | success
-  const [action, setAction] = useState("add"); // add | delete
+  const [step, setStep] = useState("form"); // form | review | animating | success
+  const [action, setAction] = useState("add"); // add | delete | edit
 
   /* ===== CONTEXT FILTER ===== */
   const [context, setContext] = useState({
-    department: "",
-    year: "",
-    semester: "",
-    section: "",
-  });
+  department: "",
+  semester: "",
+});
 
   const [subjects, setSubjects] = useState([]);
 
@@ -183,29 +180,63 @@ function ManageSubjectsModal({ onClose }) {
   const [selectedSubject, setSelectedSubject] = useState(null);
   const [deleteReason, setDeleteReason] = useState("");
 
+  const DEPARTMENT_ID_MAP = {
+  CSE: 11,
+  CSM: 12,
+  ECE: 14,
+  MECH: 15,
+  CIVIL: 1,
+ };
   /* ===== FINAL CONFIRM ===== */
   const confirmAction = async () => {
   try {
     if (action === "add") {
-      await fetch("http://localhost:8000/admin/subjects", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          subject_code: newSubject.code,
-          subject_name: newSubject.name,
-          semester: 1, // hardcoded
-          credits: Number(newSubject.credits),
-          department_id: 1, // hardcoded
-        }),
-      });
 
-      await fetchSubjects();
+    if (!context.department || !context.semester) {
+      alert("Select department and semester");
+      return;
     }
 
-    if (action === "delete" && selectedSubject) {
+    const semesterNumber = parseInt(
+      context.semester.replace("Sem ", "")
+    );
+
+    const departmentId = DEPARTMENT_ID_MAP[context.department];
+    if (!departmentId) {
+      alert("Invalid department selected");
+      return;
+    }
+
+    const res = await fetch("http://localhost:8000/admin/subjects", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        subject_code: newSubject.code,
+        subject_name: newSubject.name,
+        semester: semesterNumber,
+        credits: Number(newSubject.credits),
+        department_id: departmentId,
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      alert(err.detail || "Failed to add subject");
+      return;
+    }
+
+    await fetchSubjects();
+ }
+
+  if (action === "delete" && selectedSubject) {
+      const confirmDelete = window.confirm(
+        "Are you sure you want to permanently delete this subject?"
+      );
+
+   if (!confirmDelete) return;
       await fetch(
         `http://localhost:8000/admin/subjects/${selectedSubject.subject_id}`,
         {
@@ -219,8 +250,60 @@ function ManageSubjectsModal({ onClose }) {
       await fetchSubjects();
     }
 
-    setStep("success");
-    setTimeout(onClose, 1500);
+    if (action === "edit" && selectedSubject) {
+      const semesterNumber = parseInt(
+        context.semester.replace("Sem ", "")
+      );
+
+      const departmentId = DEPARTMENT_ID_MAP[context.department];
+
+      const res = await fetch(
+        `http://localhost:8000/admin/subjects/${selectedSubject.subject_id}`,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            subject_code: newSubject.code,
+            subject_name: newSubject.name,
+            semester: semesterNumber,
+            credits: Number(newSubject.credits),
+            department_id: departmentId,
+          }),
+        }
+      );
+
+      if (!res.ok) {
+        alert("Failed to update subject");
+        return;
+      }
+
+      await fetchSubjects();
+   }
+
+    // move to animation stage
+    setStep("animating");
+
+    // after animation completes → show success
+    setTimeout(() => {
+      setStep("success");
+
+      // keep success visible longer
+      setTimeout(() => {
+
+        // reset everything AFTER success finishes
+        setNewSubject({ code: "", name: "", credits: "" });
+        setContext({ department: "", semester: "" });
+        setSelectedSubject(null);
+        setDeleteReason("");
+
+        onClose();
+
+      }, 2500); // success visible 2.5 seconds
+
+    }, 1200); // animation duration
 
   } catch (err) {
     console.error("Error:", err);
@@ -228,7 +311,7 @@ function ManageSubjectsModal({ onClose }) {
  };
 
   return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
+    <div className="fixed top-0 left-0 w-screen h-screen bg-black/50 z-[9999] flex items-center justify-center">
       <div className="bg-white w-full max-w-3xl rounded-2xl p-6 space-y-6">
 
         {/* HEADER */}
@@ -242,9 +325,9 @@ function ManageSubjectsModal({ onClose }) {
           <>
             {/* CONTEXT FILTER */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              {["department", "year", "semester", "section"].map((key) => (
+              {["department", "semester"].map((key) => (
                 <select
-                  key={key}
+                  value={context[key]}
                   className="border px-3 py-2 rounded-lg"
                   onChange={(e) =>
                     setContext({ ...context, [key]: e.target.value })
@@ -254,9 +337,8 @@ function ManageSubjectsModal({ onClose }) {
                     {key.charAt(0).toUpperCase() + key.slice(1)}
                   </option>
                   {key === "department" && ["CSE","CSM","ECE","MECH","CIVIL"].map(v => <option key={v}>{v}</option>)}
-                  {key === "year" && ["1st Year","2nd Year","3rd Year","4th Year"].map(v => <option key={v}>{v}</option>)}
                   {key === "semester" && ["Sem 1","Sem 2","Sem 3","Sem 4","Sem 5","Sem 6","Sem 7","Sem 8"].map(v => <option key={v}>{v}</option>)}
-                  {key === "section" && ["A","B"].map(v => <option key={v}>{v}</option>)}
+                  
                 </select>
               ))}
             </div>
@@ -280,19 +362,46 @@ function ManageSubjectsModal({ onClose }) {
               >
                 🗑 Delete Subject
               </button>
+
+              <button
+                onClick={() => setAction("edit")}
+                className={`px-4 py-2 rounded-lg border ${
+                  action === "edit" ? "bg-amber-500 text-white" : ""
+                }`}
+              >
+                ✏ Edit Subject
+              </button>
             </div>
 
             {/* ================= ADD SUBJECT ================= */}
             {action === "add" && (
               <div className="grid grid-cols-3 gap-3">
-                <input placeholder="Code" className="border px-3 py-2 rounded-lg"
-                  onChange={(e) => setNewSubject({ ...newSubject, code: e.target.value })}
+                <input
+                  value={newSubject.code}
+                  placeholder="Code"
+                  className="border px-3 py-2 rounded-lg"
+                  onChange={(e) =>
+                    setNewSubject({ ...newSubject, code: e.target.value })
+                  }
                 />
-                <input placeholder="Name" className="border px-3 py-2 rounded-lg"
-                  onChange={(e) => setNewSubject({ ...newSubject, name: e.target.value })}
+
+                <input
+                  value={newSubject.name}
+                  placeholder="Name"
+                  className="border px-3 py-2 rounded-lg"
+                  onChange={(e) =>
+                    setNewSubject({ ...newSubject, name: e.target.value })
+                  }
                 />
-                <input placeholder="Credits" type="number" className="border px-3 py-2 rounded-lg"
-                  onChange={(e) => setNewSubject({ ...newSubject, credits: e.target.value })}
+
+                <input
+                  value={newSubject.credits}
+                  placeholder="Credits"
+                  type="number"
+                  className="border px-3 py-2 rounded-lg"
+                  onChange={(e) =>
+                    setNewSubject({ ...newSubject, credits: e.target.value })
+                  }
                 />
               </div>
             )}
@@ -333,13 +442,54 @@ function ManageSubjectsModal({ onClose }) {
               </>
             )}
 
+           {/* ================= EDIT SUBJECT ================= */}
+            {action === "edit" && (
+              <div className="border rounded-lg max-h-40 overflow-y-auto text-sm">
+                {subjects.map((s) => (
+                  <div
+                    key={s.subject_id}
+                    onClick={() => {
+                      setSelectedSubject(s);
+                      setNewSubject({
+                        code: s.subject_code,
+                        name: s.subject_name,
+                        credits: s.credits,
+                      });
+                      setContext({
+                        department: Object.keys(DEPARTMENT_ID_MAP).find(
+                          (key) => DEPARTMENT_ID_MAP[key] === s.department_id
+                        ),
+                        semester: `Sem ${s.semester}`,
+                      });
+                    }}
+                    className={`px-3 py-2 cursor-pointer border-b
+                    ${
+                      selectedSubject?.subject_id === s.subject_id
+                        ? "bg-amber-50"
+                        : "hover:bg-gray-50"
+                    }`}
+                  >
+                    <b>{s.subject_code}</b> – {s.subject_name}
+                  </div>
+                ))}
+              </div>
+            )}
+
             <div className="flex justify-end">
               <button
-                disabled={action === "delete" && (!selectedSubject || !deleteReason)}
+                disabled={
+                  (action === "delete" && (!selectedSubject || !deleteReason)) ||
+                  ((action === "add" || action === "edit") &&
+                    (!newSubject.code ||
+                    !newSubject.name ||
+                    !newSubject.credits ||
+                    !context.department ||
+                    !context.semester))
+                }
                 onClick={() => setStep("review")}
                 className="px-4 py-2 bg-indigo-600 text-white rounded-lg disabled:opacity-50"
               >
-                Recheck
+                Preview
               </button>
             </div>
           </>
@@ -348,13 +498,23 @@ function ManageSubjectsModal({ onClose }) {
         {/* ================= REVIEW ================= */}
         {step === "review" && (
           <div className="space-y-4 text-sm">
-            <p className="font-medium">Recheck before final publish</p>
+            <p className="font-medium">Preview before final publish</p>
 
             {action === "delete" && selectedSubject && (
               <div className="border rounded-lg p-4 bg-red-50 space-y-1">
                 <p><b>Subject:</b> {selectedSubject.subject_code} – {selectedSubject.subject_name}</p>
-                <p><b>Context:</b> {context.department}, {context.year}, {context.semester}, {context.section}</p>
+                <p><b>Context:</b> {context.department} {context.semester},</p>
                 <p><b>Reason:</b> {deleteReason}</p>
+              </div>
+            )}
+
+            {(action === "add" || action === "edit") && (
+              <div className="border rounded-lg p-4 bg-green-50 space-y-2">
+                <p><b>Subject Code:</b> {newSubject.code}</p>
+                <p><b>Subject Name:</b> {newSubject.name}</p>
+                <p><b>Department:</b> {context.department}</p>
+                <p><b>Semester:</b> {context.semester}</p>
+                <p><b>Credits:</b> {newSubject.credits}</p>
               </div>
             )}
 
@@ -374,22 +534,78 @@ function ManageSubjectsModal({ onClose }) {
           </div>
         )}
 
+        {step === "animating" && (
+          <div className="relative py-20 overflow-hidden flex flex-col items-center justify-center">
+
+            {/* ========= ADD ANIMATION ========= */}
+            {action === "add" && (
+              <>
+                <div className="absolute w-40 h-40 bg-green-200 rounded-full blur-3xl opacity-60 animate-glowPulse" />
+
+                <div className="flex items-center gap-10 text-6xl relative z-10">
+                  <div className="animate-flyBook">📘</div>
+                  <div className="animate-stackImpact">📚📚📚</div>
+                </div>
+
+                <p className="mt-8 text-gray-600 animate-fadeIn">
+                  Integrating subject into academic system...
+                </p>
+              </>
+            )}
+
+            {/* ========= DELETE ANIMATION ========= */}
+            {action === "delete" && (
+              <>
+                <div className="absolute w-40 h-40 bg-red-200 rounded-full blur-3xl opacity-60 animate-glowPulseRed" />
+
+                <div className="text-7xl animate-burnBook">
+                  📘
+                </div>
+
+                <p className="mt-8 text-red-600 animate-fadeIn">
+                  Removing subject from academic registry...
+                </p>
+              </>
+            )}
+
+            {/* ========= EDIT ANIMATION ========= */}
+            {action === "edit" && (
+              <>
+                <div className="absolute w-40 h-40 bg-amber-200 rounded-full blur-3xl opacity-60 animate-glowPulseAmber" />
+
+                <div className="flex items-center gap-6 text-6xl">
+                  <div className="animate-updateBook">📘</div>
+                  <div className="animate-pencilMove">✏️</div>
+                </div>
+
+                <p className="mt-8 text-amber-600 animate-fadeIn">
+                  Updating subject details...
+                </p>
+              </>
+            )}
+
+          </div>
+        )}
+        
+
         {/* ================= SUCCESS ================= */}
         {step === "success" && (
-          <div className="text-center py-10 space-y-3">
-            <div className={`mx-auto w-16 h-16 rounded-full flex items-center justify-center animate-bounce
-              ${action === "add" ? "bg-green-100" : "bg-red-100"}`}>
-              <span className={`text-3xl ${action === "add" ? "text-green-600" : "text-red-600"}`}>
-                ✓
-              </span>
+          <div className="text-center py-16 space-y-6">
+
+            <div className="text-6xl animate-successPop">
+              ✅
             </div>
 
-            <h3 className="font-semibold">
-              {action === "add"
-                ? "Subject Added Successfully"
-                : "Subject Deleted Successfully"}
+            <h3 className="font-semibold text-xl">
+              {action === "add" && "Subject Successfully Added to Academic Library"}
+              {action === "edit" && "Subject Updated Successfully"}
+              {action === "delete" && "Subject Permanently Removed"}
             </h3>
-            <p className="text-sm text-gray-500">Academic subject master updated</p>
+
+            <p className="text-gray-500">
+              Academic subject registry updated
+            </p>
+
           </div>
         )}
       </div>
@@ -483,7 +699,7 @@ function SyllabusProgressModal({ onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
+    <div className="fixed top-0 left-0 w-screen h-screen bg-black/50 z-[9999] flex items-center justify-center">
       <div className="bg-white w-full max-w-5xl rounded-2xl p-6 space-y-6">
 
         {/* HEADER */}
@@ -649,8 +865,7 @@ function SyllabusProgressModal({ onClose }) {
 
 /* ================= SIMPLE ACADEMIC MODAL ================= */
  function UploadAcademicNoticeModal({ onClose }) {
-  const [step, setStep] = useState("form"); // form | preview | success
-
+  const [step, setStep] = useState("form"); // form | review | animating | success
   const [notice, setNotice] = useState({
     title: "",
     type: "General",
@@ -672,7 +887,7 @@ function SyllabusProgressModal({ onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
+    <div className="fixed top-0 left-0 w-screen h-screen bg-black/50 z-[9999] flex items-center justify-center">
       <div className="bg-white w-full max-w-xl rounded-2xl p-6 space-y-6">
 
         {/* HEADER */}
