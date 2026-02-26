@@ -225,7 +225,6 @@ class AttendanceItem(BaseModel):
 class AttendanceCreate(BaseModel):
     subject_id: int
     date: date
-    department: str
     year: int
     section: str
     records: List[AttendanceItem]

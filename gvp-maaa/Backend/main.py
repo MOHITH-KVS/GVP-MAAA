@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from sqlalchemy import text
+from sqlalchemy import text,extract
 from security import hash_password, verify_password
 from mail import send_reset_email
 from schemas import  AlertCreate, AssignSubjectRequest, AttendanceCreate, ResetPasswordRequest, StudentPromotionRequest, TeacherAdminUpdate, TeacherDeleteRequest,TimetableCreate, TimetableResponse,StudentDeleteRequest,SubjectCreate
@@ -468,7 +468,7 @@ def mark_attendance(
     if current_user["role"] != "faculty":
         raise HTTPException(status_code=403, detail="Faculty only")
 
-    # 🔒 Check faculty teaches this subject for that class
+    # 🔒 Check faculty assignment
     subject_check = db.query(FacultySubject).filter(
         FacultySubject.faculty_id == current_user["user_id"],
         FacultySubject.subject_id == payload.subject_id,
@@ -480,6 +480,11 @@ def mark_attendance(
     if not subject_check:
         raise HTTPException(status_code=403, detail="Not assigned to this class")
 
+    updated_students = []
+
+    # -----------------------------------
+    # UPDATE / CREATE ATTENDANCE RECORDS
+    # -----------------------------------
     for record in payload.records:
 
         existing = db.query(Attendance).filter(
@@ -489,7 +494,10 @@ def mark_attendance(
         ).first()
 
         if existing:
-            existing.status = record.status
+            if existing.status != record.status:
+                existing.status = record.status
+                updated_students.append(record.student_id)
+
         else:
             new_attendance = Attendance(
                 student_id=record.student_id,
@@ -499,8 +507,63 @@ def mark_attendance(
                 status=record.status
             )
             db.add(new_attendance)
+            updated_students.append(record.student_id)
 
+    # ✅ Commit once after processing all students
     db.commit()
+
+    # -----------------------------------
+    # FETCH SUBJECT & FACULTY INFO
+    # -----------------------------------
+    subject = db.query(Subject).filter(
+        Subject.subject_id == payload.subject_id
+    ).first()
+
+    faculty_user = db.query(User).filter(
+        User.user_id == current_user["user_id"]
+    ).first()
+
+    # -----------------------------------
+    # CREATE ALERTS (ONLY IF UPDATED)
+    # -----------------------------------
+    for student_id in updated_students:
+
+        # Delete old attendance alerts for this student
+        old_alerts = db.query(Alert).filter(
+            Alert.type == "attendance",
+            Alert.student_id == student_id
+        ).all()
+
+        for old in old_alerts:
+            db.query(AlertRecipient).filter(
+                AlertRecipient.alert_id == old.id
+            ).delete()
+            db.delete(old)
+
+        db.commit()
+
+        # Create new alert
+        new_alert = Alert(
+            title="Attendance Updated",
+            message=f"{faculty_user.name} updated your attendance for {subject.subject_name} on {payload.date}.",
+            type="attendance",
+            target_role="student",
+            target_type="individual",
+            student_id=student_id
+        )
+
+        db.add(new_alert)
+        db.commit()
+        db.refresh(new_alert)
+
+        recipient = AlertRecipient(
+            alert_id=new_alert.id,
+            user_id=student_id,
+            is_read=False
+        )
+
+        db.add(recipient)
+        db.commit()
 
     return {"message": "Attendance saved successfully"}
 
@@ -580,24 +643,31 @@ def get_students_for_attendance(
 
     for student, user in students:
 
-        last_5 = (
-            db.query(Attendance)
-            .filter(
-                Attendance.student_id == student.student_id,
-                Attendance.subject_id == subject_id
-            )
-            .order_by(Attendance.attendance_date.desc())
-            .limit(5)
-            .all()
-        )
+        # 🔥 Generate last 5 calendar dates (including missing ones)
+        today = date.today()
 
-        last_5_status = [
-            {
-                "status": a.status,
-                "date": a.attendance_date
-            }
-            for a in last_5
-        ]
+        last_5_status = []
+
+        for i in range(4, -1, -1):  # oldest → newest
+            check_date = today - timedelta(days=i)
+
+            record = db.query(Attendance).filter(
+                Attendance.student_id == student.student_id,
+                Attendance.subject_id == subject_id,
+                Attendance.attendance_date == check_date
+            ).first()
+
+            if record:
+                last_5_status.append({
+                    "status": record.status,
+                    "date": check_date
+                })
+            else:
+                last_5_status.append({
+                    "status": None,   # 👈 important for grey dot
+                    "date": check_date
+                })
+        
         total = db.query(Attendance).filter(
             Attendance.student_id == student.student_id,
             Attendance.subject_id == subject_id
@@ -638,6 +708,58 @@ def get_last_5_classes(
     ).order_by(Attendance.attendance_date.desc()).limit(5).all()
 
     return records
+
+
+# -------------------------
+# FACULTY – CHECK IF ATTENDANCE ALREADY EXISTS
+# -------------------------
+@app.get("/faculty/attendance/check")
+def check_attendance_exists(
+    subject_id: int,
+    date: date,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "faculty":
+        raise HTTPException(status_code=403, detail="Faculty only")
+
+    existing = db.query(Attendance).filter(
+        Attendance.subject_id == subject_id,
+        Attendance.attendance_date == date,
+        Attendance.faculty_id == current_user["user_id"]
+    ).first()
+
+    return {
+        "already_marked": True if existing else False
+    }
+
+
+# -------------------------
+# FACULTY – GET ATTENDANCE BY DATE (FOR EDITING)
+# -------------------------
+@app.get("/faculty/attendance/by-date")
+def get_attendance_by_date(
+    subject_id: int,
+    date: date,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "faculty":
+        raise HTTPException(status_code=403, detail="Faculty only")
+
+    records = db.query(Attendance).filter(
+        Attendance.subject_id == subject_id,
+        Attendance.attendance_date == date,
+        Attendance.faculty_id == current_user["user_id"]
+    ).all()
+
+    return [
+        {
+            "student_id": r.student_id,
+            "status": r.status
+        }
+        for r in records
+    ]
 
 # -------------------------
 # FACULTY – GET SEMESTER ATTENDANCE PERCENTAGE FOR ALL STUDENTS
@@ -686,6 +808,182 @@ def get_semester_attendance(
     return result
 
 
+# =========================
+# FACULTY – UNIVERSAL ATTENDANCE REPORT
+# =========================
+@app.get("/faculty/attendance/report/{subject_id}")
+def attendance_report(
+    subject_id: int,
+    start_date: date = None,
+    end_date: date = None,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+
+    if current_user["role"] != "faculty":
+        raise HTTPException(status_code=403, detail="Faculty only")
+
+    # 🔒 Validate assignment
+    assignment = db.query(FacultySubject).filter(
+        FacultySubject.faculty_id == current_user["user_id"],
+        FacultySubject.subject_id == subject_id,
+        FacultySubject.is_active == True
+    ).first()
+
+    if not assignment:
+        raise HTTPException(status_code=403, detail="Not assigned to this subject")
+
+    # ✅ Default to current week if no dates given
+    if not start_date or not end_date:
+        today = date.today()
+        start_date = today - timedelta(days=today.weekday())
+        end_date = today
+
+    # Get subject department properly
+    subject = db.query(Subject).filter(
+        Subject.subject_id == subject_id
+    ).first()
+
+    department_id = subject.department_id
+
+    students = (
+        db.query(Student, User)
+        .join(User, Student.student_id == User.user_id)
+        .filter(
+            Student.year == assignment.year,
+            Student.section == assignment.section,
+            User.department_id == department_id,
+            User.is_deleted == False
+        )
+        .all()
+    )
+
+    
+
+    student_data = []
+    total_records = 0
+    total_present = 0
+
+    for student, user in students:
+
+        records = db.query(Attendance).filter(
+            Attendance.student_id == student.student_id,
+            Attendance.subject_id == subject_id,
+            Attendance.attendance_date >= start_date,
+            Attendance.attendance_date <= end_date
+        ).all()
+
+        total = len(records)
+        present = len([r for r in records if r.status])
+        absent = total - present
+        percent = round((present / total) * 100, 2) if total > 0 else 0
+
+        total_records += total
+        total_present += present
+
+        student_data.append({
+            "roll": student.roll_no,
+            "name": user.name,
+            "total_classes": total,
+            "present": present,
+            "absent": absent,
+            "percentage": percent
+        })
+
+    student_data.sort(key=lambda x: x["percentage"], reverse=True)
+
+    class_average = round(
+        (total_present / total_records) * 100, 2
+    ) if total_records > 0 else 0
+
+    return {
+        "start_date": start_date,
+        "end_date": end_date,
+        "class_average": class_average,
+        "total_records": total_records,
+        "total_present": total_present,
+        "total_absent": total_records - total_present,
+        "students": student_data
+    }
+
+
+# =========================
+# FACULTY – DOWNLOAD REPORT PDF
+# =========================
+@app.get("/faculty/attendance/report/{subject_id}/download")
+def download_report_pdf(
+    subject_id: int,
+    start_date: date = None,
+    end_date: date = None,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+
+    if current_user["role"] != "faculty":
+        raise HTTPException(status_code=403, detail="Faculty only")
+
+    if not start_date or not end_date:
+        today = date.today()
+        start_date = today - timedelta(days=today.weekday())
+        end_date = today
+
+    subject = db.query(Subject).filter(
+        Subject.subject_id == subject_id
+    ).first()
+
+    faculty = db.query(User).filter(
+        User.user_id == current_user["user_id"]
+    ).first()
+
+    report = attendance_report(
+        subject_id,
+        start_date,
+        end_date,
+        current_user,
+        db
+    )
+
+    file_path = f"attendance_report_{subject_id}.pdf"
+    doc = SimpleDocTemplate(file_path)
+    elements = []
+    styles = getSampleStyleSheet()
+
+    elements.append(Paragraph("GVP-MAAA College", styles["Title"]))
+    elements.append(Paragraph("Attendance Report", styles["Heading2"]))
+    elements.append(Spacer(1, 0.3 * inch))
+
+    elements.append(Paragraph(f"Faculty: {faculty.name}", styles["Normal"]))
+    elements.append(Paragraph(f"Subject: {subject.subject_name}", styles["Normal"]))
+    elements.append(Paragraph(f"Period: {start_date} to {end_date}", styles["Normal"]))
+    elements.append(Spacer(1, 0.3 * inch))
+
+    table_data = [["Rank", "Roll", "Name", "Total", "Present", "Absent", "%"]]
+
+    for index, s in enumerate(report["students"], start=1):
+        table_data.append([
+            index,
+            s["roll"],
+            s["name"],
+            s["total_classes"],
+            s["present"],
+            s["absent"],
+            f'{s["percentage"]}%'
+        ])
+
+    table = Table(table_data, repeatRows=1)
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+        ("GRID", (0, 0), (-1, -1), 1, colors.grey),
+    ]))
+
+    elements.append(table)
+    elements.append(Spacer(1, 0.3 * inch))
+    elements.append(Paragraph(f"Class Average: {report['class_average']}%", styles["Heading3"]))
+
+    doc.build(elements)
+
+    return FileResponse(file_path, media_type="application/pdf", filename=file_path)
+
 
 # =========================
 # FACULTY – CLASS ATTENDANCE SUMMARY
@@ -708,13 +1006,37 @@ def get_class_attendance_summary(
         if value == department:
             department_id = key
 
+    subject = db.query(Subject).filter(
+        Subject.subject_id == subject_id
+    ).first()
+
+    department_id = subject.department_id
+
+    # 🔒 Validate assignment first
+    assignment = db.query(FacultySubject).filter(
+        FacultySubject.faculty_id == current_user["user_id"],
+        FacultySubject.subject_id == subject_id,
+        FacultySubject.year == year,
+        FacultySubject.section == section,
+        FacultySubject.is_active == True
+    ).first()
+
+    if not assignment:
+        raise HTTPException(status_code=403, detail="Not assigned")
+
+    subject = db.query(Subject).filter(
+        Subject.subject_id == subject_id
+    ).first()
+
+    department_id = subject.department_id
+
     students = (
         db.query(Student, User)
         .join(User, Student.student_id == User.user_id)
         .filter(
-            User.department_id == department_id,
             Student.year == year,
             Student.section == section,
+            User.department_id == department_id,
             User.is_deleted == False
         )
         .all()
@@ -1932,181 +2254,6 @@ def update_assignment(
 
     return {"message": "Assignment updated successfully"}
 
-
-
-# =========================
-# FACULTY – WEEKLY REPORT 
-# =========================
-@app.get("/faculty/attendance/weekly/{subject_id}")
-def weekly_report(
-    subject_id: int,
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-
-    if current_user["role"] != "faculty":
-        raise HTTPException(status_code=403, detail="Faculty only")
-
-    from datetime import date, timedelta
-
-    today = date.today()
-    start_week = today - timedelta(days=today.weekday())
-
-    # 🔒 Check assignment
-    assignment = db.query(FacultySubject).filter(
-        FacultySubject.faculty_id == current_user["user_id"],
-        FacultySubject.subject_id == subject_id,
-        FacultySubject.is_active == True
-    ).first()
-
-    if not assignment:
-        raise HTTPException(status_code=403, detail="Not assigned to this subject")
-
-    # 🎓 Get students of this class
-    students = (
-        db.query(Student, User)
-        .join(User, Student.student_id == User.user_id)
-        .filter(
-            Student.year == assignment.year,
-            Student.section == assignment.section,
-            User.department_id == assignment.subject.department_id,
-            User.is_deleted == False
-        )
-        .all()
-    )
-
-    student_data = []
-    total_records = 0
-    total_present = 0
-
-    for student, user in students:
-
-        records = db.query(Attendance).filter(
-            Attendance.student_id == student.student_id,
-            Attendance.subject_id == subject_id,
-            Attendance.attendance_date >= start_week
-        ).all()
-
-        total = len(records)
-        present = len([r for r in records if r.status])
-        absent = total - present
-        percent = round((present / total) * 100, 2) if total > 0 else 0
-
-        total_records += total
-        total_present += present
-
-        student_data.append({
-            "student_id": student.student_id,
-            "roll": student.roll_no,
-            "name": user.name,
-            "total_classes": total,
-            "present": present,
-            "absent": absent,
-            "percentage": percent
-        })
-
-    class_average = round(
-        (total_present / total_records) * 100, 2
-    ) if total_records > 0 else 0
-
-    return {
-        "week_start": start_week,
-        "class_average": class_average,
-        "total_records": total_records,
-        "total_present": total_present,
-        "total_absent": total_records - total_present,
-        "students": student_data
-    }
-
-
-# =========================
-# FACULTY – MONTHLY REPORT (UPDATED)
-# =========================
-@app.get("/faculty/attendance/monthly/{subject_id}")
-def monthly_report(
-    subject_id: int,
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-
-    if current_user["role"] != "faculty":
-        raise HTTPException(status_code=403, detail="Faculty only")
-
-    from datetime import date
-
-    today = date.today()
-    month = today.month
-    year = today.year
-
-    # 🔒 Validate faculty assignment
-    assignment = db.query(FacultySubject).filter(
-        FacultySubject.faculty_id == current_user["user_id"],
-        FacultySubject.subject_id == subject_id,
-        FacultySubject.is_active == True
-    ).first()
-
-    if not assignment:
-        raise HTTPException(status_code=403, detail="Not assigned to this subject")
-
-    # 🎓 Get students of this class
-    students = (
-        db.query(Student, User)
-        .join(User, Student.student_id == User.user_id)
-        .filter(
-            Student.year == assignment.year,
-            Student.section == assignment.section,
-            User.department_id == current_user["department_id"],
-            User.is_deleted == False
-        )
-        .all()
-    )
-
-    student_data = []
-    total_records = 0
-    total_present = 0
-
-    for student, user in students:
-
-        records = db.query(Attendance).filter(
-            Attendance.student_id == student.student_id,
-            Attendance.subject_id == subject_id,
-            Attendance.attendance_date.month == month,
-            Attendance.attendance_date.year == year
-        ).all()
-
-        total = len(records)
-        present = len([r for r in records if r.status])
-        absent = total - present
-        percent = round((present / total) * 100, 2) if total > 0 else 0
-
-        total_records += total
-        total_present += present
-
-        student_data.append({
-            "student_id": student.student_id,
-            "roll": student.roll_no,
-            "name": user.name,
-            "total_classes": total,
-            "present": present,
-            "absent": absent,
-            "percentage": percent
-        })
-
-    class_average = round(
-        (total_present / total_records) * 100, 2
-    ) if total_records > 0 else 0
-
-    return {
-        "month": month,
-        "year": year,
-        "class_average": class_average,
-        "total_records": total_records,
-        "total_present": total_present,
-        "total_absent": total_records - total_present,
-        "students": student_data
-    }
-
-
 # =========================
 # FACULTY – DOWNLOAD WEEKLY PDF (RANK + DEFAULTER)
 # =========================
@@ -2139,14 +2286,17 @@ def download_weekly_pdf(
         Subject.subject_id == subject_id
     ).first()
 
-    # 🎓 Get students of this class
+   
+    # Get subject department
+    department_id = subject.department_id
+
     students = (
         db.query(Student, User)
         .join(User, Student.student_id == User.user_id)
         .filter(
             Student.year == assignment.year,
             Student.section == assignment.section,
-            User.department_id == current_user["department_id"],
+            User.department_id == department_id,
             User.is_deleted == False
         )
         .all()
@@ -2164,7 +2314,8 @@ def download_weekly_pdf(
         records = db.query(Attendance).filter(
             Attendance.student_id == student.student_id,
             Attendance.subject_id == subject_id,
-            Attendance.attendance_date >= start_week
+            Attendance.attendance_date >= start_week,
+            Attendance.attendance_date <= today
         ).all()
 
         total = len(records)
@@ -2293,14 +2444,16 @@ def download_monthly_pdf(
         Subject.subject_id == subject_id
     ).first()
 
-    # 🎓 Get students of this class
+    # Get subject department
+    department_id = subject.department_id
+
     students = (
         db.query(Student, User)
         .join(User, Student.student_id == User.user_id)
         .filter(
             Student.year == assignment.year,
             Student.section == assignment.section,
-            User.department_id == current_user["department_id"],
+            User.department_id == department_id,
             User.is_deleted == False
         )
         .all()
@@ -2318,8 +2471,8 @@ def download_monthly_pdf(
         records = db.query(Attendance).filter(
             Attendance.student_id == student.student_id,
             Attendance.subject_id == subject_id,
-            Attendance.attendance_date.month == month,
-            Attendance.attendance_date.year == year
+            extract('month', Attendance.attendance_date) == month,
+            extract('year', Attendance.attendance_date) == year
         ).all()
 
         total = len(records)
@@ -2380,7 +2533,11 @@ def download_monthly_pdf(
         (total_present / total_records) * 100, 2
     ) if total_records > 0 else 0
 
-    table = Table(table_data, repeatRows=1)
+    table = Table(
+        table_data,
+        colWidths=[0.7*inch, 1*inch, 1.5*inch, 0.7*inch, 0.7*inch, 0.7*inch, 0.8*inch],
+        repeatRows=1
+    )
 
     style = TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),

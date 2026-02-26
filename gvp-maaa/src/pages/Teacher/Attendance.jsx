@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import AssessmentIcon from "@mui/icons-material/Assessment";
+import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 
 export default function Attendance() {
   const token = localStorage.getItem("access_token");
@@ -19,12 +20,13 @@ export default function Attendance() {
   return localDate.toISOString().split("T")[0];
  };
  
- const [date, setDate] = useState(getToday());
+  const [date, setDate] = useState(getToday());
   const [showPreview, setShowPreview] = useState(false);
   const [previewData, setPreviewData] = useState(null);
+  const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
-
+  const [alreadyMarked, setAlreadyMarked] = useState(false);
   const [showReport, setShowReport] = useState(false);
   const [reportType, setReportType] = useState("weekly");
   const [reportData, setReportData] = useState(null);
@@ -59,6 +61,7 @@ export default function Attendance() {
     setLoading(true);
 
     try {
+      // 1️⃣ Load students
       const res = await fetch(
         `http://localhost:8000/faculty/attendance/students?year=${subject.year}&section=${subject.section}&subject_id=${subject.subject_id}`,
         {
@@ -69,21 +72,52 @@ export default function Attendance() {
       );
 
       const data = await res.json();
-console.log("STUDENTS RESPONSE:", data);
 
-if (Array.isArray(data)) {
-  setStudents(data);
+      if (!Array.isArray(data)) {
+        setStudents([]);
+        setLoading(false);
+        return;
+      }
 
-  setAttendanceData(
-    data.map((s) => ({
-      student_id: s.id,
-      status: true,
-    }))
-  );
- } else {
-  console.log("Unexpected response:", data);
-  setStudents([]);
- }
+      setStudents(data);
+
+      // 2️⃣ Check if attendance exists
+      const checkRes = await fetch(
+        `http://localhost:8000/faculty/attendance/check?subject_id=${subject.subject_id}&date=${date}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      const checkData = await checkRes.json();
+      setAlreadyMarked(checkData.already_marked);
+
+      // 3️⃣ If already marked → load saved attendance
+      if (checkData.already_marked) {
+        const editRes = await fetch(
+          `http://localhost:8000/faculty/attendance/by-date?subject_id=${subject.subject_id}&date=${date}`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          }
+        );
+
+        const savedData = await editRes.json();
+
+        setAttendanceData(savedData);
+      } else {
+        // 4️⃣ If new → default all present
+        setAttendanceData(
+          data.map((s) => ({
+            student_id: s.id,
+            status: true,
+          }))
+        );
+      }
+
     } catch (err) {
       console.error("Error loading students", err);
     }
@@ -101,6 +135,38 @@ if (Array.isArray(data)) {
     loadStudents(subject);
   };
 
+
+  useEffect(() => {
+    if (selectedSubject) {
+      loadStudents(selectedSubject);
+    }
+  }, [date]);
+
+  /* ================= ATTENDANCE CHECK ================= */
+  useEffect(() => {
+    const checkAttendance = async () => {
+      if (!selectedSubject || !date) return;
+
+      try {
+        const res = await fetch(
+          `http://localhost:8000/faculty/attendance/check?subject_id=${selectedSubject.subject_id}&date=${date}`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          }
+        );
+
+        const data = await res.json();
+        setAlreadyMarked(data.already_marked);
+      } catch (err) {
+        console.error("Error checking attendance", err);
+      }
+    };
+
+    checkAttendance();
+  }, [selectedSubject, date]);
+
   /* ================= TOGGLE ================= */
   const toggleAttendance = (id) => {
     setAttendanceData((prev) =>
@@ -112,43 +178,116 @@ if (Array.isArray(data)) {
     );
   };
 
-  /* ================= SAVE ================= */
-  const confirmSaveAttendance = async () => {
-    await fetch("http://localhost:8000/faculty/attendance", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({
-        subject_id: selectedSubject.subject_id,
-        date: date,
-        year: selectedSubject.year,
-        section: selectedSubject.section,
-        records: attendanceData,
-      }),
+  const handlePreview = () => {
+    if (!date) {
+      alert("Select date");
+      return;
+    }
+
+    if (!selectedSubject) {
+      alert("Select subject");
+      return;
+    }
+
+    if (attendanceData.length === 0) {
+      alert("No students loaded");
+      return;
+    }
+
+    const total = attendanceData.length;
+    const present = attendanceData.filter(s => s.status).length;
+    const absent = total - present;
+
+    setPreviewData({
+      total,
+      present,
+      absent,
     });
 
-    await loadStudents(selectedSubject); // 🔥 refresh
-
-    setShowPreview(false);
-    setSuccess(true);
-    setTimeout(() => setSuccess(false), 3000);
+    setShowPreview(true);
   };
 
-  /* ================= LOAD REPORT ================= */
+
+  /* ================= SAVE ================= */
+  const confirmSaveAttendance = async () => {
+    if (saving) return;
+
+    setSaving(true);
+
+    try {
+      const res = await fetch("http://localhost:8000/faculty/attendance", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          subject_id: selectedSubject.subject_id,
+          date: date,
+          department: selectedSubject.department,  // 🔥 ADD THIS
+          year: selectedSubject.year,
+          section: selectedSubject.section,
+          records: attendanceData,
+        }),
+      });
+
+      // 🔥 THIS IS THE EXACT LOCATION
+      if (!res.ok) {
+        if (res.status === 401) {
+          alert("Session expired. Please login again.");
+          localStorage.removeItem("access_token");
+          window.location.href = "/";
+          return;
+        }
+
+        const error = await res.json();
+        alert(error.detail || "Failed to save attendance");
+        return;
+      }
+
+      await loadStudents(selectedSubject);
+
+      setShowPreview(false);
+      setSuccess(true);
+      setTimeout(() => setSuccess(false), 3000);
+
+    } catch (err) {
+      alert("Server error while saving attendance");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+ 
+  
+ /* ================= LOAD REPORT ================= */
   const loadReport = async (type) => {
     if (!selectedSubject) {
       alert("Select subject first");
       return;
     }
 
-    setReportType(type);
+    const today = new Date();
+    let startDate;
+    let endDate = new Date(); // today copy
 
-    const url =
-      type === "weekly"
-        ? `http://localhost:8000/faculty/attendance/weekly/${selectedSubject.subject_id}`
-        : `http://localhost:8000/faculty/attendance/monthly/${selectedSubject.subject_id}`;
+    if (type === "weekly") {
+      const todayCopy = new Date();
+      const day = todayCopy.getDay(); // 0=Sun,1=Mon
+      const mondayOffset = day === 0 ? -6 : 1 - day;
+
+      startDate = new Date(todayCopy);
+      startDate.setDate(todayCopy.getDate() + mondayOffset);
+    }
+
+    if (type === "monthly") {
+      startDate = new Date(today.getFullYear(), today.getMonth(), 1);
+    }
+
+    const formatDate = (d) =>
+      d.toISOString().split("T")[0];
+
+    const url = `http://localhost:8000/faculty/attendance/report/${selectedSubject.subject_id}?start_date=${formatDate(startDate)}&end_date=${formatDate(endDate)}`;
 
     const res = await fetch(url, {
       headers: {
@@ -156,19 +295,71 @@ if (Array.isArray(data)) {
       },
     });
 
+    if (!res.ok) {
+      alert("Failed to load report");
+      return;
+    }
+
     const data = await res.json();
+
+    setReportType(type);
     setReportData(data);
     setShowReport(true);
   };
 
   /* ================= DOWNLOAD PDF ================= */
-  const downloadReport = () => {
-    const url =
-      reportType === "weekly"
-        ? `http://localhost:8000/faculty/attendance/weekly/${selectedSubject.subject_id}/download`
-        : `http://localhost:8000/faculty/attendance/monthly/${selectedSubject.subject_id}/download`;
+  const downloadReport = async () => {
+    const today = new Date();
+    let startDate;
+    let endDate = new Date();
 
-    window.open(url, "_blank");
+    if (reportType === "weekly") {
+      const day = today.getDay();
+      const diff = today.getDate() - day + (day === 0 ? -6 : 1);
+      startDate = new Date(today.getFullYear(), today.getMonth(), diff);
+    }
+
+    if (reportType === "monthly") {
+      startDate = new Date(today.getFullYear(), today.getMonth(), 1);
+    }
+
+    const formatDate = (d) =>
+      d.toISOString().split("T")[0];
+
+    const url = `http://localhost:8000/faculty/attendance/report/${selectedSubject.subject_id}/download?start_date=${formatDate(startDate)}&end_date=${formatDate(endDate)}`;
+
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) {
+      alert("Failed to download report");
+      return;
+    }
+
+    const blob = await response.blob();
+    const fileURL = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = fileURL;
+    link.download = "attendance_report.pdf";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  };
+
+
+  const formatDate = (dateStr) => {
+    if (!dateStr) return "";
+
+    const d = new Date(dateStr);
+    return d.toLocaleDateString("en-IN", {
+      weekday: "short",
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    });
   };
 
   return (
@@ -228,6 +419,28 @@ if (Array.isArray(data)) {
       {/* ================= STUDENT LIST ================= */}
       <div className="glass rounded-2xl p-6">
 
+        {/* 🔥 ADD THIS EXACTLY HERE */}
+        {alreadyMarked && (
+          <div className="mb-4 flex items-start gap-3 p-4 rounded-2xl 
+                          bg-gradient-to-r from-amber-50 to-yellow-50 
+                          border border-yellow-300 
+                          text-yellow-900 text-sm 
+                          animate-pulse">
+
+            <InfoOutlinedIcon className="text-yellow-600 mt-0.5" />
+
+            <div>
+              <p className="font-semibold">
+                Attendance Already Recorded
+              </p>
+              <p className="text-xs mt-1 text-yellow-800">
+                You have already marked attendance for this date. 
+                You can update it if required.
+              </p>
+            </div>
+
+          </div>
+        )}
         {loading ? (
           <p>Loading...</p>
         ) : students.length === 0 ? (
@@ -247,16 +460,39 @@ if (Array.isArray(data)) {
                     {s.roll} – {s.name}
                   </p>
 
-                  <div className="flex gap-2 mt-2 items-center">
-                    {s.last_5.map((item, i) => (
-                      <span
-                        key={i}
-                        title={item.date}
-                        className={`w-4 h-4 rounded-full ${
-                          item.status ? "bg-green-500" : "bg-red-500"
-                        }`}
-                      />
-                    ))}
+                  <div className="mt-2">
+                    <p className="text-[10px] uppercase tracking-wide text-gray-400 mb-1">
+                      Last 5 Classes
+                    </p>
+
+                    {s.last_5 && s.last_5.length === 0 ? (
+                      <p className="text-xs text-gray-400">No recent records</p>
+                    ) : (
+                      <div className="flex gap-2 items-center">
+                        {s.last_5.map((item, i) => (
+                          <div key={i} className="group relative">
+                            <span
+                              className={`block w-4 h-4 rounded-full ${
+                                item.status === true
+                                  ? "bg-green-500"
+                                  : item.status === false
+                                  ? "bg-red-500"
+                                  : "bg-gray-300"
+                              }`}
+                            />
+
+                            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 
+                                            opacity-0 group-hover:opacity-100 
+                                            transition-all duration-200
+                                            bg-gray-900 text-white text-xs px-2 py-1 
+                                            rounded-md whitespace-nowrap shadow-lg z-20">
+                              {formatDate(item.date)} <br />
+                              {item.status ? "Present" : "Absent"}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -285,10 +521,10 @@ if (Array.isArray(data)) {
             ))}
 
             <button
-              onClick={confirmSaveAttendance}
+              onClick={handlePreview}
               className="w-full mt-4 bg-green-600 text-white py-3 rounded-xl"
             >
-              Save Attendance
+              {alreadyMarked ? "Update Attendance" : "Save Attendance"}
             </button>
           </div>
         )}
@@ -306,6 +542,9 @@ if (Array.isArray(data)) {
             </h3>
 
             <div className="space-y-2 text-sm">
+              <p className="text-xs text-gray-500">
+                Period: {formatDate(reportData.start_date)} – {formatDate(reportData.end_date)}
+              </p>
               <p>Total Classes: {reportData.total_records}</p>
               <p>Present: {reportData.total_present}</p>
               <p>Absent: {reportData.total_absent}</p>
