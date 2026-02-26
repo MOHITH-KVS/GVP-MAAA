@@ -865,6 +865,13 @@ def attendance_report(
     student_data = []
     total_records = 0
     total_present = 0
+    total_absent = 0
+
+    unique_classes = db.query(Attendance.attendance_date).filter(
+        Attendance.subject_id == subject_id,
+        Attendance.attendance_date >= start_date,
+        Attendance.attendance_date <= end_date
+    ).distinct().count()
 
     for student, user in students:
 
@@ -875,13 +882,14 @@ def attendance_report(
             Attendance.attendance_date <= end_date
         ).all()
 
-        total = len(records)
+        total = unique_classes
         present = len([r for r in records if r.status])
         absent = total - present
         percent = round((present / total) * 100, 2) if total > 0 else 0
 
         total_records += total
         total_present += present
+        total_absent += absent
 
         student_data.append({
             "roll": student.roll_no,
@@ -894,19 +902,31 @@ def attendance_report(
 
     student_data.sort(key=lambda x: x["percentage"], reverse=True)
 
+    
+    total_entries = total_present + total_absent
+
     class_average = round(
-        (total_present / total_records) * 100, 2
-    ) if total_records > 0 else 0
+        (total_present / total_entries) * 100, 2
+    ) if total_entries > 0 else 0
+
+    present_percentage = round(
+        (total_present / total_entries) * 100, 2
+    ) if total_entries > 0 else 0
+
+    absent_percentage = round(
+        (total_absent / total_entries) * 100, 2
+    ) if total_entries > 0 else 0
+
+    class_average = present_percentage
+    
 
     return {
-        "start_date": start_date,
-        "end_date": end_date,
-        "class_average": class_average,
-        "total_records": total_records,
-        "total_present": total_present,
-        "total_absent": total_records - total_present,
-        "students": student_data
-    }
+    "start_date": start_date,
+    "end_date": end_date,
+    "total_records": unique_classes,
+    "present_percentage": present_percentage,
+    "absent_percentage": absent_percentage
+ }
 
 
 # =========================

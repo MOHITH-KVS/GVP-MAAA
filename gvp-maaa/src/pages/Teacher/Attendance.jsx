@@ -546,9 +546,8 @@ export default function Attendance() {
                 Period: {formatDate(reportData.start_date)} – {formatDate(reportData.end_date)}
               </p>
               <p>Total Classes: {reportData.total_records}</p>
-              <p>Present: {reportData.total_present}</p>
-              <p>Absent: {reportData.total_absent}</p>
-              <p>Class Average: {reportData.class_average}%</p>
+              <p>Present: {reportData.present_percentage}%</p>
+              <p>Absent: {reportData.absent_percentage}%</p>
             </div>
 
             <button
