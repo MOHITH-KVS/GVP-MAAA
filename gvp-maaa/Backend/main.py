@@ -519,6 +519,8 @@ def mark_attendance(
         Subject.subject_id == payload.subject_id
     ).first()
 
+    
+
     faculty_user = db.query(User).filter(
         User.user_id == current_user["user_id"]
     ).first()
@@ -2286,6 +2288,12 @@ def download_weekly_pdf(
         Subject.subject_id == subject_id
     ).first()
 
+    unique_classes = db.query(Attendance.attendance_date).filter(
+        Attendance.subject_id == subject_id,
+        Attendance.attendance_date >= start_week,
+        Attendance.attendance_date <= today
+    ).distinct().count()
+
    
     # Get subject department
     department_id = subject.department_id
@@ -2354,6 +2362,8 @@ def download_weekly_pdf(
 
     elements.append(Paragraph(f"Subject: {subject.subject_name}", styles["Normal"]))
     elements.append(Paragraph(f"Week Starting: {start_week}", styles["Normal"]))
+    elements.append(Paragraph(f"Total Class Sessions: {unique_classes}", styles["Normal"]))
+    elements.append(Paragraph(f"Total Students: {len(students)}", styles["Normal"]))
     elements.append(Spacer(1, 0.2 * inch))
 
     # Add Rank column
@@ -2372,9 +2382,12 @@ def download_weekly_pdf(
             f'{row["percentage"]}%'
         ])
 
+    
+    total_students = len(students)
+
     class_average = round(
-        (total_present / total_records) * 100, 2
-    ) if total_records > 0 else 0
+        (total_present / (unique_classes * total_students)) * 100, 2
+    ) if unique_classes > 0 and total_students > 0 else 0
 
     table = Table(table_data, repeatRows=1)
 
@@ -2444,6 +2457,12 @@ def download_monthly_pdf(
         Subject.subject_id == subject_id
     ).first()
 
+    unique_classes = db.query(Attendance.attendance_date).filter(
+        Attendance.subject_id == subject_id,
+        extract('month', Attendance.attendance_date) == month,
+        extract('year', Attendance.attendance_date) == year
+    ).distinct().count()
+
     # Get subject department
     department_id = subject.department_id
 
@@ -2463,7 +2482,6 @@ def download_monthly_pdf(
     # Collect student performance
     # -----------------------------
     student_rows = []
-    total_records = 0
     total_present = 0
 
     for student, user in students:
@@ -2480,7 +2498,6 @@ def download_monthly_pdf(
         absent = total - present
         percent = round((present / total) * 100, 2) if total > 0 else 0
 
-        total_records += total
         total_present += present
 
         student_rows.append({
@@ -2529,9 +2546,11 @@ def download_monthly_pdf(
             f'{row["percentage"]}%'
         ])
 
+    total_students = len(students)
+
     class_average = round(
-        (total_present / total_records) * 100, 2
-    ) if total_records > 0 else 0
+        (total_present / (unique_classes * total_students)) * 100, 2
+    ) if unique_classes > 0 and total_students > 0 else 0
 
     table = Table(
         table_data,

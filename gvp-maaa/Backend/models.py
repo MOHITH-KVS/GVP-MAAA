@@ -1,6 +1,6 @@
 from datetime import datetime
 from sqlite3 import Date
-from sqlalchemy import Column, Integer, String, Numeric, ForeignKey, Text, Boolean, DateTime, Date
+from sqlalchemy import Column, Integer, String, Numeric, ForeignKey, Text, Boolean, DateTime, Date, UniqueConstraint
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 
@@ -219,6 +219,15 @@ class Subject(Base):
 class Attendance(Base):
     __tablename__ = "attendance"
 
+    __table_args__ = (
+        UniqueConstraint(
+            "student_id",
+            "subject_id",
+            "attendance_date",
+            name="unique_attendance_per_day"
+        ),
+    )
+
     attendance_id = Column(Integer, primary_key=True, index=True)
 
     student_id = Column(Integer, ForeignKey("students.student_id"), nullable=False)
@@ -229,7 +238,6 @@ class Attendance(Base):
 
     status = Column(Boolean, nullable=False)
 
-    # optional relationships (recommended)
     student = relationship("Student")
     subject = relationship("Subject")
     faculty = relationship("Faculty")
