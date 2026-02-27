@@ -935,7 +935,7 @@ def attendance_report(
 
 
 # =========================
-# FACULTY – DOWNLOAD REPORT PDF
+# FACULTY – DOWNLOAD REPORT PDF (PRO VERSION)
 # =========================
 @app.get("/faculty/attendance/report/{subject_id}/download")
 def download_report_pdf(
@@ -964,7 +964,6 @@ def download_report_pdf(
         User.user_id == current_user["user_id"]
     ).first()
 
-    # ✅ Get assignment details
     assignment = db.query(FacultySubject).filter(
         FacultySubject.faculty_id == current_user["user_id"],
         FacultySubject.subject_id == subject_id,
@@ -974,14 +973,12 @@ def download_report_pdf(
     if not assignment:
         raise HTTPException(status_code=403, detail="Not assigned")
 
-    # ✅ Count unique class dates
     unique_classes = db.query(Attendance.attendance_date).filter(
         Attendance.subject_id == subject_id,
         Attendance.attendance_date >= start_date,
         Attendance.attendance_date <= end_date
     ).distinct().count()
 
-    # ✅ Get students
     students = (
         db.query(Student, User)
         .join(User, Student.student_id == User.user_id)
@@ -1024,40 +1021,6 @@ def download_report_pdf(
             "percentage": percent
         })
 
-    # ✅ Sort by percentage descending
-    student_rows.sort(key=lambda x: x["percentage"], reverse=True)
-
-    # ✅ Calculate class average
-    total_entries = total_present + total_absent
-    class_average = round(
-        (total_present / total_entries) * 100, 2
-    ) if total_entries > 0 else 0
-
-   # ================= PDF GENERATION =================
-
-    file_path = f"attendance_report_{subject_id}.pdf"
-    doc = SimpleDocTemplate(file_path, pagesize=A4)
-    elements = []
-    styles = getSampleStyleSheet()
-
-    # ================= HEADER WITH LOGO =================
-    logo = Image("assests\gvp logo.jpg", width=1.2*inch, height=1.2*inch)
-
-    header_table = Table([[logo, Paragraph("<b>GAYATRI VIDYA PARISHAD</b><br/>Attendance Performance Report", styles["Title"])]])
-    header_table.setStyle(TableStyle([
-        ("VALIGN", (0,0), (-1,-1), "MIDDLE")
-    ]))
-
-    elements.append(header_table)
-    elements.append(Spacer(1, 0.3 * inch))
-
-    elements.append(Paragraph(f"<b>Faculty:</b> {faculty.name}", styles["Normal"]))
-    elements.append(Paragraph(f"<b>Subject:</b> {subject.subject_name}", styles["Normal"]))
-    elements.append(Paragraph(f"<b>Period:</b> {start_date} to {end_date}", styles["Normal"]))
-    elements.append(Paragraph(f"<b>Total Classes:</b> {unique_classes}", styles["Normal"]))
-    elements.append(Spacer(1, 0.3 * inch))
-
-    # ================= RANK CALCULATION =================
     student_rows.sort(key=lambda x: x["percentage"], reverse=True)
 
     rank = 1
@@ -1066,17 +1029,105 @@ def download_report_pdf(
             rank = i + 1
         s["rank"] = rank
 
-    highest = student_rows[0]
-    lowest = student_rows[-1]
+    highest = student_rows[0] if student_rows else None
+    lowest = student_rows[-1] if student_rows else None
 
-    elements.append(Paragraph(f"<b>Highest Attendance:</b> {highest['name']} ({highest['percentage']}%)", styles["Normal"]))
-    elements.append(Paragraph(f"<b>Lowest Attendance:</b> {lowest['name']} ({lowest['percentage']}%)", styles["Normal"]))
-    elements.append(Spacer(1, 0.3 * inch))
+    total_entries = total_present + total_absent
+    class_average = round(
+        (total_present / total_entries) * 100, 2
+    ) if total_entries > 0 else 0
 
-    # ================= SORT BY ROLL =================
-    student_rows.sort(key=lambda x: x["roll"])
+    # ================= PDF BUILD =================
 
-    # ================= TABLE =================
+    file_path = f"attendance_report_{subject_id}.pdf"
+    doc = SimpleDocTemplate(
+        file_path,
+        pagesize=A4,
+        rightMargin=40,
+        leftMargin=40,
+        topMargin=60,
+        bottomMargin=40
+    )
+
+    elements = []
+    styles = getSampleStyleSheet()
+
+    # ===== HEADER =====
+
+    logo = Image("assests/gvp logo.jpg", width=0.9*inch, height=0.9*inch)
+
+    college_style = ParagraphStyle(
+        'CollegeStyle',
+        parent=styles['Normal'],
+        fontSize=13,
+        leading=16
+    )
+
+    header = Table([[
+        logo,
+        Paragraph(
+            "<b>GAYATRI VIDYA PARISHAD COLLEGE FOR DEGREE AND PG COURSES (A)</b>",
+            college_style
+        )
+    ]], colWidths=[1*inch, 4.8*inch])
+
+    header.setStyle(TableStyle([
+        ("VALIGN", (0,0), (-1,-1), "MIDDLE")
+    ]))
+
+    elements.append(header)
+    elements.append(Spacer(1, 15))
+
+    title_style = ParagraphStyle(
+        'CenteredTitle',
+        parent=styles['Heading2'],
+        alignment=1,  # CENTER
+        textColor=colors.HexColor("#1F3A8A"),
+        spaceAfter=10
+    )
+
+    elements.append(Paragraph(
+        "<b>ATTENDANCE PERFORMANCE REPORT</b>",
+        title_style
+    ))
+
+    elements.append(Spacer(1, 20))
+
+    # ===== SUMMARY BOX (ALL IMPORTANT DATA AT TOP) =====
+
+    summary_data = [
+        ["Faculty:", faculty.name],
+        ["Subject:", subject.subject_name],
+        ["Period:", f"{start_date} to {end_date}"],
+        ["Total Classes:", unique_classes],
+        ["Top Attendance:", f"{highest['name']} ({highest['percentage']}%)" if highest else "-"],
+        ["Low Attendance:", f"{lowest['name']} ({lowest['percentage']}%)" if lowest else "-"],
+        ["Class Average:", f"{class_average}%"]
+    ]
+
+    summary_table = Table(summary_data, colWidths=[2*inch, 3.8*inch])
+
+    summary_table.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,-1), colors.whitesmoke),
+        ("BOX", (0,0), (-1,-1), 1, colors.grey),
+        ("INNERGRID", (0,0), (-1,-1), 0.25, colors.grey),
+        ("FONTNAME", (0,0), (0,-1), "Helvetica-Bold"),  # Bold left column
+        ("VALIGN", (0,0), (-1,-1), "MIDDLE")
+    ]))
+    elements.append(summary_table)
+    elements.append(Spacer(1, 25))
+
+    # ===== STUDENT TABLE =====
+
+    # Sort by percentage DESC, then roll ASC
+    student_rows.sort(
+        key=lambda x: (-x["percentage"], x["roll"])
+    )
+
+    # Assign rank properly
+    for index, s in enumerate(student_rows, start=1):
+        s["rank"] = index
+
     table_data = [["Rank", "Roll No", "Name", "Total", "Present", "Absent", "%"]]
 
     for s in student_rows:
@@ -1090,65 +1141,56 @@ def download_report_pdf(
             f"{s['percentage']}%"
         ])
 
-    table = Table(table_data, repeatRows=1)
+    table = Table(
+        table_data,
+        repeatRows=1,
+        colWidths=[0.6*inch, 1.2*inch, 1.8*inch, 0.7*inch, 0.8*inch, 0.8*inch, 0.7*inch]
+    )
 
-    style = TableStyle([
-        ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#DDDDDD")),
-        ("GRID", (0,0), (-1,-1), 0.5, colors.grey),
-        ("ALIGN", (3,1), (-1,-1), "CENTER"),
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#1F3A8A")),
+        ("TEXTCOLOR", (0,0), (-1,0), colors.white),
+        ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+        ("ALIGN", (0,0), (-1,-1), "CENTER"),
         ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
-    ])
+        ("GRID", (0,0), (-1,-1), 0.25, colors.grey)
+    ]))
 
-    # ================= COLOR RULES =================
-    for i, s in enumerate(student_rows, start=1):
-        if s["percentage"] >= 75:
-            bg = colors.HexColor("#D4EDDA")  # Green
-        elif s["percentage"] >= 60:
-            bg = colors.HexColor("#FFF3CD")  # Yellow
-        else:
-            bg = colors.HexColor("#F8D7DA")  # Red
-
-        style.add("BACKGROUND", (0,i), (-1,i), bg)
-
-    table.setStyle(style)
     elements.append(table)
-    elements.append(Spacer(1, 0.4 * inch))
 
-    # ================= CLASS AVERAGE =================
-    elements.append(Paragraph(f"<b>Class Average:</b> {class_average}%", styles["Heading3"]))
-    elements.append(Spacer(1, 0.3 * inch))
+    # ===== WATERMARK + BORDER + FOOTER =====
 
-    # ================= LEGEND =================
-    elements.append(Paragraph("<b>Legend:</b>", styles["Normal"]))
-    elements.append(Paragraph("Green  → ≥ 75%", styles["Normal"]))
-    elements.append(Paragraph("Yellow → 60% – 74.99%", styles["Normal"]))
-    elements.append(Paragraph("Red    → < 60%", styles["Normal"]))
-    elements.append(Spacer(1, 0.5 * inch))
+    def add_layout(canvas_obj, doc_obj):
 
-    # ================= WATERMARK + PAGE NUMBER =================
-    def add_watermark_and_footer(canvas_obj, doc_obj):
+        # Watermark (lighter)
         canvas_obj.saveState()
-
-        # Watermark
-        canvas_obj.setFont("Helvetica-Bold", 60)
-        canvas_obj.setFillColorRGB(0.9, 0.9, 0.9)
-        canvas_obj.translate(300, 400)
+        canvas_obj.setFont("Helvetica-Bold", 80)
+        canvas_obj.setFillColorRGB(0.96, 0.96, 0.96)
+        canvas_obj.translate(A4[0]/2, A4[1]/2)
         canvas_obj.rotate(45)
         canvas_obj.drawCentredString(0, 0, "GVP-MAAA")
         canvas_obj.restoreState()
 
-        # Footer
+        # Footer (move higher)
         canvas_obj.setFont("Helvetica", 9)
-        canvas_obj.drawString(40, 20, f"Generated on: {datetime.now().strftime('%d-%m-%Y %H:%M')}")
-        canvas_obj.drawRightString(550, 20, f"Page {doc_obj.page}")
+        canvas_obj.drawString(40, 35,
+            f"Generated on: {datetime.now().strftime('%d-%m-%Y %H:%M')}"
+        )
+        canvas_obj.drawRightString(A4[0]-40, 35,
+            f"Page {doc_obj.page}"
+        )
 
-    doc.build(elements, onFirstPage=add_watermark_and_footer, onLaterPages=add_watermark_and_footer)
+        # Border
+        canvas_obj.setLineWidth(1)
+        canvas_obj.rect(25, 25, A4[0]-50, A4[1]-50)
+
+    doc.build(elements, onFirstPage=add_layout, onLaterPages=add_layout)
+
     return FileResponse(
         file_path,
         media_type="application/pdf",
         filename=file_path
     )
-
 
 # =========================
 # FACULTY – CLASS ATTENDANCE SUMMARY
@@ -1231,6 +1273,81 @@ def get_class_attendance_summary(
         })
 
     return results
+
+
+# =========================
+# STUDENT – GET ATTENDANCE (SEMESTER BASED)
+# =========================
+@app.get("/student/attendance")
+def get_student_attendance(
+    semester: int,
+    subject_id: int = None,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+
+    if current_user["role"] != "student":
+        raise HTTPException(status_code=403, detail="Student only")
+
+    # Get student record
+    student = db.query(Student).filter(
+        Student.student_id == current_user["user_id"]
+    ).first()
+
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    # Get subjects for this semester & department
+    subjects = db.query(Subject).filter(
+        Subject.semester == semester,
+        Subject.department_id == current_user["department_id"]
+    ).all()
+
+    result = []
+
+    for subject in subjects:
+
+        # Filter by subject if selected
+        if subject_id and subject.subject_id != subject_id:
+            continue
+
+        total = db.query(Attendance).filter(
+            Attendance.student_id == student.student_id,
+            Attendance.subject_id == subject.subject_id
+        ).count()
+
+        present = db.query(Attendance).filter(
+            Attendance.student_id == student.student_id,
+            Attendance.subject_id == subject.subject_id,
+            Attendance.status == True
+        ).count()
+
+        percentage = round((present / total) * 100, 2) if total > 0 else 0
+
+        # Last 5 classes
+        last_5_records = db.query(Attendance).filter(
+            Attendance.student_id == student.student_id,
+            Attendance.subject_id == subject.subject_id
+        ).order_by(Attendance.attendance_date.desc()).limit(5).all()
+
+        last_5 = [
+            {
+                "date": r.attendance_date,
+                "status": r.status
+            }
+            for r in last_5_records
+        ]
+
+        result.append({
+            "subject_id": subject.subject_id,
+            "subject_name": subject.subject_name,
+            "conducted": total,
+            "attended": present,
+            "percentage": percentage,
+            "last_5": last_5
+        })
+
+    return result
 
 
 
