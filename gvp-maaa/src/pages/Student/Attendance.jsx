@@ -1,150 +1,89 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import TrendingUpIcon from "@mui/icons-material/TrendingUp";
 import TrendingDownIcon from "@mui/icons-material/TrendingDown";
 
-/* ================== SEMESTER-WISE DATA ================== */
-const attendanceDB = {
-  Sem1: {
-    subjects: {
-      Maths: { conducted: 42, attended: 30, lastMonth: 68 },
-      Physics: { conducted: 40, attended: 32, lastMonth: 72 },
-    },
-  },
-  Sem3: {
-    subjects: {
-      DBMS: { conducted: 40, attended: 30, lastMonth: 72 },
-      OS: { conducted: 38, attended: 24, lastMonth: 66 },
-      CN: { conducted: 36, attended: 28, lastMonth: 72 },
-    },
-  },
-  Sem6: {
-    subjects: {
-      AI: { conducted: 44, attended: 36, lastMonth: 78 },
-      ML: { conducted: 42, attended: 35, lastMonth: 75 },
-      SE: { conducted: 40, attended: 32, lastMonth: 74 },
-    },
-  },
-};
-
-/* ================== HELPERS ================== */
-const calcPercent = (a, c) => Math.round((a / c) * 100);
-
 export default function Attendance() {
-  /* ===== STATE ===== */
-  const [activeSem, setActiveSem] = useState("Sem3");
+
+  const token = localStorage.getItem("access_token");
+
+  const [activeSem, setActiveSem] = useState(3);
   const [activeSub, setActiveSub] = useState("ALL");
 
-  const semesterData = attendanceDB[activeSem].subjects;
-  const subjects = Object.keys(semesterData);
+  const [data, setData] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-  /* ===== AGGREGATE (ALL) ===== */
-  const totalConducted = subjects.reduce(
-    (s, sub) => s + semesterData[sub].conducted,
-    0
-  );
-  const totalAttended = subjects.reduce(
-    (s, sub) => s + semesterData[sub].attended,
-    0
-  );
-  const avgLastMonth = Math.round(
-    subjects.reduce((s, sub) => s + semesterData[sub].lastMonth, 0) /
-      subjects.length
-  );
+  // ================= FETCH DATA =================
+  useEffect(() => {
+    fetch(`http://localhost:8000/student/attendance?semester=${activeSem}`, {
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    })
+      .then(res => res.json())
+      .then(res => {
+        setData(res);
+        setLoading(false);
+      });
+  }, [activeSem]);
 
-  const fullData =
+  if (loading) return <div>Loading...</div>;
+
+  const subjects = data.map(d => d.subject_name);
+
+  const filtered =
     activeSub === "ALL"
-      ? {
-          conducted: totalConducted,
-          attended: totalAttended,
-          lastMonth: avgLastMonth,
-        }
-      : semesterData[activeSub];
+      ? data
+      : data.filter(d => d.subject_name === activeSub);
 
-  const percent = calcPercent(
-    fullData.attended,
-    fullData.conducted
-  );
-  const diff = percent - fullData.lastMonth;
-
-  /* ===== STATUS COLOR ===== */
-  let shade = "bg-green-50";
-  let status = "Safe Zone";
-  if (percent < 60) {
-    shade = "bg-red-50";
-    status = "Critical Attendance";
-  } else if (percent <= 75) {
-    shade = "bg-yellow-50";
-    status = "Attendance at Risk";
-  }
-
-  /* ===== RECORDS ===== */
-  const strongestSubject = subjects.reduce((a, b) =>
-    calcPercent(
-      semesterData[a].attended,
-      semesterData[a].conducted
-    ) >
-    calcPercent(
-      semesterData[b].attended,
-      semesterData[b].conducted
-    )
-      ? a
-      : b
+  const totalConducted = filtered.reduce(
+    (sum, s) => sum + s.conducted,
+    0
   );
 
-  const mostImprovedSubject = subjects.reduce((a, b) => {
-    const da =
-      calcPercent(
-        semesterData[a].attended,
-        semesterData[a].conducted
-      ) - semesterData[a].lastMonth;
-    const db =
-      calcPercent(
-        semesterData[b].attended,
-        semesterData[b].conducted
-      ) - semesterData[b].lastMonth;
-    return da > db ? a : b;
-  });
+  const totalAttended = filtered.reduce(
+    (sum, s) => sum + s.attended,
+    0
+  );
+
+  const percent =
+    totalConducted > 0
+      ? Math.round((totalAttended / totalConducted) * 100)
+      : 0;
 
   return (
     <div className="space-y-6">
 
-      {/* ================= SEMESTER SELECTOR ================= */}
+      {/* ===== SEMESTER SELECTOR ===== */}
       <div className="flex gap-3">
-        {Object.keys(attendanceDB).map((sem) => (
+        {[1, 2, 3, 4, 5, 6].map((sem) => (
           <button
             key={sem}
             onClick={() => {
               setActiveSem(sem);
               setActiveSub("ALL");
             }}
-            className={`px-4 py-2 rounded-xl transition
-              ${
-                activeSem === sem
-                  ? "bg-indigo-600 text-white"
-                  : "bg-white/70 hover:bg-white"
-              }`}
+            className={`px-4 py-2 rounded-xl ${
+              activeSem === sem
+                ? "bg-indigo-600 text-white"
+                : "bg-white"
+            }`}
           >
-            {sem}
+            Sem{sem}
           </button>
         ))}
       </div>
 
       <div className="flex gap-6">
 
-        {/* ================= SUBJECT SELECTOR ================= */}
-        <div className="w-48 glass rounded-2xl p-4 space-y-3">
+        {/* ===== SUBJECT SELECTOR ===== */}
+        <div className="w-48 bg-white rounded-2xl p-4 space-y-3">
           <p className="text-sm font-medium text-gray-500">
             Subjects
           </p>
 
           <button
             onClick={() => setActiveSub("ALL")}
-            className={`w-full px-4 py-2 rounded-xl text-left transition
-              ${
-                activeSub === "ALL"
-                  ? "bg-indigo-500/10 text-indigo-700 font-medium"
-                  : "hover:bg-white/60"
-              }`}
+            className="block w-full text-left"
           >
             ALL
           </button>
@@ -153,90 +92,66 @@ export default function Attendance() {
             <button
               key={sub}
               onClick={() => setActiveSub(sub)}
-              className={`w-full px-4 py-2 rounded-xl text-left transition
-                ${
-                  activeSub === sub
-                    ? "bg-indigo-500/10 text-indigo-700 font-medium"
-                    : "hover:bg-white/60"
-                }`}
+              className="block w-full text-left"
             >
               {sub}
             </button>
           ))}
         </div>
 
-        {/* ================= MAIN CONTENT ================= */}
-        <div className={`flex-1 rounded-2xl p-8 space-y-8 ${shade}`}>
+        {/* ===== MAIN CONTENT ===== */}
+        <div className="flex-1 bg-white rounded-2xl p-8 space-y-6">
 
-          {/* ===== SUMMARY ===== */}
-          <div className="glass rounded-2xl p-6 flex justify-between items-center">
+          <div className="flex justify-between items-center">
             <div>
               <h2 className="text-xl font-semibold">
-                {activeSub === "ALL"
-                  ? `Overall Attendance (${activeSem})`
-                  : `${activeSub} Attendance`}
+                Overall Attendance
               </h2>
-              <p className="text-gray-500">{status}</p>
-              <p className="text-sm text-gray-500 mt-1">
-                Conducted: {fullData.conducted} | Attended:{" "}
-                {fullData.attended}
+              <p className="text-gray-500">
+                Conducted: {totalConducted} | Attended: {totalAttended}
               </p>
             </div>
 
-            <div className="text-right">
-              <div className="flex items-center gap-2 justify-end">
-                <span className="text-4xl font-bold text-indigo-600">
-                  {percent}%
+            <div className="text-4xl font-bold text-indigo-600">
+              {percent}%
+            </div>
+          </div>
+
+          {/* ===== SUBJECT DETAILS ===== */}
+          {filtered.map((subject) => (
+            <div key={subject.subject_id} className="border p-4 rounded-xl">
+
+              <div className="flex justify-between">
+                <h3 className="font-semibold">
+                  {subject.subject_name}
+                </h3>
+                <span className="font-bold">
+                  {subject.percentage}%
                 </span>
-                {diff >= 0 ? (
-                  <TrendingUpIcon className="text-green-600" />
-                ) : (
-                  <TrendingDownIcon className="text-red-600" />
-                )}
               </div>
+
               <p className="text-sm text-gray-500">
-                {diff >= 0 ? `+${diff}%` : `${diff}%`} from last month
+                Conducted: {subject.conducted} | Attended: {subject.attended}
               </p>
+
+              {/* LAST 5 CLASSES */}
+              <div className="flex gap-2 mt-3">
+                {subject.last_5.map((rec, index) => (
+                  <div
+                    key={index}
+                    className={`w-4 h-4 rounded-full ${
+                      rec.status === true
+                        ? "bg-green-500"
+                        : rec.status === false
+                        ? "bg-red-500"
+                        : "bg-gray-300"
+                    }`}
+                  />
+                ))}
+              </div>
+
             </div>
-          </div>
-
-          {/* ===== ANALYTICS (AS PER BLUEPRINT) ===== */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="glass rounded-2xl p-6 text-center text-gray-400">
-              Attendance Trend (AnalyticsAgent – Line Chart)
-            </div>
-            <div className="glass rounded-2xl p-6 text-center text-gray-400">
-              Subject Comparison (AnalyticsAgent – Bar Chart)
-            </div>
-          </div>
-
-          {/* ===== SEMESTER TRACKING CHART ===== */}
-          <div className="glass rounded-2xl p-6 text-center text-gray-400">
-            Semester-wise Attendance Tracking (Sem 1 → Sem 6)
-          </div>
-
-          {/* ===== RECORDS ===== */}
-          <div className="glass rounded-2xl p-6">
-            <h3 className="text-lg font-semibold mb-3">
-              Records & Insights
-            </h3>
-            <ul className="text-sm text-gray-600 space-y-2">
-              <li>🏆 Strongest Subject: {strongestSubject}</li>
-              <li>📈 Most Improved Subject: {mostImprovedSubject}</li>
-            </ul>
-          </div>
-
-          {/* ===== FEEDBACK ===== */}
-          <div className="glass rounded-2xl p-6">
-            <h3 className="text-lg font-semibold mb-2">
-              Feedback & Suggestions
-            </h3>
-            <p className="text-sm text-gray-600">
-              {percent < 75
-                ? "Maintain consistent attendance to avoid academic risk."
-                : "Good attendance consistency. Keep it up."}
-            </p>
-          </div>
+          ))}
 
         </div>
       </div>
