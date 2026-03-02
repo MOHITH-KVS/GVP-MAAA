@@ -4,9 +4,21 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text,extract
 from security import hash_password, verify_password
 from mail import send_reset_email
-from schemas import  AlertCreate, AssignSubjectRequest, AttendanceCreate, ResetPasswordRequest, StudentPromotionRequest, TeacherAdminUpdate, TeacherDeleteRequest,TimetableCreate, TimetableResponse,StudentDeleteRequest,SubjectCreate
-from datetime import datetime
-from models import Alert, AlertRecipient, StudentAlert, Timetable, Subject,FacultySubject,Attendance
+from schemas import  AlertCreate, AssignSubjectRequest, AttendanceCreate, ResetPasswordRequest, StudentPromotionRequest, TeacherAdminUpdate, TeacherDeleteRequest,TimetableCreate, TimetableResponse,StudentDeleteRequest,SubjectCreate,AttendanceAnalyticsResponse
+from datetime import datetime, timedelta
+from models import (
+    Alert,
+    AlertRecipient,
+    Timetable,
+    Subject,
+    FacultySubject,
+    Attendance,
+    Student,
+    User,
+    AttendanceWarning,
+    FacultyMonthlyAttendanceAlert
+)
+from apscheduler.schedulers.background import BackgroundScheduler
 
 
 from reportlab.lib import colors
@@ -680,6 +692,9 @@ def get_students_for_attendance(
             Attendance.subject_id == subject_id
         ).count()
 
+        if total == 0:
+            continue  # no classes yet
+
         present = db.query(Attendance).filter(
             Attendance.student_id == student.student_id,
             Attendance.subject_id == subject_id,
@@ -1348,6 +1363,207 @@ def get_student_attendance(
         })
 
     return result
+
+
+
+# =========================
+# STUDENT – GET ATTENDANCE ( MONTHLY BASED)
+# =========================
+@app.get("/student/attendance/monthly")
+def get_monthly_attendance(
+    semester: int,
+    month: int,
+    year: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+
+    if current_user["role"] != "student":
+        raise HTTPException(status_code=403, detail="Student only")
+
+    student = db.query(Student).filter(
+        Student.student_id == current_user["user_id"]
+    ).first()
+
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    # Get subjects for this semester
+    subjects = db.query(Subject).filter(
+        Subject.semester == semester,
+        Subject.department_id == current_user["department_id"]
+    ).all()
+
+    from calendar import monthrange
+    from datetime import date
+
+    total_days = monthrange(year, month)[1]
+
+    response = []
+
+    for day in range(1, total_days + 1):
+
+        current_date = date(year, month, day)
+
+        day_data = {
+            "date": current_date,
+            "subjects": []
+        }
+
+        for subject in subjects:
+
+            # Check if class conducted for this subject on this date
+            class_exists = db.query(Attendance).filter(
+                Attendance.subject_id == subject.subject_id,
+                Attendance.attendance_date == current_date
+            ).first()
+
+            if class_exists:
+
+                student_record = db.query(Attendance).filter(
+                    Attendance.student_id == student.student_id,
+                    Attendance.subject_id == subject.subject_id,
+                    Attendance.attendance_date == current_date
+                ).first()
+
+                status = student_record.status if student_record else False
+
+                day_data["subjects"].append({
+                    "subject": subject.subject_name,
+                    "working_day": True,
+                    "status": status
+                })
+
+            else:
+                day_data["subjects"].append({
+                    "subject": subject.subject_name,
+                    "working_day": False,
+                    "status": None
+                })
+
+        response.append(day_data)
+
+    return response
+
+
+
+
+
+# =========================
+# STUDENT – ATTENDANCE ANALYTICS
+# =========================
+@app.get(
+    "/student/attendance/analytics",
+    response_model=AttendanceAnalyticsResponse
+)
+def get_attendance_analytics(
+    semester: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+
+    if current_user["role"] != "student":
+        raise HTTPException(status_code=403, detail="Student only")
+
+    student = db.query(Student).filter(
+        Student.student_id == current_user["user_id"]
+    ).first()
+
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    # 🔹 Get subjects for semester
+    subjects = db.query(Subject).filter(
+        Subject.semester == semester,
+        Subject.department_id == current_user["department_id"]
+    ).all()
+
+    trend_data = []
+    subject_comparison = []
+
+    all_dates = set()
+
+    # Collect all attendance dates
+    for subject in subjects:
+        records = db.query(Attendance).filter(
+            Attendance.student_id == student.student_id,
+            Attendance.subject_id == subject.subject_id
+        ).all()
+
+        for r in records:
+            all_dates.add(r.attendance_date)
+
+    sorted_dates = sorted(list(all_dates))
+
+    total_present = 0
+    total_count = 0
+
+    # 🔹 Build cumulative trend
+    for d in sorted_dates:
+
+        daily_records = db.query(Attendance).filter(
+            Attendance.student_id == student.student_id,
+            Attendance.attendance_date <= d
+        ).all()
+
+        present = len([r for r in daily_records if r.status])
+        total = len(daily_records)
+
+        percentage = round((present / total) * 100, 2) if total > 0 else 0
+
+        trend_data.append({
+            "date": d,
+            "percentage": percentage
+        })
+
+    # 🔹 Subject comparison
+    for subject in subjects:
+
+        total = db.query(Attendance).filter(
+            Attendance.student_id == student.student_id,
+            Attendance.subject_id == subject.subject_id
+        ).count()
+
+        present = db.query(Attendance).filter(
+            Attendance.student_id == student.student_id,
+            Attendance.subject_id == subject.subject_id,
+            Attendance.status == True
+        ).count()
+
+        percentage = round((present / total) * 100, 2) if total > 0 else 0
+
+        subject_comparison.append({
+            "subject": subject.subject_name,
+            "percentage": percentage
+        })
+
+        total_present += present
+        total_count += total
+
+    # 🔹 Simple Projection (Linear)
+    current_percentage = round(
+        (total_present / total_count) * 100, 2
+    ) if total_count > 0 else 0
+
+    projected_percentage = min(
+        round(current_percentage + 2.5, 2),
+        100
+    )
+
+    confidence = "high" if total_count > 20 else "moderate"
+
+    prediction = {
+        "projected_percentage": projected_percentage,
+        "confidence": confidence
+    }
+
+    return {
+        "trend": trend_data,
+        "subject_comparison": subject_comparison,
+        "prediction": prediction
+    }
+
+
 
 
 
@@ -2917,3 +3133,270 @@ def reset_password(
     db.commit()
 
     return {"message": "Password reset successful"}
+
+
+# -------------------------
+# scheduler to check attendance thresholds and send alerts (students)
+# -------------------------
+def check_attendance_thresholds():
+
+    db = SessionLocal()
+
+    try:
+        students = db.query(Student).all()
+
+        for student in students:
+
+            user = db.query(User).filter(
+                User.user_id == student.student_id
+            ).first()
+
+            if not user:
+                continue
+
+            subjects = db.query(Subject).filter(
+                Subject.semester == student.semester,
+                Subject.department_id == user.department_id
+            ).all()
+
+            for subject in subjects:
+
+                total = db.query(Attendance).filter(
+                    Attendance.student_id == student.student_id,
+                    Attendance.subject_id == subject.subject_id
+                ).count()
+
+                if total == 0:
+                    continue
+
+                present = db.query(Attendance).filter(
+                    Attendance.student_id == student.student_id,
+                    Attendance.subject_id == subject.subject_id,
+                    Attendance.status == True
+                ).count()
+
+                percentage = round((present / total) * 100, 2)
+
+                # Decide level
+                if percentage < 60:
+                    level = "critical"
+                elif percentage < 75:
+                    level = "warning"
+                else:
+                    continue  # No alert needed
+
+                now = datetime.utcnow()
+
+                existing = db.query(AttendanceWarning).filter(
+                    AttendanceWarning.student_id == student.student_id,
+                    AttendanceWarning.subject_id == subject.subject_id,
+                    AttendanceWarning.semester == student.semester
+                ).first()
+
+                # 7-day cooldown
+                if existing:
+                    if now - existing.last_sent < timedelta(days=7):
+                        continue
+
+                    existing.level = level
+                    existing.last_sent = now
+                else:
+                    new_warning = AttendanceWarning(
+                        student_id=student.student_id,
+                        subject_id=subject.subject_id,
+                        semester=student.semester,
+                        level=level,
+                        last_sent=now
+                    )
+                    db.add(new_warning)
+
+                # Create Alert
+                title = (
+                    "🚨 Critical Attendance Alert"
+                    if level == "critical"
+                    else "⚠ Low Attendance Warning"
+                )
+
+                message = (
+                    f"Your attendance in {subject.subject_name} "
+                    f"is {percentage}%. Minimum required is 75%."
+                )
+
+                new_alert = Alert(
+                    title=title,
+                    message=message,
+                    type="attendance-monitor",
+                    target_role="student",
+                    target_type="individual",
+                    student_id=student.student_id
+                )
+
+                db.add(new_alert)
+                db.commit()
+                db.refresh(new_alert)
+
+                recipient = AlertRecipient(
+                    alert_id=new_alert.id,
+                    user_id=student.student_id,
+                    is_read=False
+                )
+
+                db.add(recipient)
+                db.commit()
+
+    except Exception as e:
+        print("Scheduler error:", e)
+
+    finally:
+        db.close()
+
+
+# -------------------------
+# scheduler to check attendance thresholds and send alerts (parents)
+# -------------------------
+def check_monthly_faculty_attendance():
+
+    db = SessionLocal()
+
+    try:
+        today = datetime.utcnow()
+        current_month = today.month
+        current_year = today.year
+
+        assignments = db.query(FacultySubject).filter(
+            FacultySubject.is_active == True
+        ).all()
+
+        for assignment in assignments:
+
+            faculty_id = assignment.faculty_id
+            subject_id = assignment.subject_id
+            year_class = assignment.year
+            section = assignment.section
+
+            subject = db.query(Subject).filter(
+                Subject.subject_id == subject_id
+            ).first()
+
+            students = (
+                db.query(Student, User)
+                .join(User, Student.student_id == User.user_id)
+                .filter(
+                    Student.year == year_class,
+                    Student.section == section,
+                    User.department_id == subject.department_id,
+                    User.is_deleted == False
+                )
+                .all()
+            )
+
+            below_60_count = 0
+
+            for student, user in students:
+
+                total = db.query(Attendance).filter(
+                    Attendance.student_id == student.student_id,
+                    Attendance.subject_id == subject_id,
+                    extract('month', Attendance.attendance_date) == current_month,
+                    extract('year', Attendance.attendance_date) == current_year
+                ).count()
+
+                if total < 10:
+                    continue  # avoid early semester noise
+
+                present = db.query(Attendance).filter(
+                    Attendance.student_id == student.student_id,
+                    Attendance.subject_id == subject_id,
+                    Attendance.status == True
+                ).count()
+
+                percentage = (present / total) * 100 if total > 0 else 0
+
+                if percentage < 60:
+                    below_60_count += 1
+
+            if below_60_count == 0:
+                continue
+
+            # Check if already sent this month
+            existing = db.query(FacultyMonthlyAttendanceAlert).filter(
+                FacultyMonthlyAttendanceAlert.faculty_id == faculty_id,
+                FacultyMonthlyAttendanceAlert.subject_id == subject_id,
+                FacultyMonthlyAttendanceAlert.year == year_class,
+                FacultyMonthlyAttendanceAlert.section == section,
+                FacultyMonthlyAttendanceAlert.month == current_month,
+                FacultyMonthlyAttendanceAlert.year_value == current_year
+            ).first()
+
+            if existing:
+                continue
+
+            # Create faculty alert
+            alert = Alert(
+                title="📊 Monthly Attendance Risk Summary",
+                message=(
+                    f"{below_60_count} students in "
+                    f"{year_class}-{section} "
+                    f"({subject.subject_name}) "
+                    f"are below 60% attendance."
+                ),
+                type="monthly-attendance-summary",
+                target_role="faculty",
+                target_type="individual",
+                faculty_id=faculty_id
+            )
+
+            db.add(alert)
+            db.commit()
+            db.refresh(alert)
+
+            recipient = AlertRecipient(
+                alert_id=alert.id,
+                user_id=faculty_id,
+                is_read=False
+            )
+
+            db.add(recipient)
+
+            # Save tracking record
+            record = FacultyMonthlyAttendanceAlert(
+                faculty_id=faculty_id,
+                subject_id=subject_id,
+                year=year_class,
+                section=section,
+                month=current_month,
+                year_value=current_year,
+                last_sent=datetime.utcnow()
+            )
+
+            db.add(record)
+            db.commit()
+
+    except Exception as e:
+        print("Monthly Faculty Scheduler Error:", e)
+
+    finally:
+        db.close()
+
+
+
+
+scheduler = BackgroundScheduler()
+
+scheduler.add_job(
+    check_monthly_faculty_attendance,
+    "cron",
+    day=1,
+    hour=9,
+    minute=0
+)
+
+@app.on_event("startup")
+def start_scheduler():
+    scheduler.add_job(
+        check_attendance_thresholds,
+        "cron",
+        hour=20,
+        minute=0
+    )
+    scheduler.start()

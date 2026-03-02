@@ -242,5 +242,28 @@ class Attendance(Base):
     subject = relationship("Subject")
     faculty = relationship("Faculty")
 
+class AttendanceWarning(Base):
+    __tablename__ = "attendance_warnings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    student_id = Column(Integer)
+    subject_id = Column(Integer)
+    semester = Column(Integer)
+    level = Column(String)
+    last_sent = Column(DateTime, default=datetime.utcnow)
+
+
+class FacultyMonthlyAttendanceAlert(Base):
+    __tablename__ = "faculty_monthly_attendance_alerts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    faculty_id = Column(Integer)
+    subject_id = Column(Integer)
+    year = Column(Integer)
+    section = Column(String)
+    month = Column(Integer)
+    year_value = Column(Integer)
+    last_sent = Column(DateTime, default=datetime.utcnow)
+
 
 

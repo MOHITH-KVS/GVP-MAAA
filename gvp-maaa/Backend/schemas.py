@@ -1,3 +1,5 @@
+from click import DateTime
+
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime ,date
@@ -243,3 +245,29 @@ class SubjectCreate(BaseModel):
     semester: int
     credits: int
     department_id: int
+
+
+
+# ===============================
+# STUDENT ATTENDANCE TREND SCHEMAS
+# ===============================
+class AttendanceTrendItem(BaseModel):
+    date: date
+    percentage: float
+
+class SubjectComparisonItem(BaseModel):
+    subject: str
+    percentage: float
+
+class AttendancePrediction(BaseModel):
+    projected_percentage: float
+    confidence: str
+
+class AttendanceAnalyticsResponse(BaseModel):
+    trend: List[AttendanceTrendItem]
+    subject_comparison: List[SubjectComparisonItem]
+    prediction: AttendancePrediction
+
+
+
+
