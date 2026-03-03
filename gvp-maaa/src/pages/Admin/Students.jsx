@@ -13,6 +13,7 @@ export default function Students() {
   const [showDeleteStudent, setShowDeleteStudent] = useState(false);
   const [showUpdateStudent, setShowUpdateStudent] = useState(false);
   const [showNotifyStudent, setShowNotifyStudent] = useState(false);
+  const [semester, setSemester] = useState("All");
 
 
   const fetchStudents = async () => {
@@ -61,7 +62,8 @@ export default function Students() {
     const query = search.toLowerCase();
 
     return (
-      (year === "All" || String(s.year) === String(year)) &&
+      (year === "All" || String(s.year) === year) &&
+      (semester === "All" || String(s.semester) === semester) &&
       (section === "All" || s.section === section) &&
       (name.includes(query) || roll.includes(query))
     );
@@ -83,8 +85,13 @@ export default function Students() {
   try {
     const token = localStorage.getItem("access_token");
 
+    if (!token) {
+      alert("Session expired. Please login again.");
+      return;
+    }
+
     const response = await fetch(
-      "http://127.0.0.1:8000/admin/students/risk-report",
+      "http://localhost:8000/admin/students/risk-report", // ✅ FIXED
       {
         method: "POST",
         headers: {
@@ -100,19 +107,25 @@ export default function Students() {
     );
 
     if (!response.ok) {
+      const errorData = await response.json().catch(() => null);
+      console.error("Report generation failed:", errorData);
       alert("Failed to generate report");
       return;
     }
 
     const blob = await response.blob();
-    const url = window.URL.createObjectURL(blob);
 
+    const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
     a.download = "Risk_Students_Report.pdf";
+    document.body.appendChild(a);
     a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url); // ✅ cleanup memory
+
   } catch (error) {
-    console.error(error);
+    console.error("Download error:", error);
     alert("Error generating report");
   }
  };
@@ -134,55 +147,72 @@ export default function Students() {
       </div>
 
       {/* ================= ADMIN ACTIONS ================= */}
-      <div className="bg-white px-4 py-3 rounded-xl border flex gap-3 flex-wrap items-center">
+      <div className="bg-white px-4 py-3 rounded-xl border flex justify-between items-center">
 
+        <div className="flex gap-3">
 
-        {/* SECONDARY ACTION */}
-        <button
-          onClick={() => setShowUpdateStudent(true)}
-          className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm hover:bg-gray-50 transition"
-        >
-          Update Students
-        </button>
+          <button
+            onClick={() => setShowUpdateStudent(true)}
+            className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm hover:bg-gray-50 transition"
+          >
+            Update Students
+          </button>
 
-        {/* DESTRUCTIVE ACTION */}
-        <button
-          onClick={() => setShowDeleteStudent(true)}
-          className="px-4 py-2 rounded-lg border border-red-300 text-red-600 text-sm hover:bg-red-50 transition"
-        >
-          Delete Students
-        </button>
+          <button
+            onClick={() => setShowDeleteStudent(true)}
+            className="px-4 py-2 rounded-lg border border-red-300 text-red-600 text-sm hover:bg-red-50 transition"
+          >
+            Delete Students
+          </button>
 
-        {/* NOTIFY ACTION */}
-        <button
+          <button
             onClick={() => setShowNotifyStudent(true)}
-            className="ml-auto px-4 py-2 rounded-lg border border-amber-300 text-amber-600 text-sm hover:bg-amber-50 transition"
+            className="px-4 py-2 rounded-lg border border-amber-300 text-amber-600 text-sm hover:bg-amber-50 transition"
           >
             Notify Students
-        </button>
+          </button>
 
+        </div>
 
         <button
           onClick={downloadRiskReport}
-          className="ml-auto px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700 transition"
+          className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700 transition"
         >
           Download Risk Students Report
         </button>
-
-
-        
 
       </div>
 
 
 
-
       {/* ================= FILTERS ================= */}
       <div className="bg-white p-4 rounded-xl border flex gap-4 flex-wrap">
-        <select value={year} onChange={(e) => setYear(e.target.value)} className="border px-3 py-2 rounded-lg">
-          <option>All</option>
-          <option>3rd Year</option>
-          <option>4th Year</option>
+        <select
+          value={year}
+          onChange={(e) => setYear(e.target.value)}
+          className="border px-3 py-2 rounded-lg"
+        >
+          <option value="All">All</option>
+          <option value="1">1st Year</option>
+          <option value="2">2nd Year</option>
+          <option value="3">3rd Year</option>
+          <option value="4">4th Year</option>
+        </select>
+
+        <select
+          value={semester}
+          onChange={(e) => setSemester(e.target.value)}
+          className="border px-3 py-2 rounded-lg"
+        >
+          <option value="All">All</option>
+          <option value="1">Sem 1</option>
+          <option value="2">Sem 2</option>
+          <option value="3">Sem 3</option>
+          <option value="4">Sem 4</option>
+          <option value="5">Sem 5</option>
+          <option value="6">Sem 6</option>
+          <option value="7">Sem 7</option>
+          <option value="8">Sem 8</option>
         </select>
 
         <select value={section} onChange={(e) => setSection(e.target.value)} className="border px-3 py-2 rounded-lg">

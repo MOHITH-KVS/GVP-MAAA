@@ -1,5 +1,7 @@
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form,Body
 from fastapi.middleware.cors import CORSMiddleware
+from io import BytesIO
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text,extract
 from security import hash_password, verify_password
@@ -1845,37 +1847,56 @@ def delete_students(
 # =========================
 # ADMIN – DOWNLOAD RISK REPORT PDF
 # =========================
-@app.get("/admin/students/risk-report")
+@app.post("/admin/students/risk-report")
 def download_risk_report(
-    year: int = None,
-    section: str = None,
+    filters: dict = Body(...),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
 
+    # 🔒 Admin check
     if current_user["role"] != "admin":
         raise HTTPException(status_code=403, detail="Admin only")
 
+    # 🔽 Extract filters from frontend JSON
+    year = filters.get("year")
+    section = filters.get("section")
+    search = filters.get("search")
+
+    # 🔽 Base query
     query = db.query(Student, User).join(
         User, Student.student_id == User.user_id
-    ).filter(Student.is_deleted == False)
+    ).filter(
+        Student.is_deleted == False,
+        User.is_deleted == False
+    )
 
-    if year:
-        query = query.filter(Student.year == year)
+    # 🔽 Apply filters safely
+    if year and year != "All":
+        query = query.filter(Student.year == int(year))
 
-    if section:
+    if section and section != "All":
         query = query.filter(Student.section == section)
 
+    if search:
+        query = query.filter(
+            User.name.ilike(f"%{search}%") |
+            Student.roll_no.ilike(f"%{search}%")
+        )
+
     students = query.all()
+
+    # =========================
+    # PDF GENERATION
+    # =========================
 
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4)
     elements = []
 
     styles = getSampleStyleSheet()
-    title = Paragraph("Risk Student Report", styles["Heading1"])
-    elements.append(title)
-    elements.append(Spacer(1, 0.3 * inch))
+    elements.append(Paragraph("Risk Student Report", styles["Heading1"]))
+    elements.append(Spacer(1, 20))
 
     data = [["Roll No", "Name", "Year", "Section", "Attendance %", "Risk"]]
 
@@ -1897,7 +1918,7 @@ def download_risk_report(
         elif percentage < 75:
             risk = "Warning"
         else:
-            continue  # only risk students
+            continue  # Only include risk students
 
         data.append([
             student.roll_no,
@@ -1908,7 +1929,11 @@ def download_risk_report(
             risk
         ])
 
-    table = Table(data)
+    # If no risk students
+    if len(data) == 1:
+        data.append(["-", "No Risk Students Found", "-", "-", "-", "-"])
+
+    table = Table(data, repeatRows=1)
     table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.grey),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
@@ -1917,6 +1942,7 @@ def download_risk_report(
     ]))
 
     elements.append(table)
+
     doc.build(elements)
 
     buffer.seek(0)
@@ -1924,7 +1950,9 @@ def download_risk_report(
     return StreamingResponse(
         buffer,
         media_type="application/pdf",
-        headers={"Content-Disposition": "attachment; filename=risk_students.pdf"}
+        headers={
+            "Content-Disposition": "attachment; filename=risk_students.pdf"
+        }
     )
 
 # -------------------------
