@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import AttendanceInsightsPanel from "../../components/AttendanceInsightsPanel";
+import { useNavigate } from "react-router-dom";
 
 export default function Attendance() {
 
   const token = localStorage.getItem("access_token");
+  const navigate = useNavigate();
 
   const [activeSem, setActiveSem] = useState(null);
   const [activeSub, setActiveSub] = useState("ALL");
@@ -12,7 +13,6 @@ export default function Attendance() {
   const [summaryData, setSummaryData] = useState([]);
 
   const [loading, setLoading] = useState(true);
-  const [insightsOpen, setInsightsOpen] = useState(false);
 
   const [selectedMonth, setSelectedMonth] = useState(
     new Date().toISOString().slice(0, 7)
@@ -93,8 +93,6 @@ export default function Attendance() {
       ? Math.round((totalAttended / totalConducted) * 100)
       : 0;
 
-  const isAtRisk = overallPercent < 75;
-
   const year = Number(selectedMonth.split("-")[0]);
   const month = Number(selectedMonth.split("-")[1]);
 
@@ -120,6 +118,22 @@ export default function Attendance() {
       ? Math.round((monthlyPresent / monthlyTotal) * 100)
       : 0;
 
+  /* ===== Risk Level ===== */
+
+  let riskBg = "bg-green-50";
+  let riskText = "text-green-600";
+  let riskMessage = "You're safe. Keep it up!";
+
+  if (overallPercent < 60) {
+    riskBg = "bg-red-50";
+    riskText = "text-red-600";
+    riskMessage = "Critical attendance shortage. Immediate action required.";
+  } else if (overallPercent < 75) {
+    riskBg = "bg-yellow-50";
+    riskText = "text-yellow-600";
+    riskMessage = "Attendance below required 75%. Improve consistency.";
+  }
+
   /* ===== Streak Logic ===== */
 
   let streak = 0;
@@ -132,7 +146,6 @@ export default function Attendance() {
     const hasPresent = sortedDays[i].subjects.some(
       s => s.working_day && s.status === true
     );
-
     if (hasPresent) streak++;
     else break;
   }
@@ -142,16 +155,16 @@ export default function Attendance() {
   return (
     <div className="space-y-8">
 
-      {/* Semester */}
+      {/* Semester Selector */}
       <div className="flex gap-3">
         {[1,2,3,4,5,6].map((sem) => (
           <button
             key={sem}
             onClick={() => setActiveSem(sem)}
-            className={`px-4 py-2 rounded-xl ${
+            className={`px-4 py-2 rounded-xl transition ${
               activeSem === sem
                 ? "bg-indigo-600 text-white"
-                : "bg-white"
+                : "bg-white hover:bg-gray-100"
             }`}
           >
             Sem{sem}
@@ -196,74 +209,45 @@ export default function Attendance() {
         {/* Main */}
         <div className="flex-1">
 
-          {/* Header */}
-          <div className="bg-white p-6 rounded-2xl shadow-sm mb-6 flex justify-between items-center">
+          {/* Header Card */}
+          <div className={`p-6 rounded-2xl shadow-sm mb-6 ${riskBg}`}>
 
-            <div>
-              <h2 className="text-xl font-semibold">
-                Monthly Attendance
-              </h2>
+            <div className="flex justify-between items-center">
 
-              <p className="text-gray-500 mt-1">
-                Semester Overall: 
-                <span className={`ml-2 font-semibold ${
-                  isAtRisk ? "text-red-600" : "text-green-600"
-                }`}>
-                  {overallPercent}%
-                </span>
-                {" | "}
-                This Month: {monthlyPercent}%
-              </p>
+              <div>
+                <h2 className="text-xl font-semibold">
+                  Attendance Overview
+                </h2>
 
-              {isAtRisk && (
-                <div className="mt-2 text-sm text-red-600 font-medium">
-                  ⚠ Attendance below 75%. Risk of shortage.
+                <p className={`mt-2 font-semibold ${riskText}`}>
+                  Semester Overall: {overallPercent}% | This Month: {monthlyPercent}%
+                </p>
+
+                <p className={`mt-1 text-sm ${riskText}`}>
+                  {riskMessage}
+                </p>
+
+                <div className="mt-2 text-sm text-orange-600 font-medium">
+                  🔥 Current Streak: {streak} days
                 </div>
-              )}
-
-              <div className="mt-2 text-sm text-orange-600 font-medium">
-                🔥 Current Streak: {streak} days
               </div>
-            </div>
 
-            <input
-              type="month"
-              value={selectedMonth}
-              onChange={(e) => {
-                setSelectedMonth(e.target.value);
-                setAnimateKey(prev => prev + 1);
-              }}
-              className="border rounded-lg px-3 py-2"
-            />
-          </div>
-
-          {/* Legend */}
-          <div className="flex gap-6 mb-4 text-sm text-gray-600">
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 bg-green-500 rounded-full"></div>
-              Present
+              <input
+                type="month"
+                value={selectedMonth}
+                onChange={(e) => {
+                  setSelectedMonth(e.target.value);
+                  setAnimateKey(prev => prev + 1);
+                }}
+                className="border rounded-lg px-3 py-2"
+              />
             </div>
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 bg-red-500 rounded-full"></div>
-              Absent
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 bg-gray-300 rounded-full"></div>
-              Not Updated
-            </div>
-          </div>
-
-          {/* Week Header */}
-          <div className="grid grid-cols-7 text-center text-xs font-medium text-gray-500 mb-2">
-            {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(day => (
-              <div key={day}>{day}</div>
-            ))}
           </div>
 
           {/* Calendar */}
           <div
             key={animateKey}
-            className="grid grid-cols-7 gap-4 bg-white p-6 rounded-2xl shadow-sm transition-all duration-500 ease-in-out"
+            className="grid grid-cols-7 gap-4 bg-white p-6 rounded-2xl shadow-sm transition-all duration-500"
           >
 
             {[...Array(firstDayIndex)].map((_, i) => (
@@ -279,7 +263,7 @@ export default function Attendance() {
               return (
                 <div
                   key={i}
-                  className="border rounded-xl min-h-[100px] p-2 text-xs"
+                  className="border rounded-xl min-h-[90px] p-2 text-xs"
                 >
                   <div className="font-semibold mb-2">
                     {i + 1}
@@ -296,35 +280,19 @@ export default function Attendance() {
                       .map((sub, index) => {
 
                         let color = "bg-gray-300";
-                        let label = "Not Updated";
 
                         if (sub.working_day) {
-                          if (sub.status === true) {
+                          if (sub.status === true)
                             color = "bg-green-500";
-                            label = "Present";
-                          }
-                          if (sub.status === false) {
+                          if (sub.status === false)
                             color = "bg-red-500";
-                            label = "Absent";
-                          }
                         }
 
                         return (
-                          <div key={index} className="relative group">
-
-                            <div
-                              className={`w-3 h-3 rounded-full ${color} cursor-pointer hover:scale-110 transition`}
-                            />
-
-                            {/* Per Dot Tooltip */}
-                            <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 
-                              bg-black text-white text-[10px] px-2 py-1 rounded 
-                              opacity-0 group-hover:opacity-100 transition 
-                              pointer-events-none whitespace-nowrap z-20">
-                              {sub.subject} — {label}
-                            </div>
-
-                          </div>
+                          <div
+                            key={index}
+                            className={`w-3 h-3 rounded-full ${color}`}
+                          />
                         );
                       })}
 
@@ -335,25 +303,18 @@ export default function Attendance() {
 
           </div>
 
-          {/* Insights */}
+          {/* Go to Insights */}
           <div className="mt-6">
             <button
-              onClick={() => setInsightsOpen(true)}
-              className="w-full bg-indigo-600 text-white py-3 rounded-xl"
+              onClick={() => navigate("/student/insights")}
+              className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-xl transition"
             >
-              View My Attendance Insights
+              Go to Detailed Insights →
             </button>
           </div>
 
         </div>
       </div>
-
-      <AttendanceInsightsPanel
-        isOpen={insightsOpen}
-        onClose={() => setInsightsOpen(false)}
-        semester={activeSem}
-        token={token}
-      />
     </div>
   );
 }

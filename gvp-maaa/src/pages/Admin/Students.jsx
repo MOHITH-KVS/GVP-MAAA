@@ -79,6 +79,44 @@ export default function Students() {
     (s) => s.attendance < 75 || s.cgpa < 7
   ).length;
 
+  const downloadRiskReport = async () => {
+  try {
+    const token = localStorage.getItem("access_token");
+
+    const response = await fetch(
+      "http://127.0.0.1:8000/admin/students/risk-report",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          year,
+          section,
+          search,
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      alert("Failed to generate report");
+      return;
+    }
+
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "Risk_Students_Report.pdf";
+    a.click();
+  } catch (error) {
+    console.error(error);
+    alert("Error generating report");
+  }
+ };
+
   if (loading) {
   return <p className="text-center">Loading students...</p>;
  }
@@ -124,6 +162,14 @@ export default function Students() {
         </button>
 
 
+        <button
+          onClick={downloadRiskReport}
+          className="ml-auto px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700 transition"
+        >
+          Download Risk Students Report
+        </button>
+
+
         
 
       </div>
@@ -165,7 +211,6 @@ export default function Students() {
               <th className="px-4 py-3">Attendance</th>
               <th className="px-4 py-3">CGPA</th>
               <th className="px-4 py-3">Risk</th>
-              <th />
             </tr>
           </thead>
 
@@ -186,14 +231,6 @@ export default function Students() {
                     ) : (
                       <span className="px-2 py-1 text-xs rounded-full bg-green-100 text-green-700">Safe</span>
                     )}
-                  </td>
-                  <td className="px-4 py-3 text-center">
-                    <button
-                      onClick={() => setSelectedStudent(s)}
-                      className="px-3 py-1 text-xs bg-indigo-600 text-white rounded-lg"
-                    >
-                      View
-                    </button>
                   </td>
                 </tr>
               );
@@ -274,8 +311,6 @@ export default function Students() {
       </div>
 
       {/* ================= MODALS ================= */}
-      
-      {selectedStudent && <StudentProfile student={selectedStudent} onClose={() => setSelectedStudent(null)} />}
       {showDeleteStudent && (<DeleteStudentModal students={students} onDelete={setStudents} onClose={() => setShowDeleteStudent(false)} /> )}
       {showUpdateStudent && (<UpdateStudentModal students={students} setStudents={setStudents} onClose={() => setShowUpdateStudent(false)}/>)}
       {showNotifyStudent && (<NotifyStudentModal students={students} onClose={() => setShowNotifyStudent(false)} />)}

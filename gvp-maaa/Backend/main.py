@@ -6,7 +6,9 @@ from security import hash_password, verify_password
 from mail import send_reset_email
 from schemas import  AlertCreate, AssignSubjectRequest, AttendanceCreate, ResetPasswordRequest, StudentPromotionRequest, TeacherAdminUpdate, TeacherDeleteRequest,TimetableCreate, TimetableResponse,StudentDeleteRequest,SubjectCreate,AttendanceAnalyticsResponse
 from datetime import datetime, timedelta
+from database import engine
 from models import (
+    Base,
     Alert,
     AlertRecipient,
     Timetable,
@@ -18,6 +20,9 @@ from models import (
     AttendanceWarning,
     FacultyMonthlyAttendanceAlert
 )
+
+
+
 from apscheduler.schedulers.background import BackgroundScheduler
 
 
@@ -87,6 +92,10 @@ app.mount(
     StaticFiles(directory="uploads"),
     name="uploads"
 )
+
+@app.on_event("startup")
+def create_tables():
+    Base.metadata.create_all(bind=engine)
 
 
 # -------------------------
@@ -1648,22 +1657,71 @@ def promote_students(
 # =========================
 @app.get("/admin/students")
 def get_all_students(
+    year: int = None,
+    semester: int = None,
+    section: str = None,
+    department: str = None,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     if current_user["role"] != "admin":
         raise HTTPException(status_code=403, detail="Admin only")
 
-    students = (
-    db.query(Student, User)
-    .join(User, Student.student_id == User.user_id)
-    .filter(Student.is_deleted == False)
-    .all()
-   )
+    query = (
+        db.query(Student, User)
+        .join(User, Student.student_id == User.user_id)
+        .filter(Student.is_deleted == False)
+    )
 
+    # -------------------------
+    # APPLY FILTERS
+    # -------------------------
+    if year:
+        query = query.filter(Student.year == year)
 
-    return [
-        {
+    if semester:
+        query = query.filter(Student.semester == semester)
+
+    if section:
+        query = query.filter(Student.section == section)
+
+    if department:
+        dept_id = None
+        for key, value in DEPARTMENT_MAP.items():
+            if value == department:
+                dept_id = key
+
+        if dept_id:
+            query = query.filter(User.department_id == dept_id)
+
+    students = query.all()
+
+    result = []
+
+    for student, user in students:
+
+        total = db.query(Attendance).filter(
+            Attendance.student_id == student.student_id
+        ).count()
+
+        present = db.query(Attendance).filter(
+            Attendance.student_id == student.student_id,
+            Attendance.status == True
+        ).count()
+
+        percentage = round((present / total) * 100, 2) if total > 0 else 0
+
+        # -------------------------
+        # RISK CLASSIFICATION
+        # -------------------------
+        if percentage < 60:
+            risk = "Critical"
+        elif percentage < 75:
+            risk = "Warning"
+        else:
+            risk = "Safe"
+
+        result.append({
             "id": student.student_id,
             "roll": student.roll_no,
             "name": user.name,
@@ -1671,12 +1729,12 @@ def get_all_students(
             "semester": student.semester,
             "section": student.section,
             "department": DEPARTMENT_MAP.get(user.department_id, "UNKNOWN"),
-            "attendance": 0,
+            "attendance": percentage,
             "cgpa": float(student.cgpa),
-            "backlogs": 0
-        }
-        for student, user in students
-    ]
+            "risk": risk
+        })
+
+    return result
 
 # =========================
 # ADMIN – BULK PROMOTE STUDENTS
@@ -1783,6 +1841,91 @@ def delete_students(
         "deleted_count": len(students)
     }
 
+
+# =========================
+# ADMIN – DOWNLOAD RISK REPORT PDF
+# =========================
+@app.get("/admin/students/risk-report")
+def download_risk_report(
+    year: int = None,
+    section: str = None,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+
+    if current_user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    query = db.query(Student, User).join(
+        User, Student.student_id == User.user_id
+    ).filter(Student.is_deleted == False)
+
+    if year:
+        query = query.filter(Student.year == year)
+
+    if section:
+        query = query.filter(Student.section == section)
+
+    students = query.all()
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4)
+    elements = []
+
+    styles = getSampleStyleSheet()
+    title = Paragraph("Risk Student Report", styles["Heading1"])
+    elements.append(title)
+    elements.append(Spacer(1, 0.3 * inch))
+
+    data = [["Roll No", "Name", "Year", "Section", "Attendance %", "Risk"]]
+
+    for student, user in students:
+
+        total = db.query(Attendance).filter(
+            Attendance.student_id == student.student_id
+        ).count()
+
+        present = db.query(Attendance).filter(
+            Attendance.student_id == student.student_id,
+            Attendance.status == True
+        ).count()
+
+        percentage = round((present / total) * 100, 2) if total > 0 else 0
+
+        if percentage < 60:
+            risk = "Critical"
+        elif percentage < 75:
+            risk = "Warning"
+        else:
+            continue  # only risk students
+
+        data.append([
+            student.roll_no,
+            user.name,
+            student.year,
+            student.section,
+            f"{percentage}%",
+            risk
+        ])
+
+    table = Table(data)
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.grey),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+        ("ALIGN", (4, 1), (-1, -1), "CENTER"),
+    ]))
+
+    elements.append(table)
+    doc.build(elements)
+
+    buffer.seek(0)
+
+    return StreamingResponse(
+        buffer,
+        media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=risk_students.pdf"}
+    )
 
 # -------------------------
 # ADMIN PROTECTED
@@ -3166,8 +3309,8 @@ def check_attendance_thresholds():
                     Attendance.subject_id == subject.subject_id
                 ).count()
 
-                if total == 0:
-                    continue
+                if total < 5:
+                    continue  # avoid noise
 
                 present = db.query(Attendance).filter(
                     Attendance.student_id == student.student_id,
@@ -3175,17 +3318,15 @@ def check_attendance_thresholds():
                     Attendance.status == True
                 ).count()
 
-                percentage = round((present / total) * 100, 2)
+                percentage = (present / total) * 100
 
-                # Decide level
+                # Determine current level
                 if percentage < 60:
-                    level = "critical"
+                    current_level = "critical"
                 elif percentage < 75:
-                    level = "warning"
+                    current_level = "warning"
                 else:
-                    continue  # No alert needed
-
-                now = datetime.utcnow()
+                    current_level = "safe"
 
                 existing = db.query(AttendanceWarning).filter(
                     AttendanceWarning.student_id == student.student_id,
@@ -3193,36 +3334,63 @@ def check_attendance_thresholds():
                     AttendanceWarning.semester == student.semester
                 ).first()
 
-                # 7-day cooldown
-                if existing:
-                    if now - existing.last_sent < timedelta(days=7):
-                        continue
+                now = datetime.utcnow()
 
-                    existing.level = level
-                    existing.last_sent = now
+                # -----------------------------
+                # CASE 1: Student is SAFE
+                # -----------------------------
+                if current_level == "safe":
+                    if existing:
+                        db.delete(existing)
+                        db.commit()
+                    continue
+
+                # -----------------------------
+                # CASE 2: First time crossing
+                # -----------------------------
+                if not existing:
+                    send_alert = True
+                    reminder = False
+
+                # -----------------------------
+                # CASE 3: Level Changed Down
+                # -----------------------------
+                elif existing.level != current_level:
+                    send_alert = True
+                    reminder = False
+
+                # -----------------------------
+                # CASE 4: Still Same Level → Reminder check
+                # -----------------------------
                 else:
-                    new_warning = AttendanceWarning(
-                        student_id=student.student_id,
-                        subject_id=subject.subject_id,
-                        semester=student.semester,
-                        level=level,
-                        last_sent=now
-                    )
-                    db.add(new_warning)
+                    days_passed = (now - existing.last_sent).days
+                    if days_passed >= 14:
+                        send_alert = True
+                        reminder = True
+                    else:
+                        send_alert = False
 
-                # Create Alert
-                title = (
-                    "🚨 Critical Attendance Alert"
-                    if level == "critical"
-                    else "⚠ Low Attendance Warning"
-                )
+                if not send_alert:
+                    continue
+
+                # -----------------------------
+                # Build Alert Message
+                # -----------------------------
+                if current_level == "warning":
+                    title = "⚠ Attendance Warning"
+                else:
+                    title = "🚨 Critical Attendance Alert"
+
+                if reminder:
+                    title = "🔔 Reminder: " + title
 
                 message = (
                     f"Your attendance in {subject.subject_name} "
-                    f"is {percentage}%. Minimum required is 75%."
+                    f"is {round(percentage,2)}%. "
+                    f"Minimum required is 75%."
                 )
 
-                new_alert = Alert(
+                alert = Alert(
                     title=title,
                     message=message,
                     type="attendance-monitor",
@@ -3231,21 +3399,36 @@ def check_attendance_thresholds():
                     student_id=student.student_id
                 )
 
-                db.add(new_alert)
+                db.add(alert)
                 db.commit()
-                db.refresh(new_alert)
+                db.refresh(alert)
 
                 recipient = AlertRecipient(
-                    alert_id=new_alert.id,
+                    alert_id=alert.id,
                     user_id=student.student_id,
                     is_read=False
                 )
 
                 db.add(recipient)
+
+                # Update tracking record
+                if existing:
+                    existing.level = current_level
+                    existing.last_sent = now
+                else:
+                    new_warning = AttendanceWarning(
+                        student_id=student.student_id,
+                        subject_id=subject.subject_id,
+                        semester=student.semester,
+                        level=current_level,
+                        last_sent=now
+                    )
+                    db.add(new_warning)
+
                 db.commit()
 
     except Exception as e:
-        print("Scheduler error:", e)
+        print("Hybrid Scheduler Error:", e)
 
     finally:
         db.close()
@@ -3260,8 +3443,14 @@ def check_monthly_faculty_attendance():
 
     try:
         today = datetime.utcnow()
-        current_month = today.month
-        current_year = today.year
+
+        # 👉 Calculate previous month properly
+        if today.month == 1:
+            target_month = 12
+            target_year = today.year - 1
+        else:
+            target_month = today.month - 1
+            target_year = today.year
 
         assignments = db.query(FacultySubject).filter(
             FacultySubject.is_active == True
@@ -3294,22 +3483,19 @@ def check_monthly_faculty_attendance():
 
             for student, user in students:
 
-                total = db.query(Attendance).filter(
+                records = db.query(Attendance).filter(
                     Attendance.student_id == student.student_id,
                     Attendance.subject_id == subject_id,
-                    extract('month', Attendance.attendance_date) == current_month,
-                    extract('year', Attendance.attendance_date) == current_year
-                ).count()
+                    extract('month', Attendance.attendance_date) == target_month,
+                    extract('year', Attendance.attendance_date) == target_year
+                ).all()
 
-                if total < 10:
-                    continue  # avoid early semester noise
+                total = len(records)
 
-                present = db.query(Attendance).filter(
-                    Attendance.student_id == student.student_id,
-                    Attendance.subject_id == subject_id,
-                    Attendance.status == True
-                ).count()
+                if total < 5:
+                    continue  # avoid noise
 
+                present = len([r for r in records if r.status])
                 percentage = (present / total) * 100 if total > 0 else 0
 
                 if percentage < 60:
@@ -3318,27 +3504,28 @@ def check_monthly_faculty_attendance():
             if below_60_count == 0:
                 continue
 
-            # Check if already sent this month
+            # 🔒 Prevent duplicate monthly alerts
             existing = db.query(FacultyMonthlyAttendanceAlert).filter(
                 FacultyMonthlyAttendanceAlert.faculty_id == faculty_id,
                 FacultyMonthlyAttendanceAlert.subject_id == subject_id,
                 FacultyMonthlyAttendanceAlert.year == year_class,
                 FacultyMonthlyAttendanceAlert.section == section,
-                FacultyMonthlyAttendanceAlert.month == current_month,
-                FacultyMonthlyAttendanceAlert.year_value == current_year
+                FacultyMonthlyAttendanceAlert.month == target_month,
+                FacultyMonthlyAttendanceAlert.year_value == target_year
             ).first()
 
             if existing:
                 continue
 
-            # Create faculty alert
+            # ✅ Create alert
             alert = Alert(
                 title="📊 Monthly Attendance Risk Summary",
                 message=(
                     f"{below_60_count} students in "
                     f"{year_class}-{section} "
                     f"({subject.subject_name}) "
-                    f"are below 60% attendance."
+                    f"were below 60% attendance in "
+                    f"{target_month}/{target_year}."
                 ),
                 type="monthly-attendance-summary",
                 target_role="faculty",
@@ -3358,18 +3545,17 @@ def check_monthly_faculty_attendance():
 
             db.add(recipient)
 
-            # Save tracking record
-            record = FacultyMonthlyAttendanceAlert(
+            tracking = FacultyMonthlyAttendanceAlert(
                 faculty_id=faculty_id,
                 subject_id=subject_id,
                 year=year_class,
                 section=section,
-                month=current_month,
-                year_value=current_year,
+                month=target_month,
+                year_value=target_year,
                 last_sent=datetime.utcnow()
             )
 
-            db.add(record)
+            db.add(tracking)
             db.commit()
 
     except Exception as e:
