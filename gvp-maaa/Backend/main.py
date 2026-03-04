@@ -20,7 +20,9 @@ from models import (
     Student,
     User,
     AttendanceWarning,
-    FacultyMonthlyAttendanceAlert
+    FacultyMonthlyAttendanceAlert,
+    Assignment,
+    AssignmentSubmission
 )
 
 
@@ -71,7 +73,12 @@ from schemas import (
     TeacherSignupRequest,
     AdminLoginRequest,
     StudentProfileUpdate,
-    FacultyProfileUpdate,   
+    FacultyProfileUpdate,
+    AssignmentCreate,
+    AssignmentResponse,
+    AssignmentSubmissionCreate,
+    AssignmentSubmissionResponse,
+    AssignmentDetailResponse
 )
 from models import User, Student, Faculty,Timetable
 from auth import (
@@ -3593,6 +3600,409 @@ def check_monthly_faculty_attendance():
         db.close()
 
 
+# ========================
+# ASSIGNMENT ENDPOINTS
+# ========================
+
+@app.post("/teacher/create-assignment")
+def create_assignment(
+    assignment_data: AssignmentCreate,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(SessionLocal)
+):
+    """
+    Teacher creates an assignment
+    """
+    try:
+        # Verify teacher
+        if current_user["role"] != "faculty":
+            raise HTTPException(status_code=403, detail="Only teachers can create assignments")
+
+        faculty = db.query(Faculty).filter(Faculty.faculty_id == current_user["user_id"]).first()
+        if not faculty:
+            raise HTTPException(status_code=404, detail="Faculty not found")
+
+        # Verify subject assignment
+        faculty_subject = db.query(FacultySubject).filter(
+            FacultySubject.faculty_id == current_user["user_id"],
+            FacultySubject.subject_id == assignment_data.subject_id,
+            FacultySubject.year == assignment_data.year,
+            FacultySubject.section == assignment_data.section
+        ).first()
+
+        if not faculty_subject:
+            raise HTTPException(
+                status_code=403,
+                detail="You are not assigned to teach this class/subject"
+            )
+
+        # Create assignment
+        new_assignment = Assignment(
+            title=assignment_data.title,
+            description=assignment_data.description,
+            faculty_id=current_user["user_id"],
+            subject_id=assignment_data.subject_id,
+            year=assignment_data.year,
+            section=assignment_data.section,
+            due_date=assignment_data.due_date,
+            is_active=True
+        )
+
+        db.add(new_assignment)
+        db.commit()
+        db.refresh(new_assignment)
+
+        # Get all students in this class
+        students = db.query(Student).filter(
+            Student.year == assignment_data.year,
+            Student.section == assignment_data.section,
+            Student.is_deleted == False
+        ).all()
+
+        # Create alert for all students
+        alert = Alert(
+            title=f"New Assignment: {assignment_data.title}",
+            message=f"Your teacher {faculty.employee_id} has assigned a new assignment in your class.",
+            type="assignment",
+            target_role="student",
+            target_type="class",
+            faculty_id=current_user["user_id"]
+        )
+        db.add(alert)
+        db.commit()
+        db.refresh(alert)
+
+        # Add recipients
+        for student in students:
+            recipient = AlertRecipient(
+                alert_id=alert.id,
+                user_id=student.student_id,
+                is_read=False
+            )
+            db.add(recipient)
+
+        db.commit()
+
+        return {
+            "status": "success",
+            "message": f"Assignment created and {len(students)} students notified",
+            "assignment_id": new_assignment.id
+        }
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@app.get("/teacher/assignments/{year}/{section}")
+def get_teacher_assignments(
+    year: int,
+    section: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(SessionLocal)
+):
+    """
+    Get all assignments created by teacher for a specific class
+    """
+    try:
+        if current_user["role"] != "faculty":
+            raise HTTPException(status_code=403, detail="Only teachers can access this")
+
+        # Get all assignments for the teacher's classes
+        assignments = db.query(Assignment).filter(
+            Assignment.faculty_id == current_user["user_id"],
+            Assignment.year == year,
+            Assignment.section == section
+        ).order_by(Assignment.created_at.desc()).all()
+
+        result = []
+        for assignment in assignments:
+            # Get submission count
+            submissions = db.query(AssignmentSubmission).filter(
+                AssignmentSubmission.assignment_id == assignment.id
+            ).all()
+
+            submitted_count = len([s for s in submissions if s.is_submitted])
+            total_submitted = len(submissions)
+
+            # Get total students in class
+            total_students = db.query(Student).filter(
+                Student.year == assignment.year,
+                Student.section == assignment.section,
+                Student.is_deleted == False
+            ).count()
+
+            result.append({
+                "id": assignment.id,
+                "title": assignment.title,
+                "description": assignment.description,
+                "due_date": assignment.due_date,
+                "created_at": assignment.created_at,
+                "subject_id": assignment.subject_id,
+                "submitted": submitted_count,
+                "total_students": total_students,
+                "pending": total_students - total_submitted,
+                "status": "Active" if assignment.is_active else "Inactive"
+            })
+
+        return {"status": "success", "assignments": result}
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@app.get("/teacher/assignment-details/{assignment_id}")
+def get_assignment_details(
+    assignment_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(SessionLocal)
+):
+    """
+    Get detailed info about an assignment (submissions, student list, etc)
+    """
+    try:
+        if current_user["role"] != "faculty":
+            raise HTTPException(status_code=403, detail="Only teachers can access this")
+
+        assignment = db.query(Assignment).filter(
+            Assignment.id == assignment_id,
+            Assignment.faculty_id == current_user["user_id"]
+        ).first()
+
+        if not assignment:
+            raise HTTPException(status_code=404, detail="Assignment not found")
+
+        # Get all students in class
+        students = db.query(Student).filter(
+            Student.year == assignment.year,
+            Student.section == assignment.section,
+            Student.is_deleted == False
+        ).all()
+
+        # Get submissions
+        submissions = db.query(AssignmentSubmission).filter(
+            AssignmentSubmission.assignment_id == assignment_id
+        ).all()
+
+        submitted_ids = {s.student_id for s in submissions if s.is_submitted}
+
+        submitted_students = []
+        pending_students = []
+
+        for student in students:
+            user = db.query(User).filter(User.user_id == student.student_id).first()
+            student_info = {
+                "name": user.name if user else "Unknown",
+                "roll": student.roll_no,
+                "student_id": student.student_id
+            }
+
+            if student.student_id in submitted_ids:
+                submitted_students.append(student_info)
+            else:
+                pending_students.append(student_info)
+
+        return {
+            "status": "success",
+            "assignment": {
+                "id": assignment.id,
+                "title": assignment.title,
+                "description": assignment.description,
+                "due_date": assignment.due_date,
+                "created_at": assignment.created_at,
+                "subject_id": assignment.subject_id,
+                "year": assignment.year,
+                "section": assignment.section
+            },
+            "submitted": submitted_students,
+            "pending": pending_students,
+            "stats": {
+                "total": len(students),
+                "submitted": len(submitted_students),
+                "pending": len(pending_students)
+            }
+        }
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@app.get("/student/assignments")
+def get_student_assignments(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(SessionLocal)
+):
+    """
+    Get all assignments for the logged-in student
+    """
+    try:
+        if current_user["role"] != "student":
+            raise HTTPException(status_code=403, detail="Only students can access this")
+
+        student = db.query(Student).filter(
+            Student.student_id == current_user["user_id"]
+        ).first()
+
+        if not student:
+            raise HTTPException(status_code=404, detail="Student not found")
+
+        # Get all assignments for student's class
+        assignments = db.query(Assignment).filter(
+            Assignment.year == student.year,
+            Assignment.section == student.section,
+            Assignment.is_active == True
+        ).order_by(Assignment.due_date).all()
+
+        # Check which ones are submitted
+        submissions = db.query(AssignmentSubmission).filter(
+            AssignmentSubmission.student_id == current_user["user_id"]
+        ).all()
+
+        submitted_ids = {s.assignment_id for s in submissions}
+
+        result = []
+        for assignment in assignments:
+            subject = db.query(Subject).filter(
+                Subject.subject_id == assignment.subject_id
+            ).first()
+
+            is_submitted = assignment.id in submitted_ids
+            
+            # Check if late
+            submission = next((s for s in submissions if s.assignment_id == assignment.id), None)
+            is_late = submission.is_late if submission else False
+
+            result.append({
+                "id": assignment.id,
+                "title": assignment.title,
+                "description": assignment.description,
+                "subject": subject.subject_name if subject else "Unknown",
+                "due_date": assignment.due_date,
+                "created_at": assignment.created_at,
+                "status": "submitted" if is_submitted else "pending",
+                "is_late": is_late
+            })
+
+        return {"status": "success", "assignments": result}
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@app.post("/student/submit-assignment/{assignment_id}")
+async def submit_assignment(
+    assignment_id: int,
+    submission_data: AssignmentSubmissionCreate,
+    file: UploadFile = File(None),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(SessionLocal)
+):
+    """
+    Student submits an assignment
+    """
+    try:
+        if current_user["role"] != "student":
+            raise HTTPException(status_code=403, detail="Only students can submit")
+
+        assignment = db.query(Assignment).filter(
+            Assignment.id == assignment_id
+        ).first()
+
+        if not assignment:
+            raise HTTPException(status_code=404, detail="Assignment not found")
+
+        student = db.query(Student).filter(
+            Student.student_id == current_user["user_id"]
+        ).first()
+
+        if not student:
+            raise HTTPException(status_code=404, detail="Student not found")
+
+        # Check if student belongs to this class
+        if student.year != assignment.year or student.section != assignment.section:
+            raise HTTPException(status_code=403, detail="This assignment is not for your class")
+
+        # Check if already submitted
+        existing_submission = db.query(AssignmentSubmission).filter(
+            AssignmentSubmission.assignment_id == assignment_id,
+            AssignmentSubmission.student_id == current_user["user_id"]
+        ).first()
+
+        if existing_submission:
+            raise HTTPException(status_code=400, detail="You have already submitted this assignment")
+
+        # Handle file upload
+        file_name = None
+        file_path = None
+        file_type = None
+
+        if file:
+            try:
+                # Create submissions folder if it doesn't exist
+                os.makedirs("uploads/assignments", exist_ok=True)
+
+                file_ext = file.filename.split(".")[-1]
+                file_name = f"assignment_{assignment_id}_student_{current_user['user_id']}.{file_ext}"
+                file_path = f"uploads/assignments/{file_name}"
+
+                content = await file.read()
+                with open(file_path, "wb") as f:
+                    f.write(content)
+
+                file_type = file_ext
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"File upload failed: {str(e)}")
+
+        # Check if late
+        is_late = datetime.utcnow() > assignment.due_date
+
+        # Create submission
+        submission = AssignmentSubmission(
+            assignment_id=assignment_id,
+            student_id=current_user["user_id"],
+            file_name=file_name,
+            file_path=file_path,
+            file_type=file_type,
+            submission_text=submission_data.submission_text,
+            submitted_at=datetime.utcnow(),
+            is_late=is_late,
+            is_submitted=True
+        )
+
+        db.add(submission)
+        db.commit()
+        db.refresh(submission)
+
+        return {
+            "status": "success",
+            "message": "Assignment submitted successfully",
+            "is_late": is_late,
+            "submission_id": submission.id
+        }
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
 
 
 scheduler = BackgroundScheduler()

@@ -1,312 +1,229 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import axios from "axios";
 
-/* ===== SUBJECT CONFIG (UPDATED DEADLINES) ===== */
-const SUBJECT_CONFIG = {
-  DBMS: {
-    deadline: "2026-02-20", // ✅ FUTURE (UPLOAD ENABLED)
-    faculty: ["Dr. Rao", "Dr. Suresh"],
-  },
-  OS: {
-    deadline: "2025-09-18", // ❌ PAST (LOCKED)
-    faculty: ["Prof. Anil"],
-  },
-  CN: {
-    deadline: "2026-01-15", // ✅ FUTURE (UPLOAD ENABLED)
-    faculty: ["Dr. Kiran", "Prof. Meena"],
-  },
-};
-
-/* ===== ASSIGNMENT DATA ===== */
-const ASSIGNMENTS = {
-  DBMS: [
-    { title: "Assignment 1", due: "2025-09-10", status: "submitted" },
-    { title: "Assignment 2", due: "2025-09-15", status: "pending" },
-    { title: "Assignment 3", due: "2025-09-20", status: "pending" },
-  ],
-  OS: [
-    { title: "Assignment 1", due: "2025-09-12", status: "submitted" },
-    { title: "Assignment 2", due: "2025-09-18", status: "pending" },
-  ],
-  CN: [
-    { title: "Assignment 1", due: "2025-09-11", status: "submitted" },
-    { title: "Assignment 2", due: "2025-09-19", status: "submitted" },
-  ],
-};
-
-const STATUS_BADGE = {
-  submitted: "bg-green-100 text-green-700",
-  pending: "bg-red-100 text-red-700",
-};
+const API_URL = "http://127.0.0.1:8000";
 
 export default function Assignments() {
-  const subjects = ["All", "DBMS", "OS", "CN"];
-
-  const [activeSubject, setActiveSubject] = useState("All");
-  const [openSubject, setOpenSubject] = useState(null);
-
+  const [assignments, setAssignments] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [showUpload, setShowUpload] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
+  const [filter, setFilter] = useState("all");
+
+  const token = localStorage.getItem("token");
 
   const [form, setForm] = useState({
-    title: "",
-    subject: "",
-    faculty: "",
+    assignment_id: "",
+    submission_text: "",
     file: null,
   });
 
-  const deadline =
-    form.subject && SUBJECT_CONFIG[form.subject]
-      ? SUBJECT_CONFIG[form.subject].deadline
-      : "";
+  // Fetch assignments on mount
+  useEffect(() => {
+    fetchAssignments();
+  }, []);
 
-  const today = new Date().toISOString().split("T")[0];
-  const isDeadlinePassed = deadline && today > deadline;
+  const fetchAssignments = async () => {
+    try {
+      setLoading(true);
+      const response = await axios.get(`${API_URL}/student/assignments`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setAssignments(response.data.assignments || []);
+    } catch (error) {
+      console.error("Error fetching assignments:", error);
+      setErrorMsg("Failed to load assignments");
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  const isFormValid =
-    form.title &&
-    form.subject &&
-    form.faculty &&
-    form.file &&
-    !isDeadlinePassed;
+  const handleSubmit = async () => {
+    if (!form.assignment_id) {
+      setErrorMsg("Please select an assignment");
+      return;
+    }
 
-  const filtered =
-    activeSubject === "All"
-      ? ASSIGNMENTS
-      : { [activeSubject]: ASSIGNMENTS[activeSubject] };
+    try {
+      setLoading(true);
+      const formData = new FormData();
+      formData.append("submission_text", form.submission_text);
+      
+      if (form.file) {
+        formData.append("file", form.file);
+      }
 
-  const handleSubmit = () => {
-    setShowUpload(false);
-    setConfirm(false);
-    setSuccess(true);
+      const response = await axios.post(
+        `${API_URL}/student/submit-assignment/${form.assignment_id}`,
+        formData,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "multipart/form-data",
+          },
+        }
+      );
 
-    setTimeout(() => setSuccess(false), 2200);
+      setSuccess(true);
+      setTimeout(() => {
+        setSuccess(false);
+        setShowUpload(false);
+        setConfirm(false);
+        setForm({ assignment_id: "", submission_text: "", file: null });
+        fetchAssignments(); // Refresh list
+      }, 2200);
+    } catch (error) {
+      setErrorMsg(
+        error.response?.data?.detail || "Failed to submit assignment"
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Filter assignments
+  const filtered = assignments.filter((a) => {
+    if (filter === "all") return true;
+    return a.status === filter;
+  });
+
+  const stats = {
+    total: assignments.length,
+    submitted: assignments.filter((a) => a.status === "submitted").length,
+    pending: assignments.filter((a) => a.status === "pending").length,
   };
 
   return (
     <div className="space-y-10 relative">
-
       {/* HEADER */}
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-2xl font-semibold">📝 Assignments</h1>
           <p className="text-gray-500">
-            Subject-wise assignment tracking & progress
+            View assignments and track your progress
           </p>
         </div>
 
         <button
           onClick={() => setShowUpload(true)}
-          className="px-6 py-3 rounded-xl bg-indigo-600 text-white font-semibold hover:bg-indigo-700"
+          disabled={loading}
+          className="px-6 py-3 rounded-xl bg-indigo-600 text-white font-semibold hover:bg-indigo-700 disabled:opacity-50"
         >
-          + Upload Assignment
+          📤 Submit Assignment
         </button>
       </div>
 
-      {/* SUBJECT FILTERS */}
+      {/* STATS */}
+      <div className="grid grid-cols-3 gap-4">
+        <StatCard label="Total" value={stats.total} />
+        <StatCard label="Submitted" value={stats.submitted} color="green" />
+        <StatCard label="Pending" value={stats.pending} color="red" />
+      </div>
+
+      {/* ERROR MESSAGE */}
+      {errorMsg && (
+        <div className="p-4 rounded-xl bg-red-100 text-red-700 font-medium">
+          ❌ {errorMsg}
+        </div>
+      )}
+
+      {/* FILTER */}
       <div className="flex gap-3">
-        {subjects.map((sub) => (
+        {["all", "submitted", "pending"].map((f) => (
           <button
-            key={sub}
-            onClick={() => setActiveSubject(sub)}
-            className={`px-4 py-2 rounded-xl text-sm font-medium
-              ${
-                activeSubject === sub
-                  ? "bg-indigo-600 text-white"
-                  : "bg-white hover:bg-slate-100"
-              }`}
+            key={f}
+            onClick={() => setFilter(f)}
+            className={`px-4 py-2 rounded-xl capitalize transition ${
+              filter === f
+                ? "bg-indigo-600 text-white"
+                : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+            }`}
           >
-            {sub}
+            {f}
           </button>
         ))}
       </div>
 
-      {/* SUBJECT LIST */}
-      <div className="space-y-4">
-        {Object.entries(filtered).map(([subject, items]) => (
-          <div key={subject} className="bg-white rounded-2xl border">
+      {/* ASSIGNMENTS LIST */}
+      {loading && filtered.length === 0 ? (
+        <div className="text-center py-12 text-gray-400">
+          Loading assignments...
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="text-center py-12 text-gray-400">
+          No assignments found
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {filtered.map((assignment) => (
+            <AssignmentCard
+              key={assignment.id}
+              assignment={assignment}
+              onSubmit={() => {
+                setForm({ ...form, assignment_id: assignment.id });
+                setShowUpload(true);
+              }}
+            />
+          ))}
+        </div>
+      )}
 
-            {/* HEADER */}
-            <button
-              onClick={() =>
-                setOpenSubject(openSubject === subject ? null : subject)
-              }
-              className="w-full flex justify-between items-center px-6 py-5"
-            >
-              <div>
-                <h2 className="text-lg font-semibold">{subject}</h2>
-
-                {/* STATUS DOTS */}
-                <div className="flex gap-2 mt-2">
-                  {items.map((a, i) => (
-                    <span
-                      key={i}
-                      className={`w-3 h-3 rounded-full ${
-                        a.status === "submitted"
-                          ? "bg-green-500"
-                          : "bg-red-400"
-                      }`}
-                    />
-                  ))}
-                </div>
-              </div>
-
-              <span className="text-xl font-bold">
-                {openSubject === subject ? "−" : "+"}
-              </span>
-            </button>
-
-            {/* CONTENT */}
-            {openSubject === subject && (
-              <div className="px-6 pb-6 space-y-3">
-                {items.map((a, i) => (
-                  <AssignmentItem key={i} data={a} />
-                ))}
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
-
-
-{/* ================= ASSIGNMENT ANALYTICS ================= */}
-<div className="mt-14 space-y-6">
-
-  <div>
-    <h2 className="text-xl font-semibold">📊 Assignment Analytics</h2>
-    <p className="text-gray-500 text-sm">
-      Visual insights into assignment progress & deadlines
-    </p>
-  </div>
-
-  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
-
-    {/* STATUS OVERVIEW */}
-    <div className="bg-white rounded-2xl border p-5">
-      <h3 className="font-medium mb-2">Submission Status</h3>
-      <p className="text-xs text-gray-500 mb-4">
-        Doughnut Chart (Submitted vs Pending vs Overdue)
-      </p>
-
-      <div className="h-32 flex items-center justify-center text-gray-400 text-sm border rounded-xl">
-        Analytics Agent will render Doughnut Chart here
-      </div>
-    </div>
-
-    {/* SUBMISSION TREND */}
-    <div className="bg-white rounded-2xl border p-5">
-      <h3 className="font-medium mb-2">Submission Trend</h3>
-      <p className="text-xs text-gray-500 mb-4">
-        Line Chart (Submissions over time)
-      </p>
-
-      <div className="h-32 flex items-center justify-center text-gray-400 text-sm border rounded-xl">
-        Analytics Agent will render Line Chart here
-      </div>
-    </div>
-
-    {/* SUBJECT WISE */}
-    <div className="bg-white rounded-2xl border p-5">
-      <h3 className="font-medium mb-2">Subject-wise Completion</h3>
-      <p className="text-xs text-gray-500 mb-4">
-        Bar Chart (DBMS, OS, CN)
-      </p>
-
-      <div className="h-32 flex items-center justify-center text-gray-400 text-sm border rounded-xl">
-        Analytics Agent will render Bar Chart here
-      </div>
-    </div>
-
-    {/* DEADLINE RISK */}
-    <div className="bg-white rounded-2xl border p-5">
-      <h3 className="font-medium mb-2">Deadline Risk</h3>
-      <p className="text-xs text-gray-500 mb-4">
-        Stacked / Horizontal Bar Chart
-      </p>
-
-      <div className="h-32 flex items-center justify-center text-gray-400 text-sm border rounded-xl">
-        Analytics Agent will render Risk Chart here
-      </div>
-    </div>
-
-  </div>
-</div>
-
-      {/* UPLOAD MODAL WITH GLASS BACKGROUND */}
+      {/* UPLOAD MODAL */}
       {showUpload && (
-        <Modal onClose={() => setShowUpload(false)}>
+        <Modal onClose={() => { setShowUpload(false); setForm({ assignment_id: "", submission_text: "", file: null }); }}>
           {!confirm ? (
             <>
-              <h2 className="text-lg font-semibold mb-4">
-                Upload Assignment
-              </h2>
+              <h2 className="text-lg font-semibold mb-4">Submit Assignment</h2>
 
-              <Input
-                label="Assignment Title"
-                value={form.title}
-                onChange={(e) =>
-                  setForm({ ...form, title: e.target.value })
-                }
-              />
+              <div className="mb-3">
+                <label className="text-sm text-gray-600">Select Assignment *</label>
+                <select
+                  value={form.assignment_id}
+                  onChange={(e) => setForm({ ...form, assignment_id: e.target.value })}
+                  className="w-full mt-1 px-4 py-2 rounded-xl border bg-gray-50"
+                >
+                  <option value="">Choose Assignment</option>
+                  {assignments.filter(a => a.status === 'pending').map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.title} - Due {new Date(a.due_date).toLocaleDateString()}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-              <Select
-                label="Subject"
-                options={Object.keys(SUBJECT_CONFIG)}
-                value={form.subject}
-                onChange={(e) =>
-                  setForm({
-                    ...form,
-                    subject: e.target.value,
-                    faculty: "",
-                  })
-                }
-              />
+              <div className="mb-3">
+                <label className="text-sm text-gray-600">Comments/Notes</label>
+                <textarea
+                  value={form.submission_text}
+                  onChange={(e) => setForm({ ...form, submission_text: e.target.value })}
+                  rows={3}
+                  className="w-full mt-1 px-4 py-2 rounded-xl border bg-gray-50"
+                  placeholder="Add any notes about your submission..."
+                />
+              </div>
 
-              <Select
-                label="Faculty Name"
-                options={
-                  form.subject
-                    ? SUBJECT_CONFIG[form.subject].faculty
-                    : []
-                }
-                value={form.faculty}
-                onChange={(e) =>
-                  setForm({ ...form, faculty: e.target.value })
-                }
-              />
-
-              <Input label="Deadline" value={deadline} disabled />
-
-              {isDeadlinePassed && (
-                <p className="text-sm text-red-600">
-                  Deadline passed. Upload disabled.
-                </p>
-              )}
-
-              <input
-                type="file"
-                disabled={isDeadlinePassed}
-                onChange={(e) =>
-                  setForm({ ...form, file: e.target.files[0] })
-                }
-                className="w-full mt-3"
-              />
+              <div className="mb-4">
+                <label className="text-sm text-gray-600">Upload File (Optional)</label>
+                <input
+                  type="file"
+                  onChange={(e) => setForm({ ...form, file: e.target.files[0] })}
+                  className="w-full mt-1 px-4 py-2 rounded-xl border bg-gray-50"
+                />
+              </div>
 
               <div className="flex gap-3 mt-6">
                 <button
-                  disabled={!isFormValid}
+                  disabled={!form.assignment_id || loading}
                   onClick={() => setConfirm(true)}
-                  className={`flex-1 py-2 rounded-xl text-white ${
-                    isFormValid
-                      ? "bg-indigo-600 hover:bg-indigo-700"
-                      : "bg-indigo-300 cursor-not-allowed"
-                  }`}
+                  className="flex-1 py-2 rounded-xl text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50"
                 >
                   Continue
                 </button>
 
                 <button
-                  onClick={() => setShowUpload(false)}
+                  onClick={() => { setShowUpload(false); setForm({ assignment_id: "", submission_text: "", file: null }); }}
                   className="flex-1 py-2 rounded-xl border"
                 >
                   Cancel
@@ -315,30 +232,28 @@ export default function Assignments() {
             </>
           ) : (
             <>
-              <h2 className="text-lg font-semibold mb-4">
-                Confirm Submission
-              </h2>
+              <h2 className="text-lg font-semibold mb-4">Confirm Submission</h2>
 
-              <div className="text-sm text-gray-600 space-y-2">
-                <p><b>Title:</b> {form.title}</p>
-                <p><b>Subject:</b> {form.subject}</p>
-                <p><b>Faculty:</b> {form.faculty}</p>
-                <p><b>Deadline:</b> {deadline}</p>
+              <div className="text-sm text-gray-600 space-y-2 mb-6">
+                <p><b>Assignment:</b> {assignments.find(a => a.id == form.assignment_id)?.title}</p>
+                <p><b>Due:</b> {new Date(assignments.find(a => a.id == form.assignment_id)?.due_date).toLocaleDateString()}</p>
+                {form.file && <p><b>File:</b> {form.file.name}</p>}
               </div>
 
               <div className="flex gap-3 mt-6">
                 <button
                   onClick={handleSubmit}
-                  className="flex-1 py-2 rounded-xl bg-green-600 text-white"
+                  disabled={loading}
+                  className="flex-1 py-2 rounded-xl bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
                 >
-                  Confirm & Submit
+                  {loading ? "Submitting..." : "Confirm & Submit"}
                 </button>
 
                 <button
                   onClick={() => setConfirm(false)}
                   className="flex-1 py-2 rounded-xl border"
                 >
-                  Recheck
+                  Back
                 </button>
               </div>
             </>
@@ -354,20 +269,70 @@ export default function Assignments() {
 
 /* ================= COMPONENTS ================= */
 
-function AssignmentItem({ data }) {
+function AssignmentCard({ assignment, onSubmit }) {
+  const isDueToday = new Date(assignment.due_date).toDateString() === new Date().toDateString();
+  const isOverdue = new Date(assignment.due_date) < new Date();
+  const daysLeft = Math.ceil((new Date(assignment.due_date) - new Date()) / (1000 * 60 * 60 * 24));
+
   return (
-    <div className="flex justify-between items-center bg-white rounded-xl p-4 border">
-      <div>
-        <p className="font-medium">{data.title}</p>
-        <p className="text-sm text-gray-500">Due: {data.due}</p>
+    <div className="bg-white rounded-xl border p-5 hover:shadow-md transition">
+      <div className="flex justify-between items-start gap-4">
+        <div className="flex-1">
+          <h3 className="font-semibold text-lg">{assignment.title}</h3>
+          <p className="text-sm text-gray-500 mt-1">📚 {assignment.subject}</p>
+          
+          <div className="mt-3 flex gap-2">
+            {assignment.status === "submitted" && (
+              <span className="px-3 py-1 text-xs rounded-full bg-green-100 text-green-700">
+                ✓ Submitted
+              </span>
+            )}
+            {assignment.status === "pending" && isOverdue && (
+              <span className="px-3 py-1 text-xs rounded-full bg-red-100 text-red-700">
+                ⚠️ Overdue
+              </span>
+            )}
+            {assignment.status === "pending" && isDueToday && (
+              <span className="px-3 py-1 text-xs rounded-full bg-amber-100 text-amber-700">
+                🔔 Due Today
+              </span>
+            )}
+            {assignment.status === "pending" && !isOverdue && !isDueToday && (
+              <span className="px-3 py-1 text-xs rounded-full bg-blue-100 text-blue-700">
+                ⏳ {daysLeft} days left
+              </span>
+            )}
+          </div>
+        </div>
+
+        {assignment.status === "pending" && (
+          <button
+            onClick={onSubmit}
+            className="px-4 py-2 rounded-xl bg-indigo-600 text-white text-sm hover:bg-indigo-700 whitespace-nowrap"
+          >
+            Submit
+          </button>
+        )}
       </div>
-      <span
-        className={`px-3 py-1 text-xs rounded-full ${
-          STATUS_BADGE[data.status]
-        }`}
-      >
-        {data.status.toUpperCase()}
-      </span>
+
+      <div className="mt-3 text-xs text-gray-500">
+        📅 Due {new Date(assignment.due_date).toLocaleDateString()}
+      </div>
+    </div>
+  );
+}
+
+function StatCard({ label, value, color = "indigo" }) {
+  const colors = {
+    indigo: "bg-indigo-50 text-indigo-600",
+    green: "bg-green-50 text-green-600",
+    red: "bg-red-50 text-red-600",
+  };
+
+  return (
+    <div className={`rounded-xl p-4 ${colors[color]}`}>
+      <p className="text-xs text-gray-500">{label}</p>
+      <p className="text-3xl font-bold mt-1">{value}</p>
     </div>
   );
 }
@@ -376,12 +341,10 @@ function AssignmentItem({ data }) {
 function Modal({ children, onClose }) {
   return (
     <div className="fixed inset-0 z-[99999] flex items-center justify-center">
-
       {/* FULL PAGE GLASS BACKDROP */}
       <div
         onClick={onClose}
         className="fixed inset-0 bg-black/30 backdrop-blur-md"
-        style={{ WebkitBackdropFilter: "blur(12px)" }}
       />
 
       {/* MODAL CARD */}
@@ -399,7 +362,6 @@ function Modal({ children, onClose }) {
   );
 }
 
-
 function SuccessToast() {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-md">
@@ -407,42 +369,8 @@ function SuccessToast() {
         <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-green-100 text-green-600 text-3xl flex items-center justify-center">
           ✓
         </div>
-        <h2 className="text-xl font-semibold">
-          Assignment Submitted Successfully
-        </h2>
+        <h2 className="text-xl font-semibold">Submitted Successfully!</h2>
       </div>
-    </div>
-  );
-}
-
-function Input({ label, value, onChange, disabled }) {
-  return (
-    <div className="mb-3">
-      <label className="text-sm text-gray-600">{label}</label>
-      <input
-        value={value}
-        onChange={onChange}
-        disabled={disabled}
-        className="w-full mt-1 px-4 py-2 rounded-xl border bg-gray-50"
-      />
-    </div>
-  );
-}
-
-function Select({ label, options, value, onChange }) {
-  return (
-    <div className="mb-3">
-      <label className="text-sm text-gray-600">{label}</label>
-      <select
-        value={value}
-        onChange={onChange}
-        className="w-full mt-1 px-4 py-2 rounded-xl border"
-      >
-        <option value="">Select</option>
-        {options.map((o) => (
-          <option key={o}>{o}</option>
-        ))}
-      </select>
     </div>
   );
 }

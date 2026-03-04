@@ -1,5 +1,3 @@
-from click import DateTime
-
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime ,date
@@ -269,5 +267,91 @@ class AttendanceAnalyticsResponse(BaseModel):
     prediction: AttendancePrediction
 
 
+# =========================
+# ASSIGNMENT SCHEMAS
+# =========================
+class AssignmentCreate(BaseModel):
+    title: str
+    description: Optional[str] = None
+    subject_id: int
+    year: int
+    section: str
+    due_date: datetime
+    file_url: Optional[str] = None
 
 
+class AssignmentResponse(BaseModel):
+    id: int
+    title: str
+    description: Optional[str] = None
+    subject_id: int
+    year: int
+    section: str
+    due_date: datetime
+    created_at: datetime
+    is_active: bool
+    faculty_id: int
+    file_url: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class AssignmentSubmissionCreate(BaseModel):
+    assignment_id: int
+    submission_text: Optional[str] = None
+    submission_file: Optional[str] = None
+
+
+class AssignmentSubmissionResponse(BaseModel):
+    id: int
+    assignment_id: int
+    student_id: int
+    submission_file: Optional[str] = None
+    submission_text: Optional[str] = None
+    submitted_at: datetime
+    is_late: bool
+    is_submitted: bool
+
+    class Config:
+        from_attributes = True
+
+
+class AssignmentDetailResponse(BaseModel):
+    id: int
+    title: str
+    description: Optional[str] = None
+    subject_id: int
+    year: int
+    section: str
+    due_date: datetime
+    created_at: datetime
+    is_active: bool
+    faculty_id: int
+
+    total_students: int
+    submitted_count: int
+    pending_count: int
+
+    pending: List[dict] = []
+    submitted: List[dict] = []
+
+    class Config:
+        from_attributes = True
+
+
+class TeacherSubjectResponse(BaseModel):
+    id: int
+    subject_name: str
+    year: int
+    section: str
+
+
+class StudentAssignmentResponse(BaseModel):
+    id: int
+    title: str
+    description: Optional[str]
+    subject_id: int
+    due_date: datetime
+    file_url: Optional[str]
+    is_submitted: bool

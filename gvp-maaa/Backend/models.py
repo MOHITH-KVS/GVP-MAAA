@@ -1,5 +1,4 @@
 from datetime import datetime
-from sqlite3 import Date
 from sqlalchemy import Column, Integer, String, Numeric, ForeignKey, Text, Boolean, DateTime, Date, UniqueConstraint
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
@@ -264,6 +263,72 @@ class FacultyMonthlyAttendanceAlert(Base):
     month = Column(Integer)
     year_value = Column(Integer)
     last_sent = Column(DateTime, default=datetime.utcnow)
+
+
+# -------------------------
+# ASSIGNMENTS
+# -------------------------
+class Assignment(Base):
+    __tablename__ = "assignments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    
+    # Assignment Basic Info
+    title = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    
+    # Class Details
+    faculty_id = Column(Integer, ForeignKey("faculty.faculty_id"), nullable=False)
+    subject_id = Column(Integer, ForeignKey("subjects.subject_id"), nullable=False)
+    year = Column(Integer, nullable=False)
+    section = Column(String(10), nullable=False)
+    
+    # Dates
+    created_at = Column(DateTime, default=datetime.utcnow)
+    due_date = Column(DateTime, nullable=False)
+    
+    # File
+    file_name = Column(String(255), nullable=True)
+    file_path = Column(Text, nullable=True)
+    file_type = Column(String(20), nullable=True)
+    
+    # Status
+    is_active = Column(Boolean, default=True)
+    
+    # Relationships
+    faculty = relationship("Faculty")
+    subject = relationship("Subject")
+
+
+class AssignmentSubmission(Base):
+    __tablename__ = "assignment_submissions"
+
+    __table_args__ = (
+        UniqueConstraint("assignment_id", "student_id", name="unique_submission"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    
+    assignment_id = Column(Integer, ForeignKey("assignments.id"), nullable=False)
+    student_id = Column(Integer, ForeignKey("students.student_id"), nullable=False)
+    
+    # Submission Details
+    file_name = Column(String(255), nullable=True)
+    file_path = Column(Text, nullable=True)
+    file_type = Column(String(20), nullable=True)
+    
+    submission_text = Column(Text, nullable=True)
+    
+    # Dates
+    submitted_at = Column(DateTime, default=datetime.utcnow)
+    is_late = Column(Boolean, default=False)
+    
+    # Status
+    is_submitted = Column(Boolean, default=True)
+    
+    # Relationships
+    assignment = relationship("Assignment")
+    student = relationship("Student")
 
 
 
