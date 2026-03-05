@@ -303,32 +303,25 @@ class Assignment(Base):
 class AssignmentSubmission(Base):
     __tablename__ = "assignment_submissions"
 
+    id = Column(Integer, primary_key=True, index=True)
+
+    assignment_id = Column(Integer, ForeignKey("assignments.id"))
+    student_id = Column(Integer, ForeignKey("students.student_id"))
+
+    file_name = Column(String, nullable=True)
+    file_path = Column(String, nullable=True)
+    file_type = Column(String, nullable=True)
+
+    submission_text = Column(Text, nullable=True)
+
+    submitted_at = Column(DateTime)
+    is_late = Column(Boolean, default=False)
+    is_submitted = Column(Boolean, default=True)
+    status = Column(String(20), default="pending")
+
     __table_args__ = (
         UniqueConstraint("assignment_id", "student_id", name="unique_submission"),
     )
-
-    id = Column(Integer, primary_key=True, index=True)
-    
-    assignment_id = Column(Integer, ForeignKey("assignments.id"), nullable=False)
-    student_id = Column(Integer, ForeignKey("students.student_id"), nullable=False)
-    
-    # Submission Details
-    file_name = Column(String(255), nullable=True)
-    file_path = Column(Text, nullable=True)
-    file_type = Column(String(20), nullable=True)
-    
-    submission_text = Column(Text, nullable=True)
-    
-    # Dates
-    submitted_at = Column(DateTime, default=datetime.utcnow)
-    is_late = Column(Boolean, default=False)
-    
-    # Status
-    is_submitted = Column(Boolean, default=True)
-    
-    # Relationships
-    assignment = relationship("Assignment")
-    student = relationship("Student")
 
 
 

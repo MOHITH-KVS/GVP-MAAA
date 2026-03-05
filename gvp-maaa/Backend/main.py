@@ -4,6 +4,7 @@ from io import BytesIO
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text,extract
+from typing import Optional
 from security import hash_password, verify_password
 from mail import send_reset_email
 from schemas import  AlertCreate, AssignSubjectRequest, AttendanceCreate, ResetPasswordRequest, StudentPromotionRequest, TeacherAdminUpdate, TeacherDeleteRequest,TimetableCreate, TimetableResponse,StudentDeleteRequest,SubjectCreate,AttendanceAnalyticsResponse
@@ -78,7 +79,9 @@ from schemas import (
     AssignmentResponse,
     AssignmentSubmissionCreate,
     AssignmentSubmissionResponse,
-    AssignmentDetailResponse
+    AssignmentDetailResponse,
+    StatusUpdateRequest,
+    StudentAssignmentSummaryResponse
 )
 from models import User, Student, Faculty,Timetable
 from auth import (
@@ -112,7 +115,7 @@ def create_tables():
 # -------------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["http://localhost:5173", "http://localhost:5174", "http://localhost:5175"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -3600,34 +3603,69 @@ def check_monthly_faculty_attendance():
         db.close()
 
 
+@app.get("/teacher/my-subjects")
+def get_teacher_subjects(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+
+    if current_user["role"] != "faculty":
+        raise HTTPException(status_code=403, detail="Only teachers allowed")
+
+    subjects = db.query(FacultySubject).filter(
+        FacultySubject.faculty_id == current_user["user_id"],
+        FacultySubject.is_active == True
+    ).all()
+
+    result = []
+
+    for s in subjects:
+        subject = db.query(Subject).filter(
+            Subject.subject_id == s.subject_id
+        ).first()
+
+        result.append({
+            "subject_id": s.subject_id,
+            "subject_name": subject.subject_name if subject else "Unknown",
+            "year": s.year,
+            "section": s.section
+        })
+
+    return {"subjects": result}
+
+
 # ========================
 # ASSIGNMENT ENDPOINTS
 # ========================
 
 @app.post("/teacher/create-assignment")
 def create_assignment(
-    assignment_data: AssignmentCreate,
+    title: str = Form(...),
+    description: Optional[str] = Form(None),
+    subject_id: int = Form(...),
+    year: int = Form(...),
+    section: str = Form(...),
+    due_date: str = Form(...),
+    file: Optional[UploadFile] = File(None),
     current_user: dict = Depends(get_current_user),
-    db: Session = Depends(SessionLocal)
+    db: Session = Depends(get_db)
 ):
-    """
-    Teacher creates an assignment
-    """
     try:
-        # Verify teacher
         if current_user["role"] != "faculty":
             raise HTTPException(status_code=403, detail="Only teachers can create assignments")
 
-        faculty = db.query(Faculty).filter(Faculty.faculty_id == current_user["user_id"]).first()
+        faculty = db.query(Faculty).filter(
+            Faculty.faculty_id == current_user["user_id"]
+        ).first()
+
         if not faculty:
             raise HTTPException(status_code=404, detail="Faculty not found")
 
-        # Verify subject assignment
         faculty_subject = db.query(FacultySubject).filter(
             FacultySubject.faculty_id == current_user["user_id"],
-            FacultySubject.subject_id == assignment_data.subject_id,
-            FacultySubject.year == assignment_data.year,
-            FacultySubject.section == assignment_data.section
+            FacultySubject.subject_id == subject_id,
+            FacultySubject.year == year,
+            FacultySubject.section == section
         ).first()
 
         if not faculty_subject:
@@ -3636,43 +3674,60 @@ def create_assignment(
                 detail="You are not assigned to teach this class/subject"
             )
 
-        # Create assignment
+        # Parse due_date
+        try:
+            due_date_parsed = datetime.fromisoformat(due_date.replace("Z", "+00:00"))
+        except Exception:
+            due_date_parsed = datetime.strptime(due_date[:10], "%Y-%m-%d")
+
+        # Handle optional file upload
+        file_name = None
+        file_path = None
+        if file and file.filename:
+            upload_dir = "uploads/assignments"
+            os.makedirs(upload_dir, exist_ok=True)
+            unique_filename = f"{uuid.uuid4()}_{file.filename}"
+            file_path = os.path.join(upload_dir, unique_filename)
+            with open(file_path, "wb") as f:
+                f.write(file.file.read())
+            file_name = file.filename
+
         new_assignment = Assignment(
-            title=assignment_data.title,
-            description=assignment_data.description,
+            title=title,
+            description=description,
             faculty_id=current_user["user_id"],
-            subject_id=assignment_data.subject_id,
-            year=assignment_data.year,
-            section=assignment_data.section,
-            due_date=assignment_data.due_date,
-            is_active=True
+            subject_id=subject_id,
+            year=year,
+            section=section,
+            due_date=due_date_parsed,
+            is_active=True,
+            file_name=file_name,
+            file_path=file_path
         )
 
         db.add(new_assignment)
         db.commit()
         db.refresh(new_assignment)
 
-        # Get all students in this class
         students = db.query(Student).filter(
-            Student.year == assignment_data.year,
-            Student.section == assignment_data.section,
+            Student.year == year,
+            Student.section == section,
             Student.is_deleted == False
         ).all()
 
-        # Create alert for all students
         alert = Alert(
-            title=f"New Assignment: {assignment_data.title}",
-            message=f"Your teacher {faculty.employee_id} has assigned a new assignment in your class.",
+            title=f"New Assignment: {title}",
+            message=f"Your teacher assigned a new assignment.",
             type="assignment",
             target_role="student",
             target_type="class",
             faculty_id=current_user["user_id"]
         )
+
         db.add(alert)
         db.commit()
         db.refresh(alert)
 
-        # Add recipients
         for student in students:
             recipient = AlertRecipient(
                 alert_id=alert.id,
@@ -3694,8 +3749,6 @@ def create_assignment(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        db.close()
 
 
 @app.get("/teacher/assignments/{year}/{section}")
@@ -3703,146 +3756,119 @@ def get_teacher_assignments(
     year: int,
     section: str,
     current_user: dict = Depends(get_current_user),
-    db: Session = Depends(SessionLocal)
+    db: Session = Depends(get_db)
 ):
-    """
-    Get all assignments created by teacher for a specific class
-    """
-    try:
-        if current_user["role"] != "faculty":
-            raise HTTPException(status_code=403, detail="Only teachers can access this")
 
-        # Get all assignments for the teacher's classes
-        assignments = db.query(Assignment).filter(
-            Assignment.faculty_id == current_user["user_id"],
-            Assignment.year == year,
-            Assignment.section == section
-        ).order_by(Assignment.created_at.desc()).all()
+    if current_user["role"] != "faculty":
+        raise HTTPException(status_code=403, detail="Only teachers can access this")
 
-        result = []
-        for assignment in assignments:
-            # Get submission count
-            submissions = db.query(AssignmentSubmission).filter(
-                AssignmentSubmission.assignment_id == assignment.id
-            ).all()
+    assignments = db.query(Assignment).filter(
+        Assignment.faculty_id == current_user["user_id"],
+        Assignment.year == year,
+        Assignment.section == section
+    ).order_by(Assignment.created_at.desc()).all()
 
-            submitted_count = len([s for s in submissions if s.is_submitted])
-            total_submitted = len(submissions)
+    result = []
 
-            # Get total students in class
-            total_students = db.query(Student).filter(
-                Student.year == assignment.year,
-                Student.section == assignment.section,
-                Student.is_deleted == False
-            ).count()
+    for assignment in assignments:
 
-            result.append({
-                "id": assignment.id,
-                "title": assignment.title,
-                "description": assignment.description,
-                "due_date": assignment.due_date,
-                "created_at": assignment.created_at,
-                "subject_id": assignment.subject_id,
-                "submitted": submitted_count,
-                "total_students": total_students,
-                "pending": total_students - total_submitted,
-                "status": "Active" if assignment.is_active else "Inactive"
-            })
+        submissions = db.query(AssignmentSubmission).filter(
+            AssignmentSubmission.assignment_id == assignment.id
+        ).all()
 
-        return {"status": "success", "assignments": result}
+        submitted_count = len([s for s in submissions if s.is_submitted])
+        total_submitted = len(submissions)
 
-    except HTTPException as e:
-        raise e
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        db.close()
+        total_students = db.query(Student).filter(
+            Student.year == assignment.year,
+            Student.section == assignment.section,
+            Student.is_deleted == False
+        ).count()
+
+        result.append({
+            "id": assignment.id,
+            "title": assignment.title,
+            "description": assignment.description,
+            "due_date": assignment.due_date,
+            "created_at": assignment.created_at,
+            "subject_id": assignment.subject_id,
+            "submitted": submitted_count,
+            "total_students": total_students,
+            "pending": total_students - total_submitted,
+            "status": "Active" if assignment.is_active else "Inactive"
+        })
+
+    return {"status": "success", "assignments": result}
+
 
 
 @app.get("/teacher/assignment-details/{assignment_id}")
 def get_assignment_details(
     assignment_id: int,
     current_user: dict = Depends(get_current_user),
-    db: Session = Depends(SessionLocal)
+    db: Session = Depends(get_db)
 ):
-    """
-    Get detailed info about an assignment (submissions, student list, etc)
-    """
-    try:
-        if current_user["role"] != "faculty":
-            raise HTTPException(status_code=403, detail="Only teachers can access this")
 
-        assignment = db.query(Assignment).filter(
-            Assignment.id == assignment_id,
-            Assignment.faculty_id == current_user["user_id"]
-        ).first()
+    if current_user["role"] != "faculty":
+        raise HTTPException(status_code=403, detail="Only teachers can access this")
 
-        if not assignment:
-            raise HTTPException(status_code=404, detail="Assignment not found")
+    assignment = db.query(Assignment).filter(
+        Assignment.id == assignment_id,
+        Assignment.faculty_id == current_user["user_id"]
+    ).first()
 
-        # Get all students in class
-        students = db.query(Student).filter(
-            Student.year == assignment.year,
-            Student.section == assignment.section,
-            Student.is_deleted == False
-        ).all()
+    if not assignment:
+        raise HTTPException(status_code=404, detail="Assignment not found")
 
-        # Get submissions
-        submissions = db.query(AssignmentSubmission).filter(
-            AssignmentSubmission.assignment_id == assignment_id
-        ).all()
+    students = db.query(Student).filter(
+        Student.year == assignment.year,
+        Student.section == assignment.section,
+        Student.is_deleted == False
+    ).all()
 
-        submitted_ids = {s.student_id for s in submissions if s.is_submitted}
+    submissions = db.query(AssignmentSubmission).filter(
+        AssignmentSubmission.assignment_id == assignment_id
+    ).all()
 
-        submitted_students = []
-        pending_students = []
+    submitted_ids = {s.student_id for s in submissions if s.is_submitted}
 
-        for student in students:
-            user = db.query(User).filter(User.user_id == student.student_id).first()
-            student_info = {
-                "name": user.name if user else "Unknown",
-                "roll": student.roll_no,
-                "student_id": student.student_id
-            }
+    submitted_students = []
+    pending_students = []
 
-            if student.student_id in submitted_ids:
-                submitted_students.append(student_info)
-            else:
-                pending_students.append(student_info)
+    for student in students:
+        user = db.query(User).filter(User.user_id == student.student_id).first()
 
-        return {
-            "status": "success",
-            "assignment": {
-                "id": assignment.id,
-                "title": assignment.title,
-                "description": assignment.description,
-                "due_date": assignment.due_date,
-                "created_at": assignment.created_at,
-                "subject_id": assignment.subject_id,
-                "year": assignment.year,
-                "section": assignment.section
-            },
-            "submitted": submitted_students,
-            "pending": pending_students,
-            "stats": {
-                "total": len(students),
-                "submitted": len(submitted_students),
-                "pending": len(pending_students)
-            }
+        student_info = {
+            "name": user.name if user else "Unknown",
+            "roll": student.roll_no,
+            "student_id": student.student_id
         }
 
-    except HTTPException as e:
-        raise e
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        db.close()
+        if student.student_id in submitted_ids:
+            submitted_students.append(student_info)
+        else:
+            pending_students.append(student_info)
 
+    return {
+        "status": "success",
+        "assignment": {
+            "id": assignment.id,
+            "title": assignment.title,
+            "description": assignment.description,
+            "due_date": assignment.due_date,
+            "created_at": assignment.created_at,
+            "subject_id": assignment.subject_id,
+            "year": assignment.year,
+            "section": assignment.section
+        },
+        "submitted": submitted_students,
+        "pending": pending_students
+    }
 
 @app.get("/student/assignments")
 def get_student_assignments(
     current_user: dict = Depends(get_current_user),
-    db: Session = Depends(SessionLocal)
+    db: Session = Depends(get_db)
 ):
     """
     Get all assignments for the logged-in student
@@ -3911,7 +3937,7 @@ async def submit_assignment(
     submission_data: AssignmentSubmissionCreate,
     file: UploadFile = File(None),
     current_user: dict = Depends(get_current_user),
-    db: Session = Depends(SessionLocal)
+    db: Session = Depends(get_db)
 ):
     """
     Student submits an assignment
@@ -4001,8 +4027,119 @@ async def submit_assignment(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        db.close()
+
+@app.get("/teacher/student-assignments-summary/{year}/{section}")
+def get_student_assignments_summary(
+    year: int,
+    section: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        if current_user["role"] != "faculty":
+            raise HTTPException(status_code=403, detail="Only teachers can access this")
+
+        # Get the 5 most recent assignments for this class
+        recent_assignments = db.query(Assignment).filter(
+            Assignment.faculty_id == current_user["user_id"],
+            Assignment.year == year,
+            Assignment.section == section,
+            Assignment.is_active == True
+        ).order_by(Assignment.created_at.desc()).limit(5).all()
+
+        assignment_ids = [a.id for a in recent_assignments]
+
+        students_query = db.query(Student, User).join(
+            User, Student.student_id == User.user_id
+        ).filter(
+            Student.year == year,
+            Student.section == section,
+            Student.is_deleted == False
+        ).all()
+
+        student_summaries = []
+
+        for student, user in students_query:
+            # Avoid SQLAlchemy crash when list is empty
+            if assignment_ids:
+                submissions = db.query(AssignmentSubmission).filter(
+                    AssignmentSubmission.student_id == student.student_id,
+                    AssignmentSubmission.assignment_id.in_(assignment_ids)
+                ).all()
+            else:
+                submissions = []
+
+            submission_map = {s.assignment_id: s for s in submissions}
+
+            recent_assignment_dots = []
+            for assignment in recent_assignments:
+                now = datetime.utcnow()
+
+                if assignment.id in submission_map:
+                    sub = submission_map[assignment.id]
+                    status = sub.status  # "pending", "approved", "rejected"
+                else:
+                    # Compare with timezone-naive datetime
+                    due = assignment.due_date
+                    if hasattr(due, 'tzinfo') and due.tzinfo is not None:
+                        due = due.replace(tzinfo=None)
+                    status = "future" if due > now else "not_submitted"
+
+                recent_assignment_dots.append({
+                    "assignment_id": assignment.id,
+                    "title": assignment.title,
+                    "status": status
+                })
+
+            student_summaries.append({
+                "student_id": student.student_id,
+                "name": user.name if user else "Unknown",
+                "roll": student.roll_no if hasattr(student, 'roll_no') else "",
+                "year": student.year,
+                "section": student.section,
+                "recent_assignments": recent_assignment_dots
+            })
+
+        return {"status": "success", "students": student_summaries}
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching student summaries: {str(e)}")
+
+@app.put("/teacher/assignment-submissions/{submission_id}/status")
+def update_submission_status(
+    submission_id: int,
+    status_data: StatusUpdateRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "faculty":
+        raise HTTPException(status_code=403, detail="Only teachers can access this")
+
+    submission = db.query(AssignmentSubmission).filter(
+        AssignmentSubmission.id == submission_id
+    ).first()
+
+    if not submission:
+        raise HTTPException(status_code=404, detail="Submission not found")
+
+    # Verify teacher owns the assignment
+    assignment = db.query(Assignment).filter(
+        Assignment.id == submission.assignment_id,
+        Assignment.faculty_id == current_user["user_id"]
+    ).first()
+
+    if not assignment:
+        raise HTTPException(status_code=403, detail="You do not have permission to update this submission")
+
+    if status_data.status not in ["approved", "rejected", "pending"]:
+         raise HTTPException(status_code=400, detail="Invalid status. Must be approved, rejected, or pending")
+
+    submission.status = status_data.status
+    db.commit()
+
+    return {"status": "success", "message": f"Submission status updated to {status_data.status}"}
 
 
 scheduler = BackgroundScheduler()

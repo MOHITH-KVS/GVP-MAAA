@@ -277,7 +277,7 @@ class AssignmentCreate(BaseModel):
     year: int
     section: str
     due_date: datetime
-    file_url: Optional[str] = None
+    file_path: Optional[str] = None
 
 
 class AssignmentResponse(BaseModel):
@@ -291,7 +291,7 @@ class AssignmentResponse(BaseModel):
     created_at: datetime
     is_active: bool
     faculty_id: int
-    file_url: Optional[str] = None
+    file_path: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -300,21 +300,41 @@ class AssignmentResponse(BaseModel):
 class AssignmentSubmissionCreate(BaseModel):
     assignment_id: int
     submission_text: Optional[str] = None
-    submission_file: Optional[str] = None
 
 
 class AssignmentSubmissionResponse(BaseModel):
     id: int
     assignment_id: int
     student_id: int
-    submission_file: Optional[str] = None
+    file_path: Optional[str] = None
     submission_text: Optional[str] = None
     submitted_at: datetime
     is_late: bool
     is_submitted: bool
+    status: str
 
     class Config:
         from_attributes = True
+
+class StatusUpdateRequest(BaseModel):
+    status: str
+
+class AssignmentStatusDot(BaseModel):
+    assignment_id: int
+    title: str
+    status: str # "approved", "rejected", "pending", "not_submitted", "future"
+
+class StudentAssignmentSummary(BaseModel):
+    student_id: int
+    name: str
+    roll: str
+    year: int
+    section: str
+    recent_assignments: List[AssignmentStatusDot]
+
+class StudentAssignmentSummaryResponse(BaseModel):
+    status: str
+    students: List[StudentAssignmentSummary]
 
 
 class AssignmentDetailResponse(BaseModel):
@@ -341,7 +361,7 @@ class AssignmentDetailResponse(BaseModel):
 
 
 class TeacherSubjectResponse(BaseModel):
-    id: int
+    subject_id: int
     subject_name: str
     year: int
     section: str
@@ -351,7 +371,7 @@ class StudentAssignmentResponse(BaseModel):
     id: int
     title: str
     description: Optional[str]
-    subject_id: int
+    subject_name: str
     due_date: datetime
-    file_url: Optional[str]
+    file_path: Optional[str]
     is_submitted: bool
