@@ -10,9 +10,7 @@ export default function Assignments() {
   const [confirm, setConfirm] = useState(false);
   const [success, setSuccess] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
-  const [filter, setFilter] = useState("all");
-
-  const token = localStorage.getItem("token");
+  const token = localStorage.getItem("access_token");
 
   const [form, setForm] = useState({
     assignment_id: "",
@@ -50,7 +48,7 @@ export default function Assignments() {
       setLoading(true);
       const formData = new FormData();
       formData.append("submission_text", form.submission_text);
-      
+
       if (form.file) {
         formData.append("file", form.file);
       }
@@ -86,12 +84,13 @@ export default function Assignments() {
   // Filter assignments
   const filtered = assignments.filter((a) => {
     if (filter === "all") return true;
+    if (filter === "completed") return ["submitted", "approved", "rejected"].includes(a.status);
     return a.status === filter;
   });
 
   const stats = {
     total: assignments.length,
-    submitted: assignments.filter((a) => a.status === "submitted").length,
+    completed: assignments.filter((a) => ["submitted", "approved", "rejected"].includes(a.status)).length,
     pending: assignments.filter((a) => a.status === "pending").length,
   };
 
@@ -118,7 +117,7 @@ export default function Assignments() {
       {/* STATS */}
       <div className="grid grid-cols-3 gap-4">
         <StatCard label="Total" value={stats.total} />
-        <StatCard label="Submitted" value={stats.submitted} color="green" />
+        <StatCard label="Completed" value={stats.completed} color="green" />
         <StatCard label="Pending" value={stats.pending} color="red" />
       </div>
 
@@ -135,11 +134,10 @@ export default function Assignments() {
           <button
             key={f}
             onClick={() => setFilter(f)}
-            className={`px-4 py-2 rounded-xl capitalize transition ${
-              filter === f
-                ? "bg-indigo-600 text-white"
-                : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-            }`}
+            className={`px-4 py-2 rounded-xl capitalize transition ${filter === f
+              ? "bg-indigo-600 text-white"
+              : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+              }`}
           >
             {f}
           </button>
@@ -280,11 +278,21 @@ function AssignmentCard({ assignment, onSubmit }) {
         <div className="flex-1">
           <h3 className="font-semibold text-lg">{assignment.title}</h3>
           <p className="text-sm text-gray-500 mt-1">📚 {assignment.subject}</p>
-          
+
           <div className="mt-3 flex gap-2">
             {assignment.status === "submitted" && (
+              <span className="px-3 py-1 text-xs rounded-full bg-blue-100 text-blue-700">
+                ⌛ Under Review
+              </span>
+            )}
+            {assignment.status === "approved" && (
               <span className="px-3 py-1 text-xs rounded-full bg-green-100 text-green-700">
-                ✓ Submitted
+                ✓ Approved
+              </span>
+            )}
+            {assignment.status === "rejected" && (
+              <span className="px-3 py-1 text-xs rounded-full bg-red-100 text-red-700">
+                ❌ Rejected
               </span>
             )}
             {assignment.status === "pending" && isOverdue && (
@@ -298,19 +306,19 @@ function AssignmentCard({ assignment, onSubmit }) {
               </span>
             )}
             {assignment.status === "pending" && !isOverdue && !isDueToday && (
-              <span className="px-3 py-1 text-xs rounded-full bg-blue-100 text-blue-700">
+              <span className="px-3 py-1 text-xs rounded-full bg-gray-100 text-gray-700">
                 ⏳ {daysLeft} days left
               </span>
             )}
           </div>
         </div>
 
-        {assignment.status === "pending" && (
+        {(assignment.status === "pending" || assignment.status === "rejected") && (
           <button
             onClick={onSubmit}
             className="px-4 py-2 rounded-xl bg-indigo-600 text-white text-sm hover:bg-indigo-700 whitespace-nowrap"
           >
-            Submit
+            {assignment.status === "rejected" ? "Resubmit" : "Submit"}
           </button>
         )}
       </div>

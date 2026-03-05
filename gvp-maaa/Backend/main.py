@@ -3709,38 +3709,11 @@ def create_assignment(
         db.commit()
         db.refresh(new_assignment)
 
-        students = db.query(Student).filter(
-            Student.year == year,
-            Student.section == section,
-            Student.is_deleted == False
-        ).all()
-
-        alert = Alert(
-            title=f"New Assignment: {title}",
-            message=f"Your teacher assigned a new assignment.",
-            type="assignment",
-            target_role="student",
-            target_type="class",
-            faculty_id=current_user["user_id"]
-        )
-
-        db.add(alert)
-        db.commit()
-        db.refresh(alert)
-
-        for student in students:
-            recipient = AlertRecipient(
-                alert_id=alert.id,
-                user_id=student.student_id,
-                is_read=False
-            )
-            db.add(recipient)
-
-        db.commit()
+        
 
         return {
             "status": "success",
-            "message": f"Assignment created and {len(students)} students notified",
+            "message": "Assignment created successfully",
             "assignment_id": new_assignment.id
         }
 
@@ -3844,8 +3817,18 @@ def get_assignment_details(
             "student_id": student.student_id
         }
 
-        if student.student_id in submitted_ids:
-            submitted_students.append(student_info)
+        # Find the specific submission for this student among those submitted
+        submission = next((s for s in submissions if s.student_id == student.student_id and s.is_submitted), None)
+
+        if submission:
+            submitted_students.append({
+                "submission_id": submission.id,
+                "student_id": submission.student_id,
+                "name": user.name if user else "Unknown",
+                "roll": student.roll_no,
+                "file_path": submission.file_path,
+                "status": submission.status
+            })
         else:
             pending_students.append(student_info)
 
@@ -3904,11 +3887,10 @@ def get_student_assignments(
                 Subject.subject_id == assignment.subject_id
             ).first()
 
-            is_submitted = assignment.id in submitted_ids
-            
-            # Check if late
+            # Fetch full submission obj 
             submission = next((s for s in submissions if s.assignment_id == assignment.id), None)
             is_late = submission.is_late if submission else False
+            status = submission.status if submission else "pending"
 
             result.append({
                 "id": assignment.id,
@@ -3917,7 +3899,7 @@ def get_student_assignments(
                 "subject": subject.subject_name if subject else "Unknown",
                 "due_date": assignment.due_date,
                 "created_at": assignment.created_at,
-                "status": "submitted" if is_submitted else "pending",
+                "status": status,
                 "is_late": is_late
             })
 
@@ -3934,7 +3916,7 @@ def get_student_assignments(
 @app.post("/student/submit-assignment/{assignment_id}")
 async def submit_assignment(
     assignment_id: int,
-    submission_data: AssignmentSubmissionCreate,
+    submission_text: Optional[str] = Form(None),
     file: UploadFile = File(None),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -4005,10 +3987,11 @@ async def submit_assignment(
             file_name=file_name,
             file_path=file_path,
             file_type=file_type,
-            submission_text=submission_data.submission_text,
+            submission_text=submission_text,
             submitted_at=datetime.utcnow(),
             is_late=is_late,
-            is_submitted=True
+            is_submitted=True,
+            status="pending"
         )
 
         db.add(submission)

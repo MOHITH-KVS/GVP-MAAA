@@ -22,6 +22,9 @@ export default function Assignments() {
   // Review submission modal state
   const [reviewSubmission, setReviewSubmission] = useState(null); // Holds { submissionId, studentName, assignmentTitle, fileUrl, status }
 
+  // View submissions modal state
+  const [viewAssignmentSubmissions, setViewAssignmentSubmissions] = useState(null); // Holds { title, submitted: [], pending: [] }
+
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(false);
   const [successMsg, setSuccessMsg] = useState("");
@@ -180,19 +183,14 @@ export default function Assignments() {
       const submissionInfo = details.submitted.find(s => s.student_id === studentId);
 
       if (submissionInfo) {
-        // Set review modal state
-        // Note: The API currently doesn't return the submission_id in /assignment-details 
-        // Wait, we just added the Put route for status, it needs submission_id.
-        // Let's modify the new endpoint or find a workaround. 
-        // For now, let's just make the API call with assignmentId and studentId (we need to modify backend for this if we dont have submission ID)
-
         setReviewSubmission({
+          submissionId: submissionInfo.submission_id,
           assignmentId,
           studentId,
           studentName,
           assignmentTitle,
+          fileUrl: submissionInfo.file_path,
           currentStatus,
-          // fileUrl: submissionInfo.file_path || null,
         });
       }
 
@@ -203,6 +201,30 @@ export default function Assignments() {
       setLoading(false);
     }
   }
+
+  // Handle clicking View on an assignment in history
+  const handleViewAssignment = async (assignmentId, title) => {
+    try {
+      setLoading(true);
+      const response = await axios.get(
+        `${API_URL}/teacher/assignment-details/${assignmentId}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      setViewAssignmentSubmissions({
+        assignmentId,
+        title,
+        submitted: response.data.submitted || [],
+        pending: response.data.pending || []
+      });
+      setShowCreateModal(false); // Optionally close the history modal behind it
+    } catch (err) {
+      console.error(err);
+      setErrorMsg("Failed to open assignment details.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // Derived Statistics for Header
   const totalStudents = studentSummaries.length;
@@ -221,7 +243,18 @@ export default function Assignments() {
       s.roll.toLowerCase().includes(search.toLowerCase())
   );
 
-  // Dot Color logic mapping
+  // Dot Color & Status Label logic mapping
+  const getStatusLabel = (status) => {
+    switch (status) {
+      case 'approved': return 'Approved';
+      case 'rejected': return 'Rejected';
+      case 'pending': return 'Pending Review';
+      case 'not_submitted': return 'Not Submitted';
+      case 'future': return 'No Assignment';
+      default: return 'No Actions';
+    }
+  };
+
   const getDotColor = (status) => {
     switch (status) {
       case 'approved': return 'bg-green-500';
@@ -288,7 +321,17 @@ export default function Assignments() {
       {/* ================= SEARCH & STUDENT LIST ================= */}
       <div className="space-y-4">
         <div className="flex justify-between items-center">
-          <h2 className="text-lg font-semibold text-gray-800">Student Progress</h2>
+          <div className="space-y-1">
+            <h2 className="text-lg font-semibold text-gray-800">Student Progress</h2>
+            <div className="flex gap-4 items-center text-xs text-gray-600">
+              <span className="font-medium text-gray-500">Recent Assignments (Last 5):</span>
+              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-green-500 inline-block"></span> Approved</span>
+              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-black inline-block"></span> Rejected</span>
+              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-yellow-400 inline-block"></span> Pending Review</span>
+              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-red-500 inline-block"></span> Not Submitted</span>
+              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-gray-300 inline-block"></span> Future Assignment</span>
+            </div>
+          </div>
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -320,7 +363,7 @@ export default function Assignments() {
                 filteredStudents.map((student) => {
                   // Determine overall latest status derived from dots (simplification: grab first non-future)
                   const latestAssigned = [...student.recent_assignments].reverse().find(a => a.status !== 'future');
-                  const latestStatusText = latestAssigned ? latestAssigned.status.replace("_", " ") : "No Actions";
+                  const latestStatusText = getStatusLabel(latestAssigned ? latestAssigned.status : "unknown");
 
                   return (
                     <tr key={student.student_id} className="hover:bg-gray-50/50 transition-colors">
@@ -332,7 +375,7 @@ export default function Assignments() {
                         {student.year} - {student.section}
                       </td>
                       <td className="py-4 px-6">
-                        <span className="text-xs font-medium px-2.5 py-1 bg-gray-100 text-gray-600 rounded-lg capitalize">
+                        <span className="text-xs font-medium px-2.5 py-1 bg-gray-100 text-gray-600 rounded-lg whitespace-nowrap">
                           {latestStatusText}
                         </span>
                       </td>
@@ -341,7 +384,7 @@ export default function Assignments() {
                           {student.recent_assignments.map((assignment, idx) => (
                             <div
                               key={idx}
-                              title={`${assignment.title} - ${assignment.status}`}
+                              title={`${assignment.title}\nStatus: ${getStatusLabel(assignment.status)}`}
                               onClick={() => handleDotClick(assignment.assignment_id, student.student_id, student.name, assignment.title, assignment.status)}
                               className={`w-3.5 h-3.5 rounded-full shadow-sm cursor-pointer hover:scale-125 transition-transform ${getDotColor(assignment.status)}`}
                             />
@@ -455,8 +498,19 @@ export default function Assignments() {
                           <h4 className="font-semibold text-gray-800">{a.title}</h4>
                           <p className="text-xs text-gray-500 mt-1">Due: {new Date(a.due_date).toLocaleDateString()} • {a.submitted}/{a.total_students} Submitted</p>
                         </div>
-                        <div className="text-xs font-medium px-3 py-1.5 bg-white border border-gray-200 rounded-lg shadow-sm">
-                          {a.status}
+                        <div className="flex items-center gap-3">
+                          <div className="text-xs font-medium px-3 py-1.5 bg-white border border-gray-200 rounded-lg shadow-sm">
+                            {a.status}
+                          </div>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleViewAssignment(a.id, a.title);
+                            }}
+                            className="px-3 py-1.5 text-xs font-semibold text-indigo-600 hover:text-white border border-indigo-600 hover:bg-indigo-600 transition-colors rounded-lg"
+                          >
+                            View
+                          </button>
                         </div>
                       </div>
                     ))
@@ -514,30 +568,59 @@ export default function Assignments() {
               <div className="flex justify-center items-center h-48 bg-gray-50 rounded-2xl border border-gray-200 border-dashed">
                 <div className="text-center">
                   <span className="text-4xl mb-2 block">📄</span>
-                  <button className="text-sm font-medium text-indigo-600 hover:text-indigo-700 bg-indigo-50 px-4 py-2 rounded-lg transition-colors">
-                    Download / View File
-                  </button>
+                  {reviewSubmission.fileUrl ? (
+                    <a
+                      href={`${API_URL}/${reviewSubmission.fileUrl}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-block text-sm font-medium text-indigo-600 hover:text-indigo-700 bg-indigo-50 px-4 py-2 rounded-lg transition-colors"
+                    >
+                      Download / View File
+                    </a>
+                  ) : (
+                    <span className="text-sm font-medium text-gray-500 bg-gray-100 px-4 py-2 rounded-lg">
+                      No File Attached
+                    </span>
+                  )}
                 </div>
               </div>
 
-              <form onSubmit={(e) => {
-                e.preventDefault();
-                // In real implementation we hit /teacher/assignment-submissions/{submission_id}/status 
-                // Currently we lack submission_id in our local state map, so assuming an API call here.
-                setSuccessMsg("Submission status updated.");
-                setReviewSubmission(null);
-                fetchStudentSummaries();
-              }} className="flex gap-4">
-                <button type="button" onClick={() => {
-                  // call api to reject
-                  setReviewSubmission(null);
-                }} className="flex-1 py-3 rounded-xl bg-black text-white font-medium hover:bg-gray-800 transition-colors">
+              <div className="flex gap-4">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await axios.put(`${API_URL}/teacher/assignment-submissions/${reviewSubmission.submissionId}/status`, { status: "rejected" }, { headers: { Authorization: `Bearer ${token}` } });
+                      setSuccessMsg("Submission rejected.");
+                      setReviewSubmission(null);
+                      fetchStudentSummaries();
+                      fetchAssignments();
+                    } catch (error) {
+                      setErrorMsg("Failed to reject submission.");
+                    }
+                  }}
+                  className="flex-1 py-3 rounded-xl bg-black text-white font-medium hover:bg-gray-800 transition-colors"
+                >
                   Reject
                 </button>
-                <button type="submit" className="flex-1 py-3 rounded-xl bg-green-500 text-white font-medium hover:bg-green-600 transition-colors shadow-lg shadow-green-200">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await axios.put(`${API_URL}/teacher/assignment-submissions/${reviewSubmission.submissionId}/status`, { status: "approved" }, { headers: { Authorization: `Bearer ${token}` } });
+                      setSuccessMsg("Submission approved.");
+                      setReviewSubmission(null);
+                      fetchStudentSummaries();
+                      fetchAssignments();
+                    } catch (error) {
+                      setErrorMsg("Failed to approve submission.");
+                    }
+                  }}
+                  className="flex-1 py-3 rounded-xl bg-green-500 text-white font-medium hover:bg-green-600 transition-colors shadow-lg shadow-green-200"
+                >
                   Approve
                 </button>
-              </form>
+              </div>
             </div>
           </div>
         </div>
@@ -579,6 +662,112 @@ export default function Assignments() {
         </div>
       )}
 
+      {/* VIEW ASSIGNMENT SUBMISSIONS MODAL */}
+      {viewAssignmentSubmissions && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in">
+          <div className="bg-white rounded-3xl shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="px-8 py-5 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+              <div>
+                <h3 className="font-bold text-xl text-gray-800">{viewAssignmentSubmissions.title}</h3>
+                <p className="text-sm text-gray-500 mt-1">Review student submissions</p>
+              </div>
+              <button onClick={() => {
+                setViewAssignmentSubmissions(null);
+                setShowCreateModal(true); // Re-open history modal if desired, or skip
+              }} className="text-gray-400 hover:text-gray-600 w-8 h-8 rounded-full hover:bg-gray-200 flex items-center justify-center transition-colors">
+                ✕
+              </button>
+            </div>
+            <div className="p-8 overflow-y-auto bg-white">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-gray-50/50 text-gray-500 text-sm font-medium border-b border-gray-100">
+                    <th className="py-4 px-6">Student Name</th>
+                    <th className="py-4 px-6">Roll</th>
+                    <th className="py-4 px-6">Status</th>
+                    <th className="py-4 px-6 text-center">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {/* Submitted Students */}
+                  {viewAssignmentSubmissions.submitted.map((sub, idx) => (
+                    <tr key={`sub-${idx}`} className="hover:bg-gray-50/50 transition-colors">
+                      <td className="py-4 px-6 font-medium text-gray-800">{sub.name}</td>
+                      <td className="py-4 px-6 text-sm text-gray-600">{sub.roll}</td>
+                      <td className="py-4 px-6">
+                        <span className={`text-xs font-medium px-2.5 py-1 rounded-lg ${sub.status === 'approved' ? 'bg-green-100 text-green-700' :
+                            sub.status === 'rejected' ? 'bg-red-100 text-red-700' :
+                              'bg-yellow-100 text-yellow-700'
+                          }`}>
+                          {getStatusLabel(sub.status)}
+                        </span>
+                      </td>
+                      <td className="py-4 px-6 text-center flex justify-center gap-2">
+                        <button
+                          onClick={async () => {
+                            try {
+                              await axios.put(`${API_URL}/teacher/assignment-submissions/${sub.submission_id}/status`, { status: "approved" }, { headers: { Authorization: `Bearer ${token}` } });
+                              // Optimistically update
+                              setViewAssignmentSubmissions(prev => ({
+                                ...prev,
+                                submitted: prev.submitted.map(s => s.submission_id === sub.submission_id ? { ...s, status: "approved" } : s)
+                              }));
+                              fetchStudentSummaries();
+                              fetchAssignments();
+                            } catch (error) {
+                              setErrorMsg("Failed to approve");
+                            }
+                          }}
+                          className="px-3 py-1.5 text-xs font-medium rounded-lg bg-green-50 text-green-600 hover:bg-green-100 transition-colors"
+                        >Approve</button>
+                        <button
+                          onClick={async () => {
+                            try {
+                              await axios.put(`${API_URL}/teacher/assignment-submissions/${sub.submission_id}/status`, { status: "rejected" }, { headers: { Authorization: `Bearer ${token}` } });
+                              // Optimistically update
+                              setViewAssignmentSubmissions(prev => ({
+                                ...prev,
+                                submitted: prev.submitted.map(s => s.submission_id === sub.submission_id ? { ...s, status: "rejected" } : s)
+                              }));
+                              fetchStudentSummaries();
+                              fetchAssignments();
+                            } catch (error) {
+                              setErrorMsg("Failed to reject");
+                            }
+                          }}
+                          className="px-3 py-1.5 text-xs font-medium rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors"
+                        >Reject</button>
+                      </td>
+                    </tr>
+                  ))}
+
+                  {/* Pending Students */}
+                  {viewAssignmentSubmissions.pending.map((pend, idx) => (
+                    <tr key={`pend-${idx}`} className="hover:bg-gray-50/50 transition-colors opacity-75">
+                      <td className="py-4 px-6 font-medium text-gray-800">{pend.name}</td>
+                      <td className="py-4 px-6 text-sm text-gray-600">{pend.roll}</td>
+                      <td className="py-4 px-6">
+                        <span className="text-xs font-medium px-2.5 py-1 bg-red-50 text-red-600 rounded-lg whitespace-nowrap">
+                          Not Submitted
+                        </span>
+                      </td>
+                      <td className="py-4 px-6 text-center text-gray-400 text-sm">
+                        -
+                      </td>
+                    </tr>
+                  ))}
+
+                  {viewAssignmentSubmissions.submitted.length === 0 && viewAssignmentSubmissions.pending.length === 0 && (
+                    <tr>
+                      <td colSpan="4" className="text-center py-8 text-gray-500">No students found.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );
