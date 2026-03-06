@@ -49,76 +49,76 @@ export default function TeacherDashboard() {
 
 
   useEffect(() => {
-  const fetchProfile = async () => {
-    const token = localStorage.getItem("access_token");
-
-    if (!token) {
-      console.error("No access token found");
-      return;
-    }
-
-    const res = await fetch("http://localhost:8000/faculty/profile", {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
-
-    if (!res.ok) {
-      console.error("Failed to fetch profile", res.status);
-      return;
-    }
-
-    const data = await res.json();
-    setProfile(data);
-  };
-
-  fetchProfile();
- }, []);
-
-
- useEffect(() => {
-  const fetchAlerts = async () => {
-    try {
+    const fetchProfile = async () => {
       const token = localStorage.getItem("access_token");
 
-      const res = await fetch("http://localhost:8000/faculty/alerts", {
+      if (!token) {
+        console.error("No access token found");
+        return;
+      }
+
+      const res = await fetch("http://localhost:8000/faculty/profile", {
         headers: {
           Authorization: `Bearer ${token}`,
         },
       });
 
       if (!res.ok) {
-        console.error("Failed to fetch alerts");
+        console.error("Failed to fetch profile", res.status);
         return;
       }
 
       const data = await res.json();
-      setAlerts(data);
-    } catch (error) {
-      console.error("Error fetching alerts", error);
-    } finally {
-      setLoading(false);
-    }
-  };
+      setProfile(data);
+    };
 
-  fetchAlerts();
- }, []);
+    fetchProfile();
+  }, []);
+
+
+  useEffect(() => {
+    const fetchAlerts = async () => {
+      try {
+        const token = localStorage.getItem("access_token");
+
+        const res = await fetch("http://localhost:8000/faculty/alerts", {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (!res.ok) {
+          console.error("Failed to fetch alerts");
+          return;
+        }
+
+        const data = await res.json();
+        setAlerts(data);
+      } catch (error) {
+        console.error("Error fetching alerts", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchAlerts();
+  }, []);
 
 
 
   if (showLogout) {
-  return <Logout onBack={() => setShowLogout(false)} role="teacher" />;
-}
+    return <Logout onBack={() => setShowLogout(false)} role="teacher" />;
+  }
 
- if (!profile) {
-  return (
-    <div className="h-screen flex items-center justify-center">
-      <p className="text-gray-500">Loading dashboard...</p>
-    </div>
-  );
- }
+  if (!profile) {
+    return (
+      <div className="h-screen flex items-center justify-center">
+        <p className="text-gray-500">Loading dashboard...</p>
+      </div>
+    );
+  }
 
- 
+
 
   return (
     <div className="h-screen w-screen bg-gradient-to-br from-indigo-50 via-white to-cyan-50">
@@ -126,9 +126,8 @@ export default function TeacherDashboard() {
 
         {/* ================= SIDEBAR ================= */}
         <aside
-          className={`transition-[width] duration-300 ease-out flex flex-col ${
-            sidebarOpen ? "w-72" : "w-20"
-          } p-4 glass border-r border-white/40`}
+          className={`transition-[width] duration-300 ease-out flex flex-col ${sidebarOpen ? "w-72" : "w-20"
+            } p-4 glass border-r border-white/40`}
         >
           <div className="flex items-center justify-between mb-8">
             {sidebarOpen && (
@@ -216,11 +215,11 @@ export default function TeacherDashboard() {
 
               <div className="space-y-3">
                 <button
-                    onClick={() => setShowUploadResource(true)}
-                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition"
-                   >
-                    <UploadFileIcon fontSize="small" />
-                    {sidebarOpen && <span>Upload Resource</span>}
+                  onClick={() => setShowUploadResource(true)}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition"
+                >
+                  <UploadFileIcon fontSize="small" />
+                  {sidebarOpen && <span>Upload Resource</span>}
                 </button>
 
 
@@ -229,7 +228,7 @@ export default function TeacherDashboard() {
                   className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl 
                             border border-amber-200 text-amber-700 
                             bg-amber-50 hover:bg-amber-100 transition"
-                 >
+                >
                   <CampaignIcon fontSize="small" />
                   {sidebarOpen && <span>Give Alert</span>}
                 </button>
@@ -270,9 +269,8 @@ export default function TeacherDashboard() {
 
           {/* ===== MAIN CONTENT (FIXED SAFE PADDING) ===== */}
           <div
-            className={`flex-1 relative z-10 transition-all ${
-              !showProfile ? "pr-16" : ""
-            }`}
+            className={`flex-1 relative z-10 transition-all ${!showProfile ? "pr-16" : ""
+              }`}
           >
             {activePage === "overview" && <Overview profile={profile} />}
             {activePage === "timetable" && <Timetable />}
@@ -283,32 +281,31 @@ export default function TeacherDashboard() {
             {activePage === "events" && <Events />}
             {activePage === "insights" && <Insights />}
             {activePage === "alerts" && (
-              <Alerts 
-                alerts={alerts} 
+              <Alerts
+                alerts={alerts}
                 setAlerts={setAlerts}
-                loading={loading} 
+                loading={loading}
               />
             )}
           </div>
 
           {/* ================= PROFILE ================= */}
           <div
-          className={`transition-all duration-300 ${
-            showProfile ? "w-80" : "w-14"
-          } overflow-hidden`}
-        >
-          {showProfile ? (
-            <TeacherProfile
-              profile={profile}
-              onClose={() => setShowProfile(false)}
-              onViewFullProfile={() => setShowFullProfile(true)}
-            />
-          ) : (
-            <CollapsedTeacherProfile onOpen={() => setShowProfile(true)} />
-          )}
+            className={`transition-all duration-300 ${showProfile ? "w-80" : "w-14"
+              } overflow-hidden`}
+          >
+            {showProfile ? (
+              <TeacherProfile
+                profile={profile}
+                onClose={() => setShowProfile(false)}
+                onViewFullProfile={() => setShowFullProfile(true)}
+              />
+            ) : (
+              <CollapsedTeacherProfile onOpen={() => setShowProfile(true)} />
+            )}
 
 
-        </div>
+          </div>
 
         </main>
         {/* ================= FULL PROFILE PAGE ================= */}
@@ -326,8 +323,8 @@ export default function TeacherDashboard() {
         )}
         {/* ================= GIVE ALERT MODAL ================= */}
         {showGiveAlert && (
-          <GiveAlertModal 
-          onClose={() => setShowGiveAlert(false)} 
+          <GiveAlertModal
+            onClose={() => setShowGiveAlert(false)}
           />
         )}
       </div>
@@ -349,8 +346,8 @@ function TeacherProfile({ profile, onClose, onViewFullProfile }) {
         </button>
 
         <div className="text-center">
-          <div className="w-24 h-24 mx-auto rounded-full bg-indigo-500 text-white flex items-center justify-center text-3xl font-semibold">
-            B
+          <div className="w-24 h-24 mx-auto rounded-full bg-indigo-500 text-white flex items-center justify-center text-3xl font-semibold shadow-inner border-4 border-white/20">
+            {profile?.name ? profile.name.charAt(0).toUpperCase() : "T"}
           </div>
           <h3 className="mt-4 text-lg font-semibold">
             {profile?.name || "Faculty"}
@@ -398,7 +395,7 @@ function TeacherProfile({ profile, onClose, onViewFullProfile }) {
           <button
             onClick={onViewFullProfile}
             className="w-full py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition"
-           >
+          >
             View Full Profile
           </button>
 

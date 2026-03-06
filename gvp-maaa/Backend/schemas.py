@@ -375,3 +375,26 @@ class StudentAssignmentResponse(BaseModel):
     due_date: datetime
     file_path: Optional[str]
     is_submitted: bool
+
+class ResourceResponse(BaseModel):
+    id: int
+    title: str
+    type: str
+    created_at: datetime
+    accessed: int
+    total_students: int
+
+    class Config:
+        orm_mode = True
+
+
+class StudentResourceResponse(BaseModel):
+    id: int
+    title: str
+    description: str
+    type: str
+    file_url: str
+    created_at: datetime
+
+    class Config:
+        orm_mode = True

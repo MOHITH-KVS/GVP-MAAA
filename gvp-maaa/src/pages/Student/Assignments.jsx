@@ -10,6 +10,7 @@ export default function Assignments() {
   const [confirm, setConfirm] = useState(false);
   const [success, setSuccess] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  const [filter, setFilter] = useState("all");
   const token = localStorage.getItem("access_token");
 
   const [form, setForm] = useState({

@@ -1,4 +1,4 @@
-import { useState, useEffect,useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 
 
 export default function Students() {
@@ -8,7 +8,7 @@ export default function Students() {
   const [section, setSection] = useState("All");
   const [search, setSearch] = useState("");
 
- 
+
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [showDeleteStudent, setShowDeleteStudent] = useState(false);
   const [showUpdateStudent, setShowUpdateStudent] = useState(false);
@@ -17,40 +17,40 @@ export default function Students() {
 
 
   const fetchStudents = async () => {
-  try {
-    setLoading(true);
+    try {
+      setLoading(true);
 
-    const token = localStorage.getItem("access_token");
+      const token = localStorage.getItem("access_token");
 
-    const response = await fetch("http://127.0.0.1:8000/admin/students", {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
+      const response = await fetch("http://127.0.0.1:8000/admin/students", {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
 
-    const data = await response.json();
+      const data = await response.json();
 
-    if (!response.ok) {
-      console.error("Failed to fetch students:", data);
+      if (!response.ok) {
+        console.error("Failed to fetch students:", data);
+        setStudents([]);
+        return;
+      }
+
+      setStudents(Array.isArray(data) ? data : []);
+
+    } catch (err) {
+      console.error("Fetch students failed:", err);
       setStudents([]);
-      return;
+    } finally {
+      setLoading(false);
     }
-
-    setStudents(Array.isArray(data) ? data : []);
-
-  } catch (err) {
-    console.error("Fetch students failed:", err);
-    setStudents([]);
-  } finally {
-    setLoading(false);
-  }
- };
+  };
 
 
   useEffect(() => {
-  fetchStudents();
- }, []);
+    fetchStudents();
+  }, []);
 
 
 
@@ -72,67 +72,67 @@ export default function Students() {
 
   /* ===== SORT AT RISK FIRST ===== */
   const sortedStudents = [...filtered].sort((a, b) => {
-    const aRisk = a.attendance < 75 || a.cgpa < 7;
-    const bRisk = b.attendance < 75 || b.cgpa < 7;
+    const aRisk = a.attendance < 75;
+    const bRisk = b.attendance < 75;
     return bRisk - aRisk;
   });
 
   const atRiskCount = students.filter(
-    (s) => s.attendance < 75 || s.cgpa < 7
+    (s) => s.attendance < 75
   ).length;
 
   const downloadRiskReport = async () => {
-  try {
-    const token = localStorage.getItem("access_token");
+    try {
+      const token = localStorage.getItem("access_token");
 
-    if (!token) {
-      alert("Session expired. Please login again.");
-      return;
-    }
-
-    const response = await fetch(
-      "http://localhost:8000/admin/students/risk-report", // ✅ FIXED
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          year,
-          section,
-          search,
-        }),
+      if (!token) {
+        alert("Session expired. Please login again.");
+        return;
       }
-    );
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => null);
-      console.error("Report generation failed:", errorData);
-      alert("Failed to generate report");
-      return;
+      const response = await fetch(
+        "http://localhost:8000/admin/students/risk-report", // ✅ FIXED
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            year,
+            section,
+            search,
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        console.error("Report generation failed:", errorData);
+        alert("Failed to generate report");
+        return;
+      }
+
+      const blob = await response.blob();
+
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "Risk_Students_Report.pdf";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url); // ✅ cleanup memory
+
+    } catch (error) {
+      console.error("Download error:", error);
+      alert("Error generating report");
     }
-
-    const blob = await response.blob();
-
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "Risk_Students_Report.pdf";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    window.URL.revokeObjectURL(url); // ✅ cleanup memory
-
-  } catch (error) {
-    console.error("Download error:", error);
-    alert("Error generating report");
-  }
- };
+  };
 
   if (loading) {
-  return <p className="text-center">Loading students...</p>;
- }
+    return <p className="text-center">Loading students...</p>;
+  }
 
 
   return (
@@ -246,7 +246,7 @@ export default function Students() {
 
           <tbody>
             {sortedStudents.map((s) => {
-              const atRisk = s.attendance < 75 || s.cgpa < 7;
+              const atRisk = s.attendance < 75;
               return (
                 <tr key={s.id} className="border-t text-sm">
                   <td className="px-4 py-3">{s.roll}</td>
@@ -269,7 +269,7 @@ export default function Students() {
         </table>
       </div>
 
-            {/* ================= STUDENT ANALYTICS ================= */}
+      {/* ================= STUDENT ANALYTICS ================= */}
       <div className="space-y-4">
 
         <h2 className="text-lg font-semibold">
@@ -341,8 +341,8 @@ export default function Students() {
       </div>
 
       {/* ================= MODALS ================= */}
-      {showDeleteStudent && (<DeleteStudentModal students={students} onDelete={setStudents} onClose={() => setShowDeleteStudent(false)} /> )}
-      {showUpdateStudent && (<UpdateStudentModal students={students} setStudents={setStudents} onClose={() => setShowUpdateStudent(false)}/>)}
+      {showDeleteStudent && (<DeleteStudentModal students={students} onDelete={setStudents} onClose={() => setShowDeleteStudent(false)} />)}
+      {showUpdateStudent && (<UpdateStudentModal students={students} setStudents={setStudents} onClose={() => setShowUpdateStudent(false)} />)}
       {showNotifyStudent && (<NotifyStudentModal students={students} onClose={() => setShowNotifyStudent(false)} />)}
 
 
@@ -377,31 +377,31 @@ function DeleteStudentModal({ students, onDelete, onClose }) {
 
   /* ===== FILTERED STUDENTS ===== */
   const filteredStudents = students.filter((s) => {
-  const name = (s.name || "").toLowerCase();
-  const roll = (s.roll || "").toLowerCase();
-  const query = search.toLowerCase();
+    const name = (s.name || "").toLowerCase();
+    const roll = (s.roll || "").toLowerCase();
+    const query = search.toLowerCase();
 
-  return (
-    (!filterDepartment || s.department === filterDepartment) &&
-    (!filterYear || String(s.year) === filterYear) &&
-    (!filterSemester || String(s.semester) === filterSemester) &&
-    (!filterSection || s.section === filterSection) &&
-    (name.includes(query) || roll.includes(query))
-  );
- });
-
-
- useEffect(() => {
-  if (flow === "single") {
-    // if selected student is no longer visible after filtering, clear it
-    const exists = filteredStudents.some(
-      (s) => s.id === selectedStudentId
+    return (
+      (!filterDepartment || s.department === filterDepartment) &&
+      (!filterYear || String(s.year) === filterYear) &&
+      (!filterSemester || String(s.semester) === filterSemester) &&
+      (!filterSection || s.section === filterSection) &&
+      (name.includes(query) || roll.includes(query))
     );
-    if (!exists) {
-      setSelectedStudentId(null);
+  });
+
+
+  useEffect(() => {
+    if (flow === "single") {
+      // if selected student is no longer visible after filtering, clear it
+      const exists = filteredStudents.some(
+        (s) => s.id === selectedStudentId
+      );
+      if (!exists) {
+        setSelectedStudentId(null);
+      }
     }
-  }
- }, [filteredStudents, flow, selectedStudentId]);
+  }, [filteredStudents, flow, selectedStudentId]);
 
 
   const selectedStudent = filteredStudents.find(
@@ -410,108 +410,108 @@ function DeleteStudentModal({ students, onDelete, onClose }) {
 
   /* ===== UNDO DELETE ===== */
   const handleUndo = () => {
-  if (undoRef.current) {
-    clearInterval(undoRef.current);
-  }
+    if (undoRef.current) {
+      clearInterval(undoRef.current);
+    }
 
-  // restore deleted students locally
-  onDelete((prev) => [
-    ...prev,
-    ...students.filter((s) => undoIds.includes(s.id)),
-  ]);
+    // restore deleted students locally
+    onDelete((prev) => [
+      ...prev,
+      ...students.filter((s) => undoIds.includes(s.id)),
+    ]);
 
-  setUndoIds([]);
-  setStep("form");
- };
+    setUndoIds([]);
+    setStep("form");
+  };
 
 
   /* ===== FINAL DELETE ===== */
   const handleFinalDelete = async () => {
-  const token = localStorage.getItem("access_token");
+    const token = localStorage.getItem("access_token");
 
-  let ids = [];
-
-
-  if (flow === "single" && selectedStudentId) {
-    ids = [selectedStudentId];
-  }
-
-  if (flow === "bulk") {
-    ids = selectedBulkIds;
-  }
+    let ids = [];
 
 
-  if (ids.length === 0) {
-    alert("No students selected");
-    return;
-  }
-
-  setUndoIds(ids);     // store deleted ids for undo
-  setUndoTimer(UNDO_DURATION); // reset timer
-
-  try {
-    const res = await fetch("http://127.0.0.1:8000/admin/students", {
-      method: "DELETE",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({
-        student_ids: ids,
-      }),
-    });
-
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.detail || "Delete failed");
+    if (flow === "single" && selectedStudentId) {
+      ids = [selectedStudentId];
     }
 
-    // 🔄 Update UI after DB delete
+    if (flow === "bulk") {
+      ids = selectedBulkIds;
+    }
+
+
+    if (ids.length === 0) {
+      alert("No students selected");
+      return;
+    }
+
+    setUndoIds(ids);     // store deleted ids for undo
+    setUndoTimer(UNDO_DURATION); // reset timer
+
+    try {
+      const res = await fetch("http://127.0.0.1:8000/admin/students", {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          student_ids: ids,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || "Delete failed");
+      }
+
+      // 🔄 Update UI after DB delete
       onDelete((prev) => prev.filter((s) => !ids.includes(s.id)));
 
       setStep("success");
 
 
 
-  } catch (err) {
-    alert(err.message);
-  }
- };
-  
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
   /* ===== KEEP SELECTED IDS IN SYNC WITH FILTERED LIST ===== */
   useEffect(() => {
-  if (flow === "bulk") {
-    // remove ids that no longer exist after filtering
-    setSelectedBulkIds((prev) =>
-      prev.filter((id) => filteredStudents.some((s) => s.id === id))
-    );
-  }
- }, [filteredStudents, flow]);
+    if (flow === "bulk") {
+      // remove ids that no longer exist after filtering
+      setSelectedBulkIds((prev) =>
+        prev.filter((id) => filteredStudents.some((s) => s.id === id))
+      );
+    }
+  }, [filteredStudents, flow]);
 
- 
- /* ===== UNDO TIMER ===== */
- useEffect(() => {
-  if (step !== "success") return;
 
-  undoRef.current = setInterval(() => {
-    setUndoTimer((t) => {
-      if (t <= 1) {
-        clearInterval(undoRef.current);
-        return 0;
-      }
-      return t - 1;
-    });
-  }, 1000);
+  /* ===== UNDO TIMER ===== */
+  useEffect(() => {
+    if (step !== "success") return;
 
-  return () => clearInterval(undoRef.current);
- }, [step]);
+    undoRef.current = setInterval(() => {
+      setUndoTimer((t) => {
+        if (t <= 1) {
+          clearInterval(undoRef.current);
+          return 0;
+        }
+        return t - 1;
+      });
+    }, 1000);
 
- /* ===== AUTO-CLOSE MODAL AFTER UNDO PERIOD ===== */
- useEffect(() => {
-  if (step === "success" && undoTimer === 0) {
-    onClose();
-  }
- }, [undoTimer, step, onClose]);
+    return () => clearInterval(undoRef.current);
+  }, [step]);
+
+  /* ===== AUTO-CLOSE MODAL AFTER UNDO PERIOD ===== */
+  useEffect(() => {
+    if (step === "success" && undoTimer === 0) {
+      onClose();
+    }
+  }, [undoTimer, step, onClose]);
 
 
 
@@ -554,44 +554,44 @@ function DeleteStudentModal({ students, onDelete, onClose }) {
           <>
             {/* FILTERS */}
             <div className="grid grid-cols-2 gap-3">
-            <select value={filterYear} onChange={(e) => setFilterYear(e.target.value)}>
-              <option value="">Select Year</option>
-              <option value="1">1st Year</option>
-              <option value="2">2nd Year</option>
-              <option value="3">3rd Year</option>
-              <option value="4">4th Year</option>
-            </select>
+              <select value={filterYear} onChange={(e) => setFilterYear(e.target.value)}>
+                <option value="">Select Year</option>
+                <option value="1">1st Year</option>
+                <option value="2">2nd Year</option>
+                <option value="3">3rd Year</option>
+                <option value="4">4th Year</option>
+              </select>
 
-            <select value={filterSemester} onChange={(e) => setFilterSemester(e.target.value)}>
-              <option value="">Select Semester</option>
-              <option value="1">Semester 1</option>
-              <option value="2">Semester 2</option>
-              <option value="3">Semester 3</option>
-              <option value="4">Semester 4</option>
-              <option value="5">Semester 5</option>
-              <option value="6">Semester 6</option>
-              <option value="7">Semester 7</option>
-              <option value="8">Semester 8</option>
-            </select>
+              <select value={filterSemester} onChange={(e) => setFilterSemester(e.target.value)}>
+                <option value="">Select Semester</option>
+                <option value="1">Semester 1</option>
+                <option value="2">Semester 2</option>
+                <option value="3">Semester 3</option>
+                <option value="4">Semester 4</option>
+                <option value="5">Semester 5</option>
+                <option value="6">Semester 6</option>
+                <option value="7">Semester 7</option>
+                <option value="8">Semester 8</option>
+              </select>
 
-            <select value={filterDepartment} onChange={(e) => setFilterDepartment(e.target.value)}>
-              <option value="">Select Department</option>
-              <option value="CSE">CSE</option>
-              <option value="CSM">CSM</option>
-              <option value="ECE">ECE</option>
-              <option value="MECH">MECH</option>
-              <option value="CIVIL">CIVIL</option>
-            </select>
+              <select value={filterDepartment} onChange={(e) => setFilterDepartment(e.target.value)}>
+                <option value="">Select Department</option>
+                <option value="CSE">CSE</option>
+                <option value="CSM">CSM</option>
+                <option value="ECE">ECE</option>
+                <option value="MECH">MECH</option>
+                <option value="CIVIL">CIVIL</option>
+              </select>
 
-            <select value={filterSection} onChange={(e) => setFilterSection(e.target.value)}>
-              <option value="">Select Section</option>
-              <option value="A">A</option>
-              <option value="B">B</option>
-              <option value="C">C</option>
-              <option value="D">D</option>
-              <option value="E">E</option>
-            </select>
-          </div>
+              <select value={filterSection} onChange={(e) => setFilterSection(e.target.value)}>
+                <option value="">Select Section</option>
+                <option value="A">A</option>
+                <option value="B">B</option>
+                <option value="C">C</option>
+                <option value="D">D</option>
+                <option value="E">E</option>
+              </select>
+            </div>
 
             {/* SEARCH (same as Update modal) */}
             <input
@@ -609,9 +609,8 @@ function DeleteStudentModal({ students, onDelete, onClose }) {
                   <div
                     key={s.id}
                     onClick={() => setSelectedStudentId(s.id)}
-                    className={`px-3 py-2 cursor-pointer ${
-                      selectedStudentId === s.id ? "bg-red-100" : ""
-                    }`}
+                    className={`px-3 py-2 cursor-pointer ${selectedStudentId === s.id ? "bg-red-100" : ""
+                      }`}
                   >
                     {s.roll} – {s.name}
                   </div>
@@ -810,16 +809,16 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
 
 
   const filteredStudents = students.filter(
-  (s) =>
-    (!filterDepartment || s.department === filterDepartment) &&
-    (!filterYear || Number(s.year) === Number(filterYear)) &&
-    (!filterSemester || Number(s.semester) === Number(filterSemester))&&
-    (!filterSection || s.section === filterSection) &&
-    (
-      s.name.toLowerCase().includes(search.toLowerCase()) ||
-      s.roll.toLowerCase().includes(search.toLowerCase())
-    )
- );
+    (s) =>
+      (!filterDepartment || s.department === filterDepartment) &&
+      (!filterYear || Number(s.year) === Number(filterYear)) &&
+      (!filterSemester || Number(s.semester) === Number(filterSemester)) &&
+      (!filterSection || s.section === filterSection) &&
+      (
+        s.name.toLowerCase().includes(search.toLowerCase()) ||
+        s.roll.toLowerCase().includes(search.toLowerCase())
+      )
+  );
 
 
   const selectedStudent = students.find(
@@ -828,157 +827,157 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
 
   /* ===== BULK UPDATE ===== */
   const [bulkFilter, setBulkFilter] = useState({
-  year: "",
-  /*semester: "",        // ✅ ADD*/
-  department: "",
-  section: "",
-  newYear: "",
-  newSemester: "",
-  newSection: ""
- });
+    year: "",
+    /*semester: "",        // ✅ ADD*/
+    department: "",
+    section: "",
+    newYear: "",
+    newSemester: "",
+    newSection: ""
+  });
 
 
 
   const bulkStudents = students.filter(
-  (s) =>
-    (!bulkFilter.year ||Number(s.year) === Number(bulkFilter.year)) &&
-    (!bulkFilter.department || s.department === bulkFilter.department) &&
-    /*(!bulkFilter.semester || Number(s.semester) === Number(bulkFilter.semester)) && */
-    (!bulkFilter.section || s.section === bulkFilter.section)
-);
+    (s) =>
+      (!bulkFilter.year || Number(s.year) === Number(bulkFilter.year)) &&
+      (!bulkFilter.department || s.department === bulkFilter.department) &&
+      /*(!bulkFilter.semester || Number(s.semester) === Number(bulkFilter.semester)) && */
+      (!bulkFilter.section || s.section === bulkFilter.section)
+  );
 
   /* ===== CONFIRM UPDATE ===== */
   const confirmUpdate = async () => {
-  setSubmitting(true);
-  const token = localStorage.getItem("access_token");
+    setSubmitting(true);
+    const token = localStorage.getItem("access_token");
 
-  try {
-    // 🔹 SINGLE STUDENT UPDATE
-    if (flow === "single" && selectedStudentId) {
-      const response = await fetch(
-        `http://127.0.0.1:8000/admin/students/${selectedStudentId}`,
-        {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify(singleUpdate),
+    try {
+      // 🔹 SINGLE STUDENT UPDATE
+      if (flow === "single" && selectedStudentId) {
+        const response = await fetch(
+          `http://127.0.0.1:8000/admin/students/${selectedStudentId}`,
+          {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify(singleUpdate),
+          }
+        );
+
+        if (!response.ok) throw new Error("Single update failed");
+
+        const result = await response.json();
+
+        setStudents((prev) =>
+          prev.map((s) =>
+            s.id === selectedStudentId
+              ? { ...s, ...singleUpdate }
+              : s
+          )
+        );
+        setEditMode(false);
+        setSelectedStudentId(null);
+        setSingleUpdate({});
+
+      }
+
+      // 🔹 BULK PROMOTION
+      // 🔹 BULK PROMOTION (FIXED)
+      if (flow === "bulk" && selectedBulkIds.length > 0) {
+
+        // 🚨 prevent empty update
+        if (!bulkFilter.newYear && !bulkFilter.newSemester && !bulkFilter.newSection) {
+          alert("Please select at least one field to update");
+          setSubmitting(false);
+          return;
         }
-      );
 
-      if (!response.ok) throw new Error("Single update failed");
+        const payload = {
+          student_ids: selectedBulkIds.map(Number),
+        };
 
-      const result = await response.json();
-
-      setStudents((prev) =>
-        prev.map((s) =>
-          s.id === selectedStudentId
-            ? { ...s, ...singleUpdate }
-            : s
-        )
-      );
-      setEditMode(false);
-      setSelectedStudentId(null);
-      setSingleUpdate({});
-
-    }
-
-    // 🔹 BULK PROMOTION
-    // 🔹 BULK PROMOTION (FIXED)
-    if (flow === "bulk" && selectedBulkIds.length > 0) {
-
-      // 🚨 prevent empty update
-      if (!bulkFilter.newYear && !bulkFilter.newSemester && !bulkFilter.newSection) {
-        alert("Please select at least one field to update");
-        setSubmitting(false);
-        return;
-      }
-
-      const payload = {
-        student_ids: selectedBulkIds.map(Number),
-      };
-
-      // Only add fields if admin selected them
-      if (bulkFilter.newYear) {
-        payload.new_year = Number(bulkFilter.newYear);
-      }
-
-      if (bulkFilter.newSemester) {
-        payload.new_semester = Number(bulkFilter.newSemester);
-      }
-
-      if (bulkFilter.newSection) {
-        payload.new_section = bulkFilter.newSection;
-      }
-
-      console.log("BULK PAYLOAD", payload);
-
-      const response = await fetch(
-        "http://127.0.0.1:8000/admin/students/bulk-promote",
-        {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify(payload),
+        // Only add fields if admin selected them
+        if (bulkFilter.newYear) {
+          payload.new_year = Number(bulkFilter.newYear);
         }
-      );
 
-      if (!response.ok) {
-        const err = await response.json();
-        console.error(err);
-        throw new Error("Bulk update failed");
-      }
+        if (bulkFilter.newSemester) {
+          payload.new_semester = Number(bulkFilter.newSemester);
+        }
 
-      // 🔄 Update UI locally (only update selected fields)
-      setStudents((prev) =>
-        prev.map((s) =>
-          selectedBulkIds.includes(s.id)
-            ? {
+        if (bulkFilter.newSection) {
+          payload.new_section = bulkFilter.newSection;
+        }
+
+        console.log("BULK PAYLOAD", payload);
+
+        const response = await fetch(
+          "http://127.0.0.1:8000/admin/students/bulk-promote",
+          {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify(payload),
+          }
+        );
+
+        if (!response.ok) {
+          const err = await response.json();
+          console.error(err);
+          throw new Error("Bulk update failed");
+        }
+
+        // 🔄 Update UI locally (only update selected fields)
+        setStudents((prev) =>
+          prev.map((s) =>
+            selectedBulkIds.includes(s.id)
+              ? {
                 ...s,
                 year: bulkFilter.newYear ? Number(bulkFilter.newYear) : s.year,
                 semester: bulkFilter.newSemester ? Number(bulkFilter.newSemester) : s.semester,
                 section: bulkFilter.newSection ? bulkFilter.newSection : s.section,
               }
-            : s
-        )
-      );
+              : s
+          )
+        );
 
-      setSelectedBulkIds([]);
-      setBulkFilter({
-        year: "",
-        department: "",
-        section: "",
-        newYear: "",
-        newSemester: "",
-        newSection: "",
-      });
+        setSelectedBulkIds([]);
+        setBulkFilter({
+          year: "",
+          department: "",
+          section: "",
+          newYear: "",
+          newSemester: "",
+          newSection: "",
+        });
+      }
+
+
+
+      setStep("success");
+      setTimeout(() => onClose(), 2000);
+
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setSubmitting(false);
     }
+  };
 
-
-
-    setStep("success");
-    setTimeout(() => onClose(), 2000);
-
-  } catch (err) {
-    alert(err.message);
-  } finally {
-    setSubmitting(false);
-  }
-};
-
- const isChanged =
-  selectedStudent &&
-  Object.keys(singleUpdate).length > 0 &&
-  (
-    singleUpdate.name !== selectedStudent.name ||
-    singleUpdate.roll !== selectedStudent.roll ||
-    singleUpdate.year !== selectedStudent.year ||
-    singleUpdate.semester !== selectedStudent.semester ||
-    singleUpdate.section !== selectedStudent.section
-  );
+  const isChanged =
+    selectedStudent &&
+    Object.keys(singleUpdate).length > 0 &&
+    (
+      singleUpdate.name !== selectedStudent.name ||
+      singleUpdate.roll !== selectedStudent.roll ||
+      singleUpdate.year !== selectedStudent.year ||
+      singleUpdate.semester !== selectedStudent.semester ||
+      singleUpdate.section !== selectedStudent.section
+    );
 
 
   return (
@@ -1050,7 +1049,7 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
               </select>
 
 
-               
+
               <select
                 className="border px-3 py-2 rounded-lg"
                 value={filterDepartment}
@@ -1063,7 +1062,7 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
                 <option value="MECH">MECH</option>
                 <option value="CIVIL">CIVIL</option>
               </select>
- 
+
               <select
                 className="border px-3 py-2 rounded-lg"
                 value={filterSection}
@@ -1103,9 +1102,8 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
                   }}
 
 
-                  className={`px-3 py-2 cursor-pointer hover:bg-gray-100 ${
-                    selectedStudentId === s.id ? "bg-indigo-50" : ""
-                  }`}
+                  className={`px-3 py-2 cursor-pointer hover:bg-gray-100 ${selectedStudentId === s.id ? "bg-indigo-50" : ""
+                    }`}
                 >
                   {s.roll} – {s.name} ({s.year} {s.section})
                 </div>
@@ -1231,8 +1229,8 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
                     </div>
                   </>
                 )}
-          </div>
-        )}
+              </div>
+            )}
           </div>
         )}
 
@@ -1275,7 +1273,7 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
 
             </select>*/}
 
-           
+
             {/* SELECT CURRENT DEPARTMENT */}
             <select
               className="border px-3 py-2 rounded-lg w-full"
@@ -1428,7 +1426,7 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
             <p className="font-medium">Review Changes</p>
 
             <div className="max-h-40 overflow-y-auto border rounded-lg text-sm">
-              {(flow === "single" ? [selectedStudent]: bulkStudents.filter((s) => selectedBulkIds.includes(s.id))).map(
+              {(flow === "single" ? [selectedStudent] : bulkStudents.filter((s) => selectedBulkIds.includes(s.id))).map(
                 (s) => (
                   <div key={s.id} className="px-3 py-2 border-b">
                     {s.roll} – {s.name}
@@ -1447,7 +1445,7 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
               <button
                 onClick={confirmUpdate}
                 className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition"
-               >
+              >
                 Confirm Update
               </button>
 
@@ -1457,7 +1455,7 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
         {/* ================= SUCCESS ================= */}
         {step === "success" && (
           <div className="text-center py-12 space-y-4">
-            
+
             {/* CHECK ICON */}
             <div className="mx-auto w-16 h-16 rounded-full bg-green-100 flex items-center justify-center animate-bounce">
               <span className="text-3xl text-green-600">✓</span>
@@ -1881,11 +1879,10 @@ function NotifyStudentModal({ students, onClose }) {
 
               <button
                 onClick={sendNotification}
-                className={`px-4 py-2 text-white rounded-lg ${
-                  type === "urgent"
+                className={`px-4 py-2 text-white rounded-lg ${type === "urgent"
                     ? "bg-red-600"
                     : "bg-green-600"
-                }`}
+                  }`}
               >
                 Send Notification
               </button>
@@ -1964,7 +1961,7 @@ function ActionButtons({ onClose, onSubmit, label }) {
 }
 
 function StudentProfile({ student, onClose }) {
-  const atRisk = student.attendance < 75 || student.cgpa < 7;
+  const atRisk = student.attendance < 75;
 
   // Auto-generate domain mail
   const domainMail = `${student.roll.toLowerCase()}@gvp.edu.in`;
@@ -1996,9 +1993,8 @@ function StudentProfile({ student, onClose }) {
             </div>
             <div className="w-full bg-gray-200 rounded-full h-2">
               <div
-                className={`h-2 rounded-full ${
-                  student.attendance < 75 ? "bg-red-500" : "bg-green-500"
-                }`}
+                className={`h-2 rounded-full ${student.attendance < 75 ? "bg-red-500" : "bg-green-500"
+                  }`}
                 style={{ width: `${student.attendance}%` }}
               />
             </div>
@@ -2012,9 +2008,8 @@ function StudentProfile({ student, onClose }) {
             </div>
             <div className="w-full bg-gray-200 rounded-full h-2">
               <div
-                className={`h-2 rounded-full ${
-                  student.cgpa < 7 ? "bg-red-500" : "bg-indigo-500"
-                }`}
+                className={`h-2 rounded-full ${student.cgpa < 7 ? "bg-red-500" : "bg-indigo-500"
+                  }`}
                 style={{ width: `${(student.cgpa / 10) * 100}%` }}
               />
             </div>

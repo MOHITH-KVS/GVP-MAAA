@@ -2573,6 +2573,123 @@ def delete_alert(
 
 
 # =========================
+# FACULTY – CREATE ALERT
+# ======================== 
+@app.post("/faculty/alerts")
+def create_faculty_alert(
+    title: str = Form(...),
+    message: str = Form(...),
+    type: str = Form(...),
+    target_role: str = Form(...),
+    target_type: str = Form(...),
+
+    department: str = Form(None),
+    faculty_id: int = Form(None),
+    student_id: int = Form(None),
+
+    file: UploadFile = File(None),
+
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "faculty" and current_user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    # -------------------------
+    # VALIDATION
+    # -------------------------
+    if target_type == "individual":
+        if target_role == "student" and not student_id:
+            raise HTTPException(status_code=400, detail="Student ID required")
+
+    if target_type == "department" and not department:
+        raise HTTPException(status_code=400, detail="Department required")
+
+    # -------------------------
+    # FILE HANDLING
+    # -------------------------
+    file_name = None
+    file_path = None
+    file_type = None
+
+    if file:
+        upload_dir = "uploads/alerts"
+        os.makedirs(upload_dir, exist_ok=True)
+
+        unique_filename = f"{uuid.uuid4()}_{file.filename}"
+        file_path = os.path.join(upload_dir, unique_filename)
+
+        with open(file_path, "wb") as f:
+            f.write(file.file.read())
+
+        file_name = file.filename
+        file_type = file.filename.split(".")[-1]
+
+    # -------------------------
+    # CREATE ALERT
+    # -------------------------
+    new_alert = Alert(
+        title=title,
+        message=message,
+        type=type.lower(),
+        target_role=target_role,
+        target_type=target_type,
+        department=department,
+        faculty_id=current_user["user_id"],
+        student_id=student_id,
+        file_name=file_name,
+        file_path=file_path,
+        file_type=file_type
+    )
+
+    db.add(new_alert)
+    db.commit()
+    db.refresh(new_alert)
+
+    # -------------------------
+    # CREATE RECIPIENTS
+    # -------------------------
+    users = []
+
+    if target_type == "all":
+        users = db.query(User).filter(
+            User.role == target_role,
+            User.is_deleted == False
+        ).all()
+
+    elif target_type == "individual":
+        if target_role == "student" and student_id:
+            users = db.query(User).filter(
+                User.user_id == student_id,
+                User.role == "student",
+                User.is_deleted == False
+            ).all()
+
+    elif target_type == "department":
+        department_id = None
+        for key, value in DEPARTMENT_MAP.items():
+            if value == department:
+                department_id = key
+
+        users = db.query(User).filter(
+            User.role == target_role,
+            User.department_id == department_id,
+            User.is_deleted == False
+        ).all()
+
+    for user in users:
+        recipient = AlertRecipient(
+            alert_id=new_alert.id,
+            user_id=user.user_id,
+            is_read=False
+        )
+        db.add(recipient)
+
+    db.commit()
+
+    return {"message": "Alert created successfully"}
+
+# =========================
 # FACULTY – GET ALERTS
 # =========================
 @app.get("/faculty/alerts")
@@ -3709,6 +3826,52 @@ def create_assignment(
         db.commit()
         db.refresh(new_assignment)
 
+        # =========================
+        # CREATE ALERT FOR STUDENTS
+        # =========================
+
+        subject = db.query(Subject).filter(
+            Subject.subject_id == subject_id
+        ).first()
+
+        faculty_user = db.query(User).filter(
+            User.user_id == current_user["user_id"]
+        ).first()
+
+        students = (
+            db.query(Student, User)
+            .join(User, Student.student_id == User.user_id)
+            .filter(
+                Student.year == year,
+                Student.section == section,
+                User.department_id == subject.department_id,
+                User.is_deleted == False
+            )
+            .all()
+        )
+
+        alert = Alert(
+            title="📚 New Assignment Posted",
+            message=f"{faculty_user.name} posted '{title}' for {subject.subject_name}. Due: {due_date_parsed.date()}",
+            type="assignment",
+            target_role="student",
+            target_type="class"
+        )
+
+        db.add(alert)
+        db.commit()
+        db.refresh(alert)
+
+        for student, user in students:
+            recipient = AlertRecipient(
+                alert_id=alert.id,
+                user_id=user.user_id,
+                is_read=False
+            )
+            db.add(recipient)
+
+        db.commit()
+
         
 
         return {
@@ -3887,10 +4050,13 @@ def get_student_assignments(
                 Subject.subject_id == assignment.subject_id
             ).first()
 
-            # Fetch full submission obj 
             submission = next((s for s in submissions if s.assignment_id == assignment.id), None)
             is_late = submission.is_late if submission else False
             status = submission.status if submission else "pending"
+            
+            # If submitted but status is still 'pending' at backend, show as 'submitted' for frontend 
+            if submission and status == "pending":
+                status = "submitted"
 
             result.append({
                 "id": assignment.id,
@@ -4071,7 +4237,8 @@ def get_student_assignments_summary(
                 recent_assignment_dots.append({
                     "assignment_id": assignment.id,
                     "title": assignment.title,
-                    "status": status
+                    "status": status,
+                    "due_date": assignment.due_date.isoformat() if assignment.due_date else None
                 })
 
             student_summaries.append({
@@ -4119,10 +4286,117 @@ def update_submission_status(
     if status_data.status not in ["approved", "rejected", "pending"]:
          raise HTTPException(status_code=400, detail="Invalid status. Must be approved, rejected, or pending")
 
+    if submission.status == "approved" and status_data.status == "approved":
+        raise HTTPException(
+            status_code=400,
+            detail="Assignment already approved"
+        )
+
     submission.status = status_data.status
     db.commit()
 
     return {"status": "success", "message": f"Submission status updated to {status_data.status}"}
+
+
+
+def check_assignment_deadlines():
+
+    db = SessionLocal()
+
+    try:
+        today = datetime.utcnow().date()
+
+        assignments = db.query(Assignment).filter(
+            Assignment.is_active == True
+        ).all()
+
+        for assignment in assignments:
+
+            due_date = assignment.due_date.date()
+            days_left = (due_date - today).days
+
+            # Send alerts only from 2 days before deadline until deadline day
+            if days_left < 0 or days_left > 2:
+                continue
+
+            # -----------------------------
+            # Determine message for teacher
+            # -----------------------------
+            if days_left == 2:
+                deadline_text = "deadline in 2 days"
+            elif days_left == 1:
+                deadline_text = "deadline tomorrow"
+            else:
+                deadline_text = "deadline today"
+
+            # -----------------------------
+            # Get students in that class
+            # -----------------------------
+            students = db.query(Student).filter(
+                Student.year == assignment.year,
+                Student.section == assignment.section,
+                Student.is_deleted == False
+            ).all()
+
+            total_students = len(students)
+
+            # -----------------------------
+            # Get submissions
+            # -----------------------------
+            submissions = db.query(AssignmentSubmission).filter(
+                AssignmentSubmission.assignment_id == assignment.id,
+                AssignmentSubmission.is_submitted == True
+            ).all()
+
+            submitted = len(submissions)
+            pending = total_students - submitted
+
+            # -----------------------------
+            # Get subject info
+            # -----------------------------
+            subject = db.query(Subject).filter(
+                Subject.subject_id == assignment.subject_id
+            ).first()
+
+            # -----------------------------
+            # Create alert
+            # -----------------------------
+            alert = Alert(
+                title="📌 Assignment Deadline Reminder",
+                message=(
+                    f"{subject.subject_name} - {assignment.title}\n"
+                    f"{deadline_text}\n\n"
+                    f"Total Students: {total_students} | "
+                    f"Submitted: {submitted} | Pending: {pending}"
+                ),
+                type="assignment-reminder",
+                target_role="faculty",
+                target_type="individual",
+                faculty_id=assignment.faculty_id
+            )
+
+            db.add(alert)
+            db.commit()
+            db.refresh(alert)
+
+            # -----------------------------
+            # Send to teacher alerts page
+            # -----------------------------
+            recipient = AlertRecipient(
+                alert_id=alert.id,
+                user_id=assignment.faculty_id,
+                is_read=False
+            )
+
+            db.add(recipient)
+            db.commit()
+
+    except Exception as e:
+        print("Assignment Deadline Scheduler Error:", e)
+
+    finally:
+        db.close()
+
 
 
 scheduler = BackgroundScheduler()
@@ -4135,6 +4409,13 @@ scheduler.add_job(
     minute=0
 )
 
+scheduler.add_job(
+    check_assignment_deadlines,
+    "cron",
+    hour=18,
+    minute=0
+)
+
 @app.on_event("startup")
 def start_scheduler():
     scheduler.add_job(
@@ -4144,3 +4425,119 @@ def start_scheduler():
         minute=0
     )
     scheduler.start()
+
+
+# -----------------------------
+# Upload resource
+# -----------------------------     
+@app.post("/faculty/upload-resource")
+async def upload_resource(
+    title: str = Form(...),
+    description: str = Form(...),
+    subject_id: int = Form(...),
+    year: int = Form(...),
+    section: str = Form(...),
+    type: str = Form(...),
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+
+    if current_user["role"] != "faculty":
+        raise HTTPException(status_code=403)
+
+    file_location = f"uploads/resources/{file.filename}"
+
+    with open(file_location, "wb") as buffer:
+        buffer.write(await file.read())
+
+    resource = Resource(
+        title=title,
+        description=description,
+        subject_id=subject_id,
+        faculty_id=current_user["user_id"],
+        year=year,
+        section=section,
+        type=type,
+        file_url=file_location
+    )
+
+    db.add(resource)
+    db.commit()
+    db.refresh(resource)
+
+    return {"message": "Resource uploaded successfully"}
+
+
+@app.get("/student/resources")
+def get_student_resources(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+
+    student = db.query(Student).filter(
+        Student.student_id == current_user["user_id"]
+    ).first()
+
+    resources = db.query(Resource).filter(
+        Resource.year == student.year,
+        Resource.section == student.section
+    ).all()
+
+    return resources
+
+@app.post("/student/resource-access/{resource_id}")
+def track_access(
+    resource_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+
+    access = ResourceAccess(
+        resource_id=resource_id,
+        student_id=current_user["user_id"]
+    )
+
+    db.add(access)
+    db.commit()
+
+    return {"message": "Access recorded"}
+
+
+@app.get("/faculty/resources/{year}/{section}")
+def faculty_resources(
+    year: int,
+    section: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+
+    resources = db.query(Resource).filter(
+        Resource.year == year,
+        Resource.section == section,
+        Resource.faculty_id == current_user["user_id"]
+    ).all()
+
+    result = []
+
+    for r in resources:
+
+        accessed = db.query(ResourceAccess).filter(
+            ResourceAccess.resource_id == r.id
+        ).count()
+
+        total_students = db.query(Student).filter(
+            Student.year == year,
+            Student.section == section
+        ).count()
+
+        result.append({
+            "id": r.id,
+            "title": r.title,
+            "type": r.type,
+            "created_at": r.created_at,
+            "accessed": accessed,
+            "total_students": total_students
+        })
+
+    return result

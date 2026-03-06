@@ -14,6 +14,13 @@ export default function Assignments() {
   const [assignments, setAssignments] = useState([]); // Past assignments (for stats)
   const [subjects, setSubjects] = useState([]);
 
+  // Assignment Analytics State Additions
+  const [selectedAssignment, setSelectedAssignment] = useState("");
+  const [currentAssignmentDetails, setCurrentAssignmentDetails] = useState([]);
+  const [submitted, setSubmitted] = useState(0);
+  const [pending, setPending] = useState(0);
+  const [deadlineInfo, setDeadlineInfo] = useState("");
+
   // Create / History modal state
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
@@ -53,8 +60,25 @@ export default function Assignments() {
   useEffect(() => {
     fetchStudentSummaries();
     fetchAssignments();
+    // Reset specific assignment selection when changing class
+    setSelectedAssignment("");
+    setSubmitted(0);
+    setPending(0);
+    setDeadlineInfo("");
+    setCurrentAssignmentDetails([]);
   }, [year, section]);
 
+  // Fetch specific analytics when an assignment is selected
+  useEffect(() => {
+    if (selectedAssignment) {
+      fetchAssignmentDetails(selectedAssignment);
+    } else {
+      setSubmitted(0);
+      setPending(0);
+      setDeadlineInfo("");
+      setCurrentAssignmentDetails([]);
+    }
+  }, [selectedAssignment]);
 
   const fetchSubjects = async () => {
     try {
@@ -92,6 +116,54 @@ export default function Assignments() {
       setAssignments(response.data.assignments || []);
     } catch (error) {
       console.error("Error fetching assignments:", error);
+    }
+  };
+
+  const fetchAssignmentDetails = async (assignmentId) => {
+    try {
+      setLoading(true);
+      const res = await axios.get(
+        `${API_URL}/teacher/assignment-details/${assignmentId}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      const submittedList = res.data.submitted || [];
+      const pendingList = res.data.pending || [];
+
+      setSubmitted(submittedList.length);
+      setPending(pendingList.length);
+
+      const allStudentsInDetails = [
+        ...submittedList.map(s => ({ ...s, isSubmitted: true })),
+        ...pendingList.map(s => ({ ...s, isSubmitted: false }))
+      ];
+      setCurrentAssignmentDetails(allStudentsInDetails);
+
+      const due = new Date(res.data.assignment.due_date);
+      const now = new Date();
+      now.setHours(0, 0, 0, 0);
+      const dueMidnight = new Date(due);
+      dueMidnight.setHours(0, 0, 0, 0);
+
+      const diffDays = Math.round((dueMidnight - now) / (1000 * 60 * 60 * 24));
+
+      if (diffDays === 0) {
+        setDeadlineInfo("🔴 Due Today");
+      } else if (diffDays === 1) {
+        setDeadlineInfo("🟠 Due Tomorrow");
+      } else if (diffDays === 2) {
+        setDeadlineInfo("🟡 Due in 2 days");
+      } else if (diffDays < 0) {
+        setDeadlineInfo(`🔴 Overdue by ${Math.abs(diffDays)} days`);
+      } else {
+        setDeadlineInfo(`Due in ${diffDays} days`);
+      }
+
+    } catch (error) {
+      console.error("Error fetching assignment details:", error);
+      setErrorMsg("Failed to load assignment details");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -146,6 +218,29 @@ export default function Assignments() {
       // Show success animation
       setShowSuccess(true);
 
+      // === ADD: Send Alert on Assignment Creation ===
+      try {
+        const subjectObj = subjects.find(s => s.subject_id === parseInt(formData.subject_id));
+        const subjectName = subjectObj?.subject_name || "a subject";
+        const departmentName = subjectObj?.department || "CSE";
+
+        const alertFormData = new FormData();
+        alertFormData.append("type", "Announcement");
+        alertFormData.append("target_role", "student");
+        alertFormData.append("target_type", "department");
+        alertFormData.append("department", departmentName);
+        alertFormData.append("title", "New Assignment Posted");
+        alertFormData.append("message", `A new assignment "${formData.title}" has been posted for ${subjectName} and is due on ${new Date(formData.due_date).toLocaleDateString()}. Please check your assignments dashboard.`);
+
+        await axios.post(`${API_URL}/faculty/alerts`, alertFormData, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        console.log("Alert sent successfully for new assignment creation");
+      } catch (alertError) {
+        console.error("Failed to implicitly send assignment creation alert:", alertError);
+      }
+      // ==============================================
+
       // Refresh data
       fetchStudentSummaries();
       fetchAssignments();
@@ -159,48 +254,6 @@ export default function Assignments() {
     }
   };
 
-  // ---- Click handlers for Dots (Review Submission) ----
-
-  const handleDotClick = async (assignmentId, studentId, studentName, assignmentTitle, currentStatus) => {
-    // If it's not submitted or future, nothing to review yet.
-    if (currentStatus === "not_submitted" || currentStatus === "future") {
-      return;
-    }
-
-    // We need to fetch the specific submission detail to review it. 
-    // This requires a new endpoint or using existing ones. Let's assume we can fetch assignment details.
-
-    try {
-      setLoading(true);
-      const response = await axios.get(
-        `${API_URL}/teacher/assignment-details/${assignmentId}`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-
-      const details = response.data;
-
-      // Find the specific submission in the submitted list
-      const submissionInfo = details.submitted.find(s => s.student_id === studentId);
-
-      if (submissionInfo) {
-        setReviewSubmission({
-          submissionId: submissionInfo.submission_id,
-          assignmentId,
-          studentId,
-          studentName,
-          assignmentTitle,
-          fileUrl: submissionInfo.file_path,
-          currentStatus,
-        });
-      }
-
-    } catch (err) {
-      console.error(err);
-      setErrorMsg("Failed to open review panel.");
-    } finally {
-      setLoading(false);
-    }
-  }
 
   // Handle clicking View on an assignment in history
   const handleViewAssignment = async (assignmentId, title) => {
@@ -228,16 +281,9 @@ export default function Assignments() {
 
   // Derived Statistics for Header
   const totalStudents = studentSummaries.length;
-  let totalSubmittedRecent = 0;
-  let totalPendingRecent = 0;
+  // Previously we used aggregated assignments; now we just use the selected assignment's fetch states
 
-  if (assignments.length > 0) {
-    // Aggregate stats from the fetched assignments
-    totalSubmittedRecent = assignments.reduce((acc, curr) => acc + curr.submitted, 0);
-    totalPendingRecent = assignments.reduce((acc, curr) => acc + curr.pending, 0);
-  }
-
-  const filteredStudents = studentSummaries.filter(
+  const filteredStudents = currentAssignmentDetails.filter(
     (s) =>
       s.name.toLowerCase().includes(search.toLowerCase()) ||
       s.roll.toLowerCase().includes(search.toLowerCase())
@@ -246,25 +292,35 @@ export default function Assignments() {
   // Dot Color & Status Label logic mapping
   const getStatusLabel = (status) => {
     switch (status) {
-      case 'approved': return 'Approved';
-      case 'rejected': return 'Rejected';
-      case 'pending': return 'Pending Review';
-      case 'not_submitted': return 'Not Submitted';
-      case 'future': return 'No Assignment';
-      default: return 'No Actions';
+      case "approved": return "Approved";
+      case "rejected": return "Rejected";
+      case "pending": return "Pending Review";
+      case "not_submitted": return "Not Submitted";
+      case "near_deadline": return "Near Deadline";
+      case "future": return "Future Assignment";
+      default: return "No Actions";
     }
   };
 
-  const getDotColor = (status) => {
-    switch (status) {
-      case 'approved': return 'bg-green-500';
-      case 'rejected': return 'bg-black';
-      case 'pending': return 'bg-yellow-400';
-      case 'not_submitted': return 'bg-red-500';
-      case 'future': return 'bg-gray-300';
-      default: return 'bg-gray-200';
+  const getDotColor = (status, dueDate) => {
+    if (status === "approved") return "bg-green-500";
+    if (status === "rejected") return "bg-black";
+    if (status === "pending") return "bg-blue-500"; // Changed to blue for "Pending Review"
+
+    if (status === "not_submitted" || status === "future") {
+      if (!dueDate) return "bg-gray-300";
+
+      const now = new Date();
+      const due = new Date(dueDate);
+      const diffDays = (due - now) / (1000 * 60 * 60 * 24);
+
+      if (diffDays < 0) return "bg-red-500"; // Past deadline
+      if (diffDays <= 2) return "bg-yellow-400"; // Within 2 days
+      return "bg-gray-300"; // Future
     }
-  }
+
+    return "bg-gray-200";
+  };
 
   return (
     <div className="space-y-8 relative">
@@ -292,52 +348,97 @@ export default function Assignments() {
       )}
 
       {/* ================= CONTROLS & STATS BAR ================= */}
-      <div className="bg-white/70 backdrop-blur-md rounded-2xl p-6 border border-white/50 shadow-sm flex flex-col md:flex-row gap-6 justify-between items-start md:items-end">
-        <div className="flex gap-4">
-          <FilterSelect label="Year" value={year} onChange={setYear} options={[1, 2, 3, 4]} />
-          <FilterSelect label="Section" value={section} onChange={setSection} options={["A", "B", "C", "D"]} />
+      <div className="bg-white/70 backdrop-blur-md rounded-2xl p-6 border border-white/50 shadow-sm flex flex-col gap-6 w-full">
+        {/* ROW 1: FILTERS */}
+        <div className="flex flex-col xl:flex-row justify-between items-start xl:items-end gap-6 w-full">
+          <div className="flex flex-wrap gap-4 items-end">
+            <FilterSelect label="Year" value={year} onChange={setYear} options={[1, 2, 3, 4]} />
+            <FilterSelect label="Section" value={section} onChange={setSection} options={["A", "B", "C", "D"]} />
+
+            <div className="flex flex-col gap-1.5 min-w-[180px]">
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider ml-1">
+                Assignment
+              </label>
+              <div className="flex flex-wrap items-center gap-3">
+                <select
+                  value={selectedAssignment}
+                  onChange={(e) => setSelectedAssignment(e.target.value)}
+                  className="appearance-none bg-white border border-gray-200 text-gray-700 h-10 px-4 pr-10 rounded-xl hover:border-indigo-300 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 transition-all font-medium cursor-pointer"
+                >
+                  <option value="">Select Assignment</option>
+                  {assignments.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.title}
+                    </option>
+                  ))}
+                </select>
+                {deadlineInfo && selectedAssignment && (
+                  <span className="text-sm font-semibold text-gray-700 whitespace-nowrap bg-white px-3 py-1.5 rounded-lg border border-gray-200 shadow-sm flex items-center">
+                    {deadlineInfo}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <button
+            onClick={() => setShowCreateModal(true)}
+            className="group relative flex items-center justify-center gap-2 h-10 px-6 rounded-xl bg-gradient-to-r from-indigo-600 via-indigo-500 to-purple-600 text-white text-sm font-bold hover:shadow-[0_8px_25px_-5px_rgba(79,70,229,0.4)] transition-all duration-300 active:scale-95 overflow-hidden whitespace-nowrap shrink-0"
+          >
+            <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+            <span className="text-lg group-hover:rotate-90 transition-transform duration-300">＋</span>
+            <span className="relative">Create New Assignment</span>
+          </button>
         </div>
 
-        <div className="flex gap-6 items-center">
-          <div className="flex flex-col text-right">
-            <span className="text-sm text-gray-500">Total Submitted (Overall)</span>
-            <span className="text-xl font-bold text-green-600">{totalSubmittedRecent}</span>
-          </div>
-          <div className="w-px h-10 bg-gray-200"></div>
-          <div className="flex flex-col text-left">
-            <span className="text-sm text-gray-500">Total Pending (Overall)</span>
-            <span className="text-xl font-bold text-red-600">{totalPendingRecent}</span>
-          </div>
-        </div>
+        {/* ROW 2: STATS */}
+        {selectedAssignment && (
+          <div className="flex gap-4 pt-1 border-t border-gray-100">
+            <div className="bg-green-50 px-5 py-3 rounded-xl border border-green-100 flex-1">
+              <div className="text-xs text-gray-500 font-medium whitespace-nowrap mb-1">Total Submitted</div>
+              <div className="text-lg font-bold text-green-600">
+                {submitted}
+              </div>
+            </div>
 
-        <button
-          onClick={() => setShowCreateModal(true)}
-          className="h-[46px] px-8 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 text-white font-medium hover:shadow-lg hover:shadow-indigo-200 transition-all active:scale-95"
-        >
-          + Create Assignment
-        </button>
+            <div className="bg-red-50 px-5 py-3 rounded-xl border border-red-100 flex-1">
+              <div className="text-xs text-gray-500 font-medium whitespace-nowrap mb-1">Total Pending</div>
+              <div className="text-lg font-bold text-red-600">
+                {pending}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ================= SEARCH & STUDENT LIST ================= */}
       <div className="space-y-4">
-        <div className="flex justify-between items-center">
-          <div className="space-y-1">
+        <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+          <div className="space-y-2">
             <h2 className="text-lg font-semibold text-gray-800">Student Progress</h2>
-            <div className="flex gap-4 items-center text-xs text-gray-600">
-              <span className="font-medium text-gray-500">Recent Assignments (Last 5):</span>
-              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-green-500 inline-block"></span> Approved</span>
-              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-black inline-block"></span> Rejected</span>
-              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-yellow-400 inline-block"></span> Pending Review</span>
-              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-red-500 inline-block"></span> Not Submitted</span>
-              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-gray-300 inline-block"></span> Future Assignment</span>
+            <div className="flex flex-wrap gap-x-4 gap-y-2 items-center text-xs text-gray-600">
+              <div className="flex items-center gap-4 flex-wrap">
+                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-green-500 inline-block"></span> Approved</span>
+                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-black inline-block"></span> Rejected</span>
+                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-blue-500 inline-block"></span> Pending Review</span>
+                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-red-500 inline-block"></span> Overdue</span>
+                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-yellow-400 inline-block"></span> Near Deadline</span>
+                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-gray-300 inline-block"></span> Future</span>
+              </div>
             </div>
+            <p className="text-[11px] text-indigo-500 font-medium italic animate-pulse">
+              ✨ Review submissions by clicking the action button in the table
+            </p>
           </div>
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search student by name or roll..."
-            className="w-72 px-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400 transition-all bg-white/70 backdrop-blur-sm"
-          />
+          <div className="relative w-full lg:w-72">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">🔍</span>
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search student by name or roll..."
+              className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-gray-200 focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400 transition-all bg-white/70 backdrop-blur-sm shadow-sm"
+            />
+          </div>
         </div>
 
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
@@ -345,50 +446,116 @@ export default function Assignments() {
             <thead>
               <tr className="bg-gray-50/50 text-gray-500 text-sm font-medium border-b border-gray-100">
                 <th className="py-4 px-6">Student Info</th>
+                <th className="py-4 px-6">Assignment</th>
                 <th className="py-4 px-6">Year/Sec</th>
                 <th className="py-4 px-6">Latest Status</th>
-                <th className="py-4 px-6 w-48 text-center">Recent Assignments</th>
+                <th className="py-4 px-6 text-center">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {loading ? (
+              {!selectedAssignment ? (
                 <tr>
-                  <td colSpan="4" className="text-center py-12 text-gray-400">Loading student data...</td>
+                  <td colSpan="5" className="text-center py-16 text-gray-500">
+                    <div className="flex flex-col items-center gap-3">
+                      <span className="text-4xl text-gray-300">📋</span>
+                      <p className="font-medium text-lg text-gray-600">Select an assignment to view student progress</p>
+                    </div>
+                  </td>
+                </tr>
+              ) : loading ? (
+                <tr>
+                  <td colSpan="5" className="text-center py-12 text-gray-400">Loading student data...</td>
                 </tr>
               ) : filteredStudents.length === 0 ? (
                 <tr>
-                  <td colSpan="4" className="text-center py-12 text-gray-400">No students found.</td>
+                  <td colSpan="5" className="text-center py-12 text-gray-400">No students found.</td>
                 </tr>
               ) : (
                 filteredStudents.map((student) => {
-                  // Determine overall latest status derived from dots (simplification: grab first non-future)
-                  const latestAssigned = [...student.recent_assignments].reverse().find(a => a.status !== 'future');
-                  const latestStatusText = getStatusLabel(latestAssigned ? latestAssigned.status : "unknown");
+                  const assignmentData = assignments.find(a => a.id === parseInt(selectedAssignment));
+                  const assignmentTitle = assignmentData ? assignmentData.title : "Assignment";
+
+                  let dotColor = "bg-gray-300";
+                  let statusText = "Not Submitted";
+                  let badgeClass = "bg-gray-50 text-gray-500 border border-gray-100";
+
+                  if (student.isSubmitted) {
+                    if (student.status === "approved") {
+                      dotColor = "bg-green-500";
+                      statusText = "Approved";
+                      badgeClass = "bg-green-50 text-green-700 border border-green-100";
+                    } else if (student.status === "rejected") {
+                      dotColor = "bg-red-500";
+                      statusText = "Rejected";
+                      badgeClass = "bg-red-50 text-red-700 border border-red-100";
+                    } else {
+                      dotColor = "bg-blue-500";
+                      statusText = "Pending Review";
+                      badgeClass = "bg-blue-50 text-blue-700 border border-blue-100";
+                    }
+                  } else {
+                    // Compare due date
+                    if (assignmentData) {
+                      const now = new Date();
+                      const due = new Date(assignmentData.due_date);
+                      if ((due - now) < 0) {
+                        dotColor = "bg-red-500";
+                        statusText = "Overdue";
+                        badgeClass = "bg-red-50 text-red-700 border border-red-100";
+                      }
+                    }
+                  }
 
                   return (
-                    <tr key={student.student_id} className="hover:bg-gray-50/50 transition-colors">
+                    <tr key={student.student_id} className="hover:bg-gray-50/50 transition-colors border-b border-gray-50 last:border-0">
                       <td className="py-4 px-6">
-                        <div className="font-medium text-gray-800">{student.name}</div>
-                        <div className="text-xs text-gray-500">{student.roll}</div>
+                        <div className="flex flex-col">
+                          <div className="font-semibold text-gray-800">{student.name}</div>
+                          <div className="text-[10px] font-bold tracking-wider uppercase mb-0.5 text-gray-500">
+                            {student.roll}
+                          </div>
+                          {/* Single Status Dot */}
+                          <div className="flex gap-1 mt-1">
+                            <span
+                              title={`${assignmentTitle} - ${statusText}`}
+                              className={`w-2 h-2 rounded-full ${dotColor}`}
+                            />
+                          </div>
+                        </div>
+                      </td>
+                      <td className="py-4 px-6 text-sm font-medium text-gray-800">
+                        {assignmentTitle}
                       </td>
                       <td className="py-4 px-6 text-sm text-gray-600">
-                        {student.year} - {student.section}
+                        {year} - {section}
                       </td>
                       <td className="py-4 px-6">
-                        <span className="text-xs font-medium px-2.5 py-1 bg-gray-100 text-gray-600 rounded-lg whitespace-nowrap">
-                          {latestStatusText}
+                        <span className={`text-xs font-semibold px-3 py-1.5 rounded-xl shadow-sm ${badgeClass}`}>
+                          {statusText}
                         </span>
                       </td>
                       <td className="py-4 px-6">
-                        <div className="flex gap-2 justify-center">
-                          {student.recent_assignments.map((assignment, idx) => (
-                            <div
-                              key={idx}
-                              title={`${assignment.title}\nStatus: ${getStatusLabel(assignment.status)}`}
-                              onClick={() => handleDotClick(assignment.assignment_id, student.student_id, student.name, assignment.title, assignment.status)}
-                              className={`w-3.5 h-3.5 rounded-full shadow-sm cursor-pointer hover:scale-125 transition-transform ${getDotColor(assignment.status)}`}
-                            />
-                          ))}
+                        <div className="flex justify-center">
+                          {student.isSubmitted ? (
+                            <button
+                              onClick={() => {
+                                setReviewSubmission({
+                                  submissionId: student.submission_id,
+                                  assignmentId: selectedAssignment,
+                                  studentId: student.student_id,
+                                  studentName: student.name,
+                                  assignmentTitle,
+                                  fileUrl: student.file_path,
+                                  currentStatus: student.status,
+                                });
+                              }}
+                              className="px-4 py-2 text-xs font-bold text-indigo-600 hover:text-white border-2 border-indigo-600 hover:bg-indigo-600 rounded-xl transition-all active:scale-95 whitespace-nowrap"
+                            >
+                              Review
+                            </button>
+                          ) : (
+                            <span className="text-xs text-gray-400 italic">No File</span>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -559,13 +726,19 @@ export default function Assignments() {
                 <h3 className="font-bold text-lg text-gray-800">{reviewSubmission.studentName}'s Submission</h3>
                 <p className="text-sm text-gray-500">{reviewSubmission.assignmentTitle}</p>
               </div>
-              <button onClick={() => setReviewSubmission(null)} className="text-gray-400 hover:text-gray-600 w-8 h-8 rounded-full hover:bg-gray-200 flex items-center justify-center transition-colors">
+              <button onClick={() => { setReviewSubmission(null); setErrorMsg(""); }} className="text-gray-400 hover:text-gray-600 w-8 h-8 rounded-full hover:bg-gray-200 flex items-center justify-center transition-colors">
                 ✕
               </button>
             </div>
 
             <div className="p-8 space-y-6">
-              <div className="flex justify-center items-center h-48 bg-gray-50 rounded-2xl border border-gray-200 border-dashed">
+              <div className="flex justify-center items-center h-48 bg-gray-50 rounded-2xl border border-gray-200 border-dashed relative">
+                {errorMsg && (
+                  <div className="absolute top-2 left-1/2 -translate-x-1/2 w-[90%] p-2 rounded-lg bg-red-100 border border-red-200 text-red-700 text-xs font-semibold flex items-center justify-center gap-1 animate-fade-in z-20">
+                    ⚠️ {errorMsg}
+                    <button onClick={() => setErrorMsg("")} className="ml-auto hover:text-red-900">✕</button>
+                  </div>
+                )}
                 <div className="text-center">
                   <span className="text-4xl mb-2 block">📄</span>
                   {reviewSubmission.fileUrl ? (
@@ -579,7 +752,7 @@ export default function Assignments() {
                     </a>
                   ) : (
                     <span className="text-sm font-medium text-gray-500 bg-gray-100 px-4 py-2 rounded-lg">
-                      No File Attached
+                      No file
                     </span>
                   )}
                 </div>
@@ -607,8 +780,35 @@ export default function Assignments() {
                   type="button"
                   onClick={async () => {
                     try {
+                      if (reviewSubmission.currentStatus === "approved") {
+                        setErrorMsg("⚠️ This assignment is already approved.");
+                        return;
+                      }
+
                       await axios.put(`${API_URL}/teacher/assignment-submissions/${reviewSubmission.submissionId}/status`, { status: "approved" }, { headers: { Authorization: `Bearer ${token}` } });
+
+                      // === ADD: Send Alert on Approval ===
+                      try {
+                        const alertFormData = new FormData();
+                        alertFormData.append("type", "Info");
+                        alertFormData.append("target_role", "student");
+                        alertFormData.append("target_type", "individual");
+                        alertFormData.append("student_id", reviewSubmission.studentId);
+                        alertFormData.append("title", "Assignment Approved");
+                        alertFormData.append("message", `Your submission for "${reviewSubmission.assignmentTitle}" has been reviewed and approved.`);
+
+                        await axios.post(`${API_URL}/faculty/alerts`, alertFormData, {
+                          headers: { Authorization: `Bearer ${token}` }
+                        });
+                        console.log("Alert sent successfully for assignment approval");
+                      } catch (alertError) {
+                        console.error("Failed to implicitly send approval alert:", alertError);
+                      }
+                      // ===================================
+
                       setSuccessMsg("Submission approved.");
+                      setShowSuccess(true);
+                      setTimeout(() => setShowSuccess(false), 2000);
                       setReviewSubmission(null);
                       fetchStudentSummaries();
                       fetchAssignments();
@@ -653,8 +853,8 @@ export default function Assignments() {
               style={{ animation: "fadeIn 0.4s ease-out 0.9s forwards", opacity: 0 }}>
               <div className="mt-16 text-center">
                 <div className="text-5xl text-green-500 font-bold">✓</div>
-                <p className="text-sm font-semibold mt-2 text-gray-700">Assignment Published!</p>
-                <p className="text-xs text-gray-400 mt-1">Students have been notified</p>
+                <p className="text-sm font-semibold mt-2 text-gray-700">Action Successful!</p>
+                <p className="text-xs text-gray-400 mt-1">Status has been updated</p>
               </div>
             </div>
 
@@ -696,8 +896,8 @@ export default function Assignments() {
                       <td className="py-4 px-6 text-sm text-gray-600">{sub.roll}</td>
                       <td className="py-4 px-6">
                         <span className={`text-xs font-medium px-2.5 py-1 rounded-lg ${sub.status === 'approved' ? 'bg-green-100 text-green-700' :
-                            sub.status === 'rejected' ? 'bg-red-100 text-red-700' :
-                              'bg-yellow-100 text-yellow-700'
+                          sub.status === 'rejected' ? 'bg-red-100 text-red-700' :
+                            'bg-yellow-100 text-yellow-700'
                           }`}>
                           {getStatusLabel(sub.status)}
                         </span>

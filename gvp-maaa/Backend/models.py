@@ -323,5 +323,35 @@ class AssignmentSubmission(Base):
         UniqueConstraint("assignment_id", "student_id", name="unique_submission"),
     )
 
+class AssignmentDeadlineAlert(Base):
+    __tablename__ = "assignment_deadline_alerts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    assignment_id = Column(Integer)
+    faculty_id = Column(Integer)
+    alert_sent = Column(Boolean, default=False)
+    sent_at = Column(DateTime)
 
 
+class Resource(Base):
+    __tablename__ = "resources"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String)
+    description = Column(Text)
+    subject_id = Column(Integer)
+    faculty_id = Column(Integer)
+    year = Column(Integer)
+    section = Column(String)
+    type = Column(String)
+    file_url = Column(String)
+    created_at = Column(DateTime)
+
+
+class ResourceAccess(Base):
+    __tablename__ = "resource_access"
+
+    id = Column(Integer, primary_key=True, index=True)
+    resource_id = Column(Integer)
+    student_id = Column(Integer)
+    accessed_at = Column(DateTime)

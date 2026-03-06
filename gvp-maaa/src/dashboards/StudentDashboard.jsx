@@ -15,7 +15,6 @@ import Resources from "../pages/Student/Resources";
 import Placement from "../pages/Student/Placement";
 import Insights from "../pages/Student/Insights";
 import Alerts from "../pages/Student/Alerts";
-import Submissions from "../pages/Student/Submissions";
 import ViewProfile from "../pages/Student/ViewProfile";
 import Logout from "../pages/Logout";
 
@@ -54,81 +53,81 @@ export default function StudentDashboard() {
 
 
   // Fetch student profile on mount
-    const fetchProfile = async () => {
-  try {
-    const token = localStorage.getItem("access_token");
-    const res = await fetch("http://127.0.0.1:8000/student/profile", {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-
-    const data = await res.json();
-    setProfile(data);
-  } catch (err) {
-    console.error(err);
-  }
- };
-
-  useEffect(() => {
-  fetchProfile();
- }, []);
-
- useEffect(() => {
-  const fetchAlerts = async () => {
+  const fetchProfile = async () => {
     try {
       const token = localStorage.getItem("access_token");
-
-      const res = await fetch("http://localhost:8000/student/alerts", {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+      const res = await fetch("http://127.0.0.1:8000/student/profile", {
+        headers: { Authorization: `Bearer ${token}` },
       });
 
-      if (!res.ok) {
-        console.error("Failed to fetch alerts");
-        return;
-      }
-
       const data = await res.json();
-      setAlerts(data);
-    } catch (error) {
-      console.error("Error fetching alerts", error);
-    } finally {
-      setLoadingAlerts(false);
+      setProfile(data);
+    } catch (err) {
+      console.error(err);
     }
   };
 
-  fetchAlerts();
- }, []);
+  useEffect(() => {
+    fetchProfile();
+  }, []);
+
+  useEffect(() => {
+    const fetchAlerts = async () => {
+      try {
+        const token = localStorage.getItem("access_token");
+
+        const res = await fetch("http://localhost:8000/student/alerts", {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (!res.ok) {
+          console.error("Failed to fetch alerts");
+          return;
+        }
+
+        const data = await res.json();
+        setAlerts(data);
+      } catch (error) {
+        console.error("Error fetching alerts", error);
+      } finally {
+        setLoadingAlerts(false);
+      }
+    };
+
+    fetchAlerts();
+  }, []);
 
 
 
   // Prevent back navigation
   useEffect(() => {
-  window.history.pushState(null, "", window.location.href);
-
-  const handleBack = () => {
     window.history.pushState(null, "", window.location.href);
-  };
 
-  window.addEventListener("popstate", handleBack);
+    const handleBack = () => {
+      window.history.pushState(null, "", window.location.href);
+    };
 
-  return () => window.removeEventListener("popstate", handleBack);
- }, []);
+    window.addEventListener("popstate", handleBack);
+
+    return () => window.removeEventListener("popstate", handleBack);
+  }, []);
 
 
 
 
   if (showFullProfile) {
-      return (
-    <ViewProfile
-      profile={profile}
-      onClose={() => {
-        setShowFullProfile(false);
-        fetchProfile(); // 🔥 refresh sidebar profile
-      }}
-    />
+    return (
+      <ViewProfile
+        profile={profile}
+        onClose={() => {
+          setShowFullProfile(false);
+          fetchProfile(); // 🔥 refresh sidebar profile
+        }}
+      />
 
-  );
+    );
   }
 
   if (showLogout) {
@@ -136,12 +135,12 @@ export default function StudentDashboard() {
   }
 
   if (!profile) {
-  return (
-    <div className="h-screen flex items-center justify-center">
-      <p className="text-slate-500">Loading profile...</p>
-    </div>
-  );
- }
+    return (
+      <div className="h-screen flex items-center justify-center">
+        <p className="text-slate-500">Loading profile...</p>
+      </div>
+    );
+  }
 
 
   return (
@@ -150,9 +149,8 @@ export default function StudentDashboard() {
 
         {/* ================= SIDEBAR ================= */}
         <aside
-          className={`transition-all duration-300 flex flex-col ${
-            sidebarOpen ? "w-72" : "w-20"
-          } p-4 glass border-r border-white/40`}
+          className={`transition-all duration-300 flex flex-col ${sidebarOpen ? "w-72" : "w-20"
+            } p-4 glass border-r border-white/40`}
         >
           <div className="flex items-center justify-between mb-8">
             {sidebarOpen && (
@@ -208,9 +206,6 @@ export default function StudentDashboard() {
                   </span>
                 )}
               </div>
-
-              <MenuItem icon={NotificationsIcon} label="Submissions" open={sidebarOpen}
-                active={activePage === "submissions"} onClick={() => setActivePage("submissions")} />
             </SidebarSection>
           </div>
 
@@ -239,13 +234,11 @@ export default function StudentDashboard() {
             {activePage === "placement" && <Placement />}
             {activePage === "insights" && <Insights />}
             {activePage === "alerts" && (<Alerts alerts={alerts} setAlerts={setAlerts} loading={loadingAlerts} />)}
-            {activePage === "submissions" && <Submissions />}
           </div>
 
           <div
-            className={`transition-all duration-300 ${
-              showProfile ? "w-80" : "w-14"
-            } overflow-hidden`}
+            className={`transition-all duration-300 ${showProfile ? "w-80" : "w-14"
+              } overflow-hidden`}
           >
             {showProfile ? (
               <StudentProfile
@@ -344,7 +337,7 @@ function StudentProfile({ profile, onClose, onViewProfile }) {
             link={profile.portfolio}
           />
 
-          
+
 
         </div>
       </div>
