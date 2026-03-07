@@ -1,84 +1,66 @@
-import { useState } from "react";
-
-/* ===== SAMPLE RESOURCES DATA ===== */
-const RESOURCES = [
-  {
-    title: "DBMS Unit-1 Notes",
-    subject: "DBMS",
-    year: "3rd Year",
-    type: "PDF",
-    uploadedBy: "Faculty",
-    date: "2025-09-05",
-    size: "2.4 MB",
-    new: true,
-    downloaded: true,
-    bookmarked: false,
-  },
-  {
-    title: "Operating Systems PPT",
-    subject: "OS",
-    year: "3rd Year",
-    type: "PPT",
-    uploadedBy: "Faculty",
-    date: "2025-09-01",
-    size: "5.1 MB",
-    new: false,
-    downloaded: true,
-    bookmarked: true,
-  },
-  {
-    title: "Computer Networks – Recorded Lecture",
-    subject: "CN",
-    year: "3rd Year",
-    type: "Video",
-    uploadedBy: "Admin",
-    date: "2025-08-28",
-    size: "External Link",
-    new: false,
-    downloaded: false,
-    bookmarked: true,
-  },
-  {
-    title: "Previous Year Question Papers",
-    subject: "DBMS",
-    year: "2nd Year",
-    type: "PDF",
-    uploadedBy: "Admin",
-    date: "2025-08-20",
-    size: "3.8 MB",
-    new: false,
-    downloaded: false,
-    bookmarked: false,
-  },
-];
+import { useState, useEffect } from "react";
 
 const TYPE_STYLE = {
   PDF: "bg-red-100 text-red-700",
   PPT: "bg-orange-100 text-orange-700",
   Video: "bg-blue-100 text-blue-700",
+  Notes: "bg-green-100 text-green-700",
+  Assignment: "bg-indigo-100 text-indigo-700",
+  Reference: "bg-purple-100 text-purple-700",
+  Link: "bg-teal-100 text-teal-700"
 };
 
 export default function Resources() {
-  const [yearFilter, setYearFilter] = useState("All");
+  const [resources, setResources] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [subjectFilter, setSubjectFilter] = useState("All");
 
+  const token = localStorage.getItem("access_token");
+
+  useEffect(() => {
+    fetchResources();
+  }, []);
+
+  async function fetchResources() {
+    try {
+      setLoading(true);
+      const res = await fetch("http://localhost:8000/student/resources", {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        setResources(data);
+      }
+    } catch (err) {
+      console.error("Failed to load resources:", err);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   /* ===== SUBJECT LIST (DYNAMIC) ===== */
-  const subjects = ["All", ...new Set(RESOURCES.map(r => r.subject))];
+  const subjects = ["All", ...new Set(resources.map(r => r.subject))];
 
   /* ===== FILTER LOGIC ===== */
-  const filteredResources = RESOURCES.filter((r) => {
-    const yearMatch = yearFilter === "All" || r.year === yearFilter;
-    const subjectMatch = subjectFilter === "All" || r.subject === subjectFilter;
-    return yearMatch && subjectMatch;
+  const filteredResources = resources.filter((r) => {
+    return subjectFilter === "All" || r.subject === subjectFilter;
   });
 
-  /* ===== STATS ===== */
-  const stats = {
-    total: filteredResources.length,
-    new: filteredResources.filter(r => r.new).length,
-    downloaded: filteredResources.filter(r => r.downloaded).length,
-    bookmarked: filteredResources.filter(r => r.bookmarked).length,
-  };
+  /* ===== HANDLE VIEW RESOURCE ===== */
+  async function handleView(resource) {
+    try {
+      await fetch(`http://localhost:8000/student/resource-access/${resource.id}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      // Open file in new tab
+      // Assuming file_url is "uploads/resources/filename.ext"
+      const fileUrl = `http://localhost:8000/${resource.file_url.replace(/\\/g, "/")}`;
+      window.open(fileUrl, "_blank");
+    } catch (err) {
+      console.error("Failed to record access", err);
+    }
+  }
 
   return (
     <div className="space-y-8">
@@ -87,40 +69,24 @@ export default function Resources() {
       <div>
         <h1 className="text-2xl font-semibold">📚 Resources</h1>
         <p className="text-gray-500">
-          Study materials organized by year and subject
+          Study materials organized by subject
         </p>
       </div>
 
-      {/* ================= YEAR FILTER (TOP) ================= */}
-      <div className="flex gap-3 overflow-x-auto">
-        {["All", "1st Year", "2nd Year", "3rd Year", "4th Year"].map((y) => (
-          <button
-            key={y}
-            onClick={() => setYearFilter(y)}
-            className={`px-4 py-2 rounded-xl text-sm font-medium
-              ${yearFilter === y
-                ? "bg-indigo-600 text-white"
-                : "bg-white/70 hover:bg-white"}`}
-          >
-            {y}
-          </button>
-        ))}
-      </div>
-
       {/* ================= MAIN LAYOUT ================= */}
-      <div className="flex gap-6">
+      <div className="flex gap-6 flex-col md:flex-row">
 
         {/* ===== SUBJECT SIDE PANEL ===== */}
-        <aside className="w-48 glass rounded-2xl p-4 space-y-2">
-          <p className="text-xs uppercase text-gray-400 mb-2">Subjects</p>
+        <aside className="w-full md:w-56 glass rounded-2xl p-4 space-y-2 h-fit md:sticky top-4">
+          <p className="text-xs uppercase text-gray-400 mb-2 font-semibold tracking-wider">Subjects</p>
           {subjects.map((sub) => (
             <button
               key={sub}
               onClick={() => setSubjectFilter(sub)}
-              className={`w-full text-left px-3 py-2 rounded-lg text-sm transition
+              className={`w-full text-left px-3 py-2 rounded-lg text-sm transition font-medium
                 ${subjectFilter === sub
-                  ? "bg-indigo-500/10 text-indigo-700"
-                  : "hover:bg-white/60"}`}
+                  ? "bg-indigo-50 text-indigo-700"
+                  : "text-gray-600 hover:bg-white/60"}`}
             >
               {sub}
             </button>
@@ -130,36 +96,24 @@ export default function Resources() {
         {/* ===== CONTENT ===== */}
         <div className="flex-1 space-y-6">
 
-          {/* OVERVIEW */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            <OverviewCard title="Total" value={stats.total} />
-            <OverviewCard title="New" value={stats.new} />
-            <OverviewCard title="Downloaded" value={stats.downloaded} />
-            <OverviewCard title="Bookmarked" value={stats.bookmarked} />
-          </div>
-
           {/* RESOURCE LIST */}
           <div className="space-y-4">
-            {filteredResources.length === 0 ? (
-              <div className="glass rounded-2xl p-6 text-center text-gray-400">
-                No resources found
+            {loading ? (
+              <div className="glass rounded-2xl p-6 text-center text-gray-500">
+                Loading resources...
+              </div>
+            ) : filteredResources.length === 0 ? (
+              <div className="glass rounded-2xl p-8 flex flex-col items-center justify-center text-gray-400 border border-dashed border-gray-300">
+                <svg className="w-12 h-12 mb-3 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 002-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
+                <p>No resources found for this subject.</p>
               </div>
             ) : (
-              filteredResources.map((res, i) => (
-                <ResourceCard key={i} data={res} />
-              ))
+              <div className="grid grid-cols-1 gap-4">
+                {filteredResources.map((res, i) => (
+                  <ResourceCard key={i} data={res} onView={() => handleView(res)} />
+                ))}
+              </div>
             )}
-          </div>
-
-          {/* ANALYTICS PLACEHOLDERS */}
-          <div className="space-y-4">
-            <h2 className="text-lg font-semibold">📊 Your Resource Analytics</h2>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <AnalyticsPlaceholder title="Resource Usage Trend" />
-              <AnalyticsPlaceholder title="Subject-wise Consumption" />
-              <AnalyticsPlaceholder title="Preferred Resource Type" />
-              <AnalyticsPlaceholder title="Download vs Bookmark Behavior" />
-            </div>
           </div>
 
         </div>
@@ -170,52 +124,42 @@ export default function Resources() {
 
 /* ================= COMPONENTS ================= */
 
-function OverviewCard({ title, value }) {
-  return (
-    <div className="bg-white/80 backdrop-blur rounded-2xl p-4 border border-white/40">
-      <p className="text-sm text-gray-500">{title}</p>
-      <p className="text-2xl font-semibold mt-1">{value}</p>
-    </div>
-  );
-}
+function ResourceCard({ data, onView }) {
 
-function ResourceCard({ data }) {
+  // Default color if type isn't matched
+  const typeClasses = TYPE_STYLE[data.type] || "bg-gray-100 text-gray-700";
+
+  const d = new Date(data.created_at);
+  const dateStr = d.toLocaleDateString("en-GB", { day: '2-digit', month: 'short', year: 'numeric' });
+
   return (
-    <div className="glass rounded-2xl p-5 flex justify-between items-center border border-white/40">
+    <div className="glass rounded-2xl p-5 flex flex-col sm:flex-row justify-between sm:items-center gap-4 border border-white/60 shadow-sm hover:shadow-md transition-shadow group bg-white/40">
       <div>
-        <div className="flex items-center gap-2">
-          <h3 className="font-semibold">{data.title}</h3>
-          {data.new && (
-            <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700">
-              NEW
-            </span>
-          )}
+        <div className="flex items-center gap-3 mb-1">
+          <h3 className="font-bold text-gray-800 text-lg group-hover:text-indigo-700 transition-colors">{data.title}</h3>
         </div>
-        <p className="text-sm text-gray-500">
-          {data.subject} • {data.year} • {data.uploadedBy}
+        <p className="text-sm text-gray-600 font-medium">
+          {data.subject}
         </p>
-        <p className="text-xs text-gray-400">
-          {data.date} • {data.size}
-        </p>
+        <div className="flex items-center gap-2 mt-2">
+          <span className={`px-2.5 py-0.5 text-xs font-semibold rounded-md ${typeClasses}`}>
+            {data.type}
+          </span>
+          <span className="text-xs text-gray-400 font-medium">
+            • Uploaded on {dateStr}
+          </span>
+        </div>
       </div>
 
-      <div className="flex items-center gap-3">
-        <span className={`px-3 py-1 text-xs rounded-full ${TYPE_STYLE[data.type]}`}>
-          {data.type}
-        </span>
-        <button className="px-4 py-1.5 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700">
-          View
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 min-w-max mt-2 sm:mt-0">
+        <button
+          onClick={onView}
+          className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 shadow-sm transition-colors"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+          View / Download
         </button>
       </div>
-    </div>
-  );
-}
-
-function AnalyticsPlaceholder({ title }) {
-  return (
-    <div className="glass rounded-2xl h-64 flex flex-col justify-center items-center text-gray-400">
-      <p className="text-sm uppercase tracking-wide">{title}</p>
-      <p className="text-sm mt-2">Analytics Agent will render here</p>
     </div>
   );
 }

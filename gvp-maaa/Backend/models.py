@@ -341,10 +341,8 @@ class Resource(Base):
     description = Column(Text)
     subject_id = Column(Integer)
     faculty_id = Column(Integer)
-    year = Column(Integer)
-    section = Column(String)
     type = Column(String)
-    file_url = Column(String)
+    file_url = Column(Text)
     created_at = Column(DateTime)
 
 

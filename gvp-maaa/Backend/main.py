@@ -23,7 +23,9 @@ from models import (
     AttendanceWarning,
     FacultyMonthlyAttendanceAlert,
     Assignment,
-    AssignmentSubmission
+    AssignmentSubmission,
+    Resource,
+    ResourceAccess
 )
 
 
@@ -81,7 +83,8 @@ from schemas import (
     AssignmentSubmissionResponse,
     AssignmentDetailResponse,
     StatusUpdateRequest,
-    StudentAssignmentSummaryResponse
+    StudentAssignmentSummaryResponse,
+    ResourceResponse
 )
 from models import User, Student, Faculty,Timetable
 from auth import (
@@ -4435,39 +4438,85 @@ async def upload_resource(
     title: str = Form(...),
     description: str = Form(...),
     subject_id: int = Form(...),
-    year: int = Form(...),
-    section: str = Form(...),
     type: str = Form(...),
     file: UploadFile = File(...),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
 
-    if current_user["role"] != "faculty":
-        raise HTTPException(status_code=403)
+    try:
+        if current_user["role"] != "faculty":
+            raise HTTPException(status_code=403)
 
-    file_location = f"uploads/resources/{file.filename}"
+        UPLOAD_DIR = "uploads/resources"
+        os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-    with open(file_location, "wb") as buffer:
-        buffer.write(await file.read())
+        unique_name = f"{uuid.uuid4()}_{file.filename}"
+        file_location = os.path.join(UPLOAD_DIR, unique_name)
 
-    resource = Resource(
-        title=title,
-        description=description,
-        subject_id=subject_id,
-        faculty_id=current_user["user_id"],
-        year=year,
-        section=section,
-        type=type,
-        file_url=file_location
-    )
+        with open(file_location, "wb") as buffer:
+            buffer.write(await file.read())
 
-    db.add(resource)
-    db.commit()
-    db.refresh(resource)
+        resource = Resource(
+            title=title,
+            description=description,
+            subject_id=subject_id,
+            faculty_id=current_user["user_id"],
+            type=type,
+            file_url=file_location,
+            created_at=datetime.utcnow()
+        )
 
-    return {"message": "Resource uploaded successfully"}
+        db.add(resource)
+        db.commit()
+        db.refresh(resource)
 
+        # START NEW ALERT LOGIC
+        subject = db.query(Subject).filter(Subject.subject_id == subject_id).first()
+        if subject:
+            # Find all assigned classes for this faculty and subject
+            assigned_classes = db.query(FacultySubject).filter(
+                FacultySubject.subject_id == subject_id,
+                FacultySubject.faculty_id == current_user["user_id"],
+                FacultySubject.is_active == True
+            ).all()
+
+            for ac in assigned_classes:
+                # Find all students in this year/section
+                students = db.query(Student).filter(
+                    Student.year == ac.year,
+                    Student.section == ac.section
+                ).all()
+
+                for st in students:
+                    # Create alert for each student
+                    new_alert = Alert(
+                        title="New Resource Uploaded",
+                        message=f"A new resource '{title}' ({type}) has been uploaded by your faculty for {subject.subject_name}.",
+                        type="resource",
+                        target_role="student",
+                        target_type="individual",
+                        student_id=st.student_id,
+                        faculty_id=current_user["user_id"]
+                    )
+                    db.add(new_alert)
+                    db.flush()
+
+                    db.add(AlertRecipient(
+                        alert_id=new_alert.id,
+                        user_id=st.student_id,
+                        is_read=False
+                    ))
+            
+            db.commit()
+
+        return {"message": "Resource uploaded successfully"}
+
+    except Exception as e:
+        db.rollback()
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/student/resources")
 def get_student_resources(
@@ -4475,16 +4524,42 @@ def get_student_resources(
     db: Session = Depends(get_db)
 ):
 
+    # Student's year and section
     student = db.query(Student).filter(
         Student.student_id == current_user["user_id"]
     ).first()
 
-    resources = db.query(Resource).filter(
-        Resource.year == student.year,
-        Resource.section == student.section
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    # Find subjects assigned to this student's year/section
+    faculty_subjects = db.query(FacultySubject).filter(
+        FacultySubject.year == student.year,
+        FacultySubject.section == student.section,
+        FacultySubject.is_active == True
     ).all()
 
-    return resources
+    subject_ids = [fs.subject_id for fs in faculty_subjects]
+
+    resources = db.query(Resource, Subject).join(
+        Subject, Resource.subject_id == Subject.subject_id
+    ).filter(
+        Resource.subject_id.in_(subject_ids)
+    ).all()
+
+    result = []
+    for r, s in resources:
+        result.append({
+            "id": r.id,
+            "title": r.title,
+            "description": r.description,
+            "type": r.type,
+            "file_url": r.file_url,
+            "created_at": r.created_at,
+            "subject": s.subject_name
+        })
+
+    return result
 
 @app.post("/student/resource-access/{resource_id}")
 def track_access(
@@ -4493,51 +4568,128 @@ def track_access(
     db: Session = Depends(get_db)
 ):
 
-    access = ResourceAccess(
-        resource_id=resource_id,
-        student_id=current_user["user_id"]
-    )
+    existing = db.query(ResourceAccess).filter(
+        ResourceAccess.resource_id == resource_id,
+        ResourceAccess.student_id == current_user["user_id"]
+    ).first()
 
-    db.add(access)
-    db.commit()
+    if not existing:
+        access = ResourceAccess(
+            resource_id=resource_id,
+            student_id=current_user["user_id"],
+            accessed_at=datetime.utcnow()
+        )
+        db.add(access)
+        db.commit()
 
     return {"message": "Access recorded"}
 
 
-@app.get("/faculty/resources/{year}/{section}")
+@app.get("/faculty/resources/{subject_id}")
 def faculty_resources(
-    year: int,
-    section: str,
+    subject_id: int,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
 
-    resources = db.query(Resource).filter(
-        Resource.year == year,
-        Resource.section == section,
+    resources = db.query(Resource, Subject).join(
+        Subject, Resource.subject_id == Subject.subject_id
+    ).filter(
+        Resource.subject_id == subject_id,
         Resource.faculty_id == current_user["user_id"]
     ).all()
 
     result = []
 
-    for r in resources:
+    for r, s in resources:
 
         accessed = db.query(ResourceAccess).filter(
             ResourceAccess.resource_id == r.id
         ).count()
 
-        total_students = db.query(Student).filter(
-            Student.year == year,
-            Student.section == section
-        ).count()
+        # Find how many students are in the batches assigned to this subject+faculty
+        assigned_classes = db.query(FacultySubject).filter(
+            FacultySubject.faculty_id == current_user["user_id"],
+            FacultySubject.subject_id == subject_id,
+            FacultySubject.is_active == True
+        ).all()
+        
+        total_students = 0
+        for ac in assigned_classes:
+            count = db.query(Student).filter(
+                Student.year == ac.year,
+                Student.section == ac.section
+            ).count()
+            total_students += count
 
         result.append({
             "id": r.id,
             "title": r.title,
             "type": r.type,
+            "subject": s.subject_name,
             "created_at": r.created_at,
             "accessed": accessed,
             "total_students": total_students
         })
+    return result
 
+@app.get("/faculty/subjects")
+def get_faculty_subjects(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "faculty":
+        raise HTTPException(status_code=403, detail="Faculty only")
+
+    subjects = db.query(FacultySubject, Subject).join(
+        Subject, FacultySubject.subject_id == Subject.subject_id
+    ).filter(
+        FacultySubject.faculty_id == current_user["user_id"],
+        FacultySubject.is_active == True
+    ).all()
+
+    result = []
+    for fs, s in subjects:
+        dept_name = DEPARTMENT_MAP.get(s.department_id, str(s.department_id))
+        result.append({
+            "subject_id": s.subject_id,
+            "subject_name": s.subject_name,
+            "year": fs.year,
+            "section": fs.section,
+            "department": dept_name
+        })
+
+    return result
+
+@app.get("/faculty/resource-access/{resource_id}")
+def get_resource_access(
+    resource_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "faculty":
+        raise HTTPException(status_code=403, detail="Faculty only")
+        
+    # Verify the resource belongs to this faculty
+    resource = db.query(Resource).filter(
+        Resource.id == resource_id,
+        Resource.faculty_id == current_user["user_id"]
+    ).first()
+    
+    if not resource:
+        raise HTTPException(status_code=404, detail="Resource not found")
+        
+    accesses = db.query(ResourceAccess, User).join(
+        User, ResourceAccess.student_id == User.user_id
+    ).filter(
+        ResourceAccess.resource_id == resource_id
+    ).order_by(ResourceAccess.accessed_at.desc()).all()
+    
+    result = []
+    for ra, u in accesses:
+        result.append({
+            "student_name": f"{u.first_name} {u.last_name}",
+            "accessed_at": ra.accessed_at
+        })
+        
     return result

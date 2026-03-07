@@ -360,12 +360,13 @@ class AssignmentDetailResponse(BaseModel):
         from_attributes = True
 
 
-class TeacherSubjectResponse(BaseModel):
+class FacultySubjectResponse(BaseModel):
     subject_id: int
     subject_name: str
     year: int
     section: str
-
+    department: str
+    
 
 class StudentAssignmentResponse(BaseModel):
     id: int
@@ -380,6 +381,7 @@ class ResourceResponse(BaseModel):
     id: int
     title: str
     type: str
+    subject: str
     created_at: datetime
     accessed: int
     total_students: int
