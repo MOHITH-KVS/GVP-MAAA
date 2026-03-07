@@ -352,4 +352,5 @@ class ResourceAccess(Base):
     id = Column(Integer, primary_key=True, index=True)
     resource_id = Column(Integer)
     student_id = Column(Integer)
+    action_type = Column(String, default="view")
     accessed_at = Column(DateTime)

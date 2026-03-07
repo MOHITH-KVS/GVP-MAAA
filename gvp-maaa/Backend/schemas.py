@@ -214,6 +214,19 @@ class AlertCreate(BaseModel):
     faculty_id: Optional[int] = None
     student_id: Optional[int] = None
 
+class AlertSendRequest(BaseModel):
+    type: str # Emergency | Announcement | Info | Reminder
+    message: str
+    target: str # class | multiple_classes | students
+    subject_id: Optional[int] = None 
+    subject_ids: Optional[List[int]] = None
+    student_ids: Optional[List[int]] = None
+
+class StudentSearchResponse(BaseModel):
+    student_id: int
+    name: str
+    roll_no: Optional[str] = None
+
 # =========================
 # ATTENDANCE SCHEMAS
 # =========================
@@ -388,6 +401,9 @@ class ResourceResponse(BaseModel):
 
     class Config:
         orm_mode = True
+
+class ResourceAccessRequest(BaseModel):
+    action_type: str
 
 
 class StudentResourceResponse(BaseModel):

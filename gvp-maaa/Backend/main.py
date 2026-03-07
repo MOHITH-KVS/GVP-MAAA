@@ -1,13 +1,14 @@
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form,Body
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Body, Query
 from fastapi.middleware.cors import CORSMiddleware
 from io import BytesIO
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import text,extract
-from typing import Optional
+from sqlalchemy import text,extract, func, or_
+from typing import Optional, List
 from security import hash_password, verify_password
 from mail import send_reset_email
 from schemas import  AlertCreate, AssignSubjectRequest, AttendanceCreate, ResetPasswordRequest, StudentPromotionRequest, TeacherAdminUpdate, TeacherDeleteRequest,TimetableCreate, TimetableResponse,StudentDeleteRequest,SubjectCreate,AttendanceAnalyticsResponse
+import schemas
 from datetime import datetime, timedelta
 from database import engine
 from models import (
@@ -84,7 +85,8 @@ from schemas import (
     AssignmentDetailResponse,
     StatusUpdateRequest,
     StudentAssignmentSummaryResponse,
-    ResourceResponse
+    ResourceResponse,
+    ResourceAccessRequest
 )
 from models import User, Student, Faculty,Timetable
 from auth import (
@@ -4564,19 +4566,22 @@ def get_student_resources(
 @app.post("/student/resource-access/{resource_id}")
 def track_access(
     resource_id: int,
+    payload: ResourceAccessRequest,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
 
     existing = db.query(ResourceAccess).filter(
         ResourceAccess.resource_id == resource_id,
-        ResourceAccess.student_id == current_user["user_id"]
+        ResourceAccess.student_id == current_user["user_id"],
+        ResourceAccess.action_type == payload.action_type
     ).first()
 
     if not existing:
         access = ResourceAccess(
             resource_id=resource_id,
             student_id=current_user["user_id"],
+            action_type=payload.action_type,
             accessed_at=datetime.utcnow()
         )
         db.add(access)
@@ -4603,9 +4608,15 @@ def faculty_resources(
 
     for r, s in resources:
 
-        accessed = db.query(ResourceAccess).filter(
+        from sqlalchemy import func
+        accessed = db.query(func.count(func.distinct(ResourceAccess.student_id))).filter(
             ResourceAccess.resource_id == r.id
-        ).count()
+        ).scalar()
+
+        downloads = db.query(func.count(func.distinct(ResourceAccess.student_id))).filter(
+            ResourceAccess.resource_id == r.id,
+            ResourceAccess.action_type == "download"
+        ).scalar()
 
         # Find how many students are in the batches assigned to this subject+faculty
         assigned_classes = db.query(FacultySubject).filter(
@@ -4629,6 +4640,7 @@ def faculty_resources(
             "subject": s.subject_name,
             "created_at": r.created_at,
             "accessed": accessed,
+            "downloads": downloads,
             "total_students": total_students
         })
     return result
@@ -4661,8 +4673,8 @@ def get_faculty_subjects(
 
     return result
 
-@app.get("/faculty/resource-access/{resource_id}")
-def get_resource_access(
+@app.get("/faculty/resource-access-details/{resource_id}")
+def get_resource_access_details(
     resource_id: int,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -4679,17 +4691,221 @@ def get_resource_access(
     if not resource:
         raise HTTPException(status_code=404, detail="Resource not found")
         
-    accesses = db.query(ResourceAccess, User).join(
-        User, ResourceAccess.student_id == User.user_id
+    accesses = db.query(ResourceAccess, Student, User).join(
+        Student, ResourceAccess.student_id == Student.student_id
+    ).join(
+        User, Student.student_id == User.user_id
     ).filter(
         ResourceAccess.resource_id == resource_id
     ).order_by(ResourceAccess.accessed_at.desc()).all()
     
     result = []
-    for ra, u in accesses:
+    for ra, st, u in accesses:
         result.append({
-            "student_name": f"{u.first_name} {u.last_name}",
+            "student_id": st.student_id,
+            "name": u.name,
+            "roll_no": st.roll_no,
+            "action_type": ra.action_type,
             "accessed_at": ra.accessed_at
         })
         
     return result
+
+
+# ==========================================
+# ADVANCED ALERT SYSTEM (FACULTY)
+# ==========================================
+
+@app.get("/faculty/search-students", response_model=List[schemas.StudentSearchResponse])
+def search_students(
+    q: str = Query(..., min_length=2),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """Search for specific students by name or roll number."""
+    if current_user["role"] != "faculty":
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    search_term = f"%{q.lower()}%"
+    
+    # Needs to match User.name or Student.roll_no
+    students = db.query(Student, User.name).join(
+        User, Student.student_id == User.user_id
+    ).filter(
+        or_(
+            func.lower(User.name).like(search_term),
+            func.lower(Student.roll_no).like(search_term)
+        )
+    ).limit(10).all()
+    
+    # Return formatted objects
+    results = [
+        {"student_id": st.Student.student_id, "name": st.name, "roll_no": st.Student.roll_no}
+        for st in students
+    ]
+    return results
+
+
+@app.post("/faculty/send-alert")
+def send_alert(
+    alert_req: schemas.AlertSendRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    if current_user["role"] != "faculty":
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    faculty_id = current_user["user_id"]
+    target_students = set()
+    
+    # Mode 1: Whole Class (Single Subject)
+    if alert_req.target == "class" and alert_req.subject_id:
+        fs = db.query(FacultySubject).filter(
+            FacultySubject.subject_id == alert_req.subject_id,
+            FacultySubject.faculty_id == faculty_id,
+            FacultySubject.is_active == True
+        ).first()
+        if fs:
+            st_list = db.query(Student.student_id).filter(
+                Student.year == fs.year,
+                Student.section == fs.section
+            ).all()
+            target_students.update([s.student_id for s in st_list])
+            
+    # Mode 2: Multiple Classes
+    elif alert_req.target == "multiple_classes" and alert_req.subject_ids:
+        for sid in alert_req.subject_ids:
+            fs = db.query(FacultySubject).filter(
+                FacultySubject.subject_id == sid,
+                FacultySubject.faculty_id == faculty_id,
+                FacultySubject.is_active == True
+            ).first()
+            if fs:
+                st_list = db.query(Student.student_id).filter(
+                    Student.year == fs.year,
+                    Student.section == fs.section
+                ).all()
+                target_students.update([s.student_id for s in st_list])
+                
+    # Mode 3: Specific Students
+    elif alert_req.target == "students" and alert_req.student_ids:
+        target_students.update(alert_req.student_ids)
+        
+    if not target_students:
+        raise HTTPException(status_code=400, detail="No students found for given targets")
+    
+    new_alerts = []
+    recipients = []
+    
+    title_mapping = {
+        "Emergency": "Emergency Announcement",
+        "Announcement": "New Announcement",
+        "Info": "Information Alert",
+        "Reminder": "Reminder"
+    }
+    
+    alert_title = title_mapping.get(alert_req.type, "Alert")
+    
+    for sid in target_students:
+        new_alert = Alert(
+            title=alert_title,
+            message=alert_req.message,
+            type=alert_req.type.lower(),
+            target_role="student",
+            target_type="individual",
+            student_id=sid,
+            faculty_id=faculty_id
+        )
+        new_alerts.append(new_alert)
+        
+    db.add_all(new_alerts)
+    db.flush() # assign IDs
+    
+    for alert in new_alerts:
+        recipients.append(AlertRecipient(
+            alert_id=alert.id,
+            user_id=alert.student_id,
+            is_read=False
+        ))
+        
+    db.add_all(recipients)
+    db.commit()
+    
+    return {"message": "Alert sent successfully", "students_targeted": len(target_students)}
+
+
+@app.post("/faculty/send-resource-reminder/{resource_id}")
+def send_resource_reminder(
+    resource_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    if current_user["role"] != "faculty":
+        raise HTTPException(status_code=403, detail="Not authorized")
+        
+    resource = db.query(Resource).filter(
+        Resource.id == resource_id,
+        Resource.faculty_id == current_user["user_id"]
+    ).first()
+    
+    if not resource:
+        raise HTTPException(status_code=404, detail="Resource not found")
+        
+    # Find the assigned class for this resource
+    fs = db.query(FacultySubject).filter(
+        FacultySubject.subject_id == resource.subject_id,
+        FacultySubject.faculty_id == current_user["user_id"]
+    ).first()
+    
+    if not fs:
+        raise HTTPException(status_code=400, detail="Faculty subject mapping not found")
+        
+    # Get all students in this class
+    all_students_in_class_subq = db.query(Student.student_id).filter(
+        Student.year == fs.year,
+        Student.section == fs.section
+    ).subquery()
+    
+    # Get students who HAVE accessed it
+    accessed_students_subq = db.query(ResourceAccess.student_id).filter(
+        ResourceAccess.resource_id == resource_id
+    ).distinct().subquery()
+    
+    # Find students who are in the class but NOT in the accessed list
+    unaccessed_students = db.query(Student.student_id).filter(
+        Student.student_id.in_(all_students_in_class_subq),
+        ~Student.student_id.in_(accessed_students_subq)
+    ).all()
+    
+    target_ids = [s.student_id for s in unaccessed_students]
+    
+    if not target_ids:
+        return {"message": "All students have already accessed this resource", "sent_count": 0}
+        
+    # Bulk create reminders
+    new_alerts = []
+    
+    for sid in target_ids:
+        new_alert = Alert(
+            title="Resource Reminder",
+            message=f"Reminder: Please check the latest study material '{resource.title}'.",
+            type="reminder",
+            target_role="student",
+            target_type="individual",
+            student_id=sid,
+            faculty_id=current_user["user_id"]
+        )
+        new_alerts.append(new_alert)
+        
+    db.add_all(new_alerts)
+    db.flush()
+    
+    recipients = [
+        AlertRecipient(alert_id=al.id, user_id=al.student_id, is_read=False)
+        for al in new_alerts
+    ]
+    
+    db.add_all(recipients)
+    db.commit()
+    
+    return {"message": "Reminders sent successfully", "sent_count": len(target_ids)}

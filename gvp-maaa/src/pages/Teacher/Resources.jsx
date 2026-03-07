@@ -20,6 +20,7 @@ export default function Resources() {
   const [activeResource, setActiveResource] = useState(null);
   const [accessDetails, setAccessDetails] = useState([]);
   const [detailsLoading, setDetailsLoading] = useState(false);
+  const [sendingReminder, setSendingReminder] = useState(false);
 
   const [uploading, setUploading] = useState(false);
 
@@ -41,6 +42,15 @@ export default function Resources() {
     if (selectedSubject) {
       fetchResources();
     }
+
+    // Listen for global uploads from the Quick Actions modal
+    const handleGlobalUpload = () => {
+      if (selectedSubject) {
+        fetchResources();
+      }
+    };
+    window.addEventListener("resourceUploaded", handleGlobalUpload);
+    return () => window.removeEventListener("resourceUploaded", handleGlobalUpload);
   }, [selectedSubject]);
 
   async function fetchSubjects() {
@@ -92,7 +102,7 @@ export default function Resources() {
     setDetailsLoading(true);
     setAccessDetails([]);
     try {
-      const res = await fetch(`http://localhost:8000/faculty/resource-access/${resource.id}`, {
+      const res = await fetch(`http://localhost:8000/faculty/resource-access-details/${resource.id}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
@@ -108,10 +118,33 @@ export default function Resources() {
     }
   }
 
+  async function handleSendReminder() {
+    if (!activeResource) return;
+    try {
+      setSendingReminder(true);
+      const res = await fetch(`http://localhost:8000/faculty/send-resource-reminder/${activeResource.id}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        alert(`Reminder sent directly to ${data.sent_count} students!`);
+      } else {
+        const err = await res.json();
+        alert("Failed to send reminder: " + (err.detail || ""));
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Error sending reminder.");
+    } finally {
+      setSendingReminder(false);
+    }
+  }
+
   /* ================= UPLOAD LOGIC ================= */
 
   function handlePreUpload() {
-    if (!newTitle || !newFile || !selectedSubject) {
+    if (!newTitle || !newFile) {
       alert("Please fill all required fields");
       return;
     }
@@ -222,7 +255,7 @@ export default function Resources() {
               onChange={(e) => setType(e.target.value)}
               className="h-[44px] w-40 px-3 rounded-xl border bg-white"
             >
-              {["All", "Notes", "PPT", "Assignment", "Reference", "Link"].map((o) => (
+              {["All", "Notes", "PPT", "Assignment", "Reference", "Link", "Other"].map((o) => (
                 <option key={o} value={o}>{o}</option>
               ))}
             </select>
@@ -244,62 +277,87 @@ export default function Resources() {
       {/* UPLOAD PANEL */}
       {showUpload && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="bg-white rounded-2xl w-full max-w-lg p-6 space-y-5">
-            <h3 className="text-lg font-semibold">Upload Material to {getSubjectName()}</h3>
+          <div className="bg-white rounded-2xl w-full max-w-lg p-6 space-y-6">
+            <div>
+              <h3 className="text-xl font-bold text-gray-800">Upload Material to {getSubjectName()}</h3>
+            </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-4">
               <div>
-                <label className="text-xs text-gray-500">Resource Title</label>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-widest mb-1.5 block">Resource Title</label>
                 <input
                   value={newTitle}
                   onChange={(e) => setNewTitle(e.target.value)}
-                  className="w-full mt-1 p-2 rounded-xl border"
+                  placeholder="e.g. Machine Learning Unit 3 Notes"
+                  className="w-full p-2.5 rounded-xl border focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400 outline-none transition-all"
                 />
               </div>
 
               <div>
-                <label className="text-xs text-gray-500">Resource Type</label>
-                <select
-                  value={newType}
-                  onChange={(e) => setNewType(e.target.value)}
-                  className="w-full mt-1 p-2 rounded-xl border bg-white"
-                >
-                  {["Notes", "PPT", "Assignment", "Reference", "Link"].map(o => (
-                    <option key={o} value={o}>{o}</option>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-widest mb-1.5 block">Resource Type</label>
+                <div className="flex bg-gray-100 p-1 rounded-xl">
+                  {["Notes", "PPT", "Assignment", "Reference", "Other"].map(o => (
+                    <button
+                      key={o}
+                      onClick={() => setNewType(o)}
+                      className={`flex-1 py-1.5 text-sm font-medium rounded-lg transition-all ${newType === o ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                    >
+                      {o}
+                    </button>
                   ))}
-                </select>
+                </div>
               </div>
 
-              <div className="md:col-span-2">
-                <label className="text-xs text-gray-500">Resource Description</label>
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-widest mb-1.5 block">Description <span className="text-gray-400 font-normal normal-case">(Optional)</span></label>
                 <textarea
-                  rows={3}
+                  rows={2}
                   value={newDesc}
                   onChange={(e) => setNewDesc(e.target.value)}
-                  className="w-full mt-1 p-3 rounded-xl border resize-none"
+                  placeholder="Optional description"
+                  className="w-full p-2.5 rounded-xl border resize-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400 outline-none transition-all"
                 />
               </div>
 
-              <div className="md:col-span-2">
-                <label className="text-xs text-gray-500">Upload File</label>
-                <input
-                  type="file"
-                  onChange={(e) => setNewFile(e.target.files[0])}
-                  className="w-full mt-1 p-2 rounded-xl border bg-gray-50 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700"
-                />
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-widest mb-1.5 block">Upload File</label>
+                <div className="relative border-2 border-dashed border-gray-300 rounded-xl p-6 flex flex-col items-center justify-center bg-gray-50 hover:bg-indigo-50/50 hover:border-indigo-300 transition-colors group">
+                  <input
+                    type="file"
+                    onChange={(e) => setNewFile(e.target.files[0])}
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                  />
+                  {!newFile ? (
+                    <>
+                      <div className="w-10 h-10 mb-2 rounded-full bg-white shadow-sm flex items-center justify-center text-gray-400 group-hover:text-indigo-500 transition-colors">
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
+                      </div>
+                      <p className="text-sm font-medium text-gray-600">Drag file here or click to upload</p>
+                    </>
+                  ) : (
+                    <div className="flex flex-col items-center gap-2 w-full max-w-[80%] mx-auto">
+                      <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-lg shadow-sm w-full">
+                        <svg className="w-5 h-5 text-indigo-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clipRule="evenodd" /></svg>
+                        <span className="text-sm font-medium text-gray-700 truncate">{newFile.name}</span>
+                        <span className="text-green-500 font-bold ml-auto">✔</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
 
-            <div className="flex justify-end gap-3 pt-2">
+            <div className="flex justify-between items-center pt-3 border-t border-gray-100">
               <button
                 onClick={() => setShowUpload(false)}
-                className="px-5 py-2 rounded-xl border hover:bg-gray-50"
+                className="px-5 py-2.5 rounded-xl font-medium text-gray-600 hover:bg-gray-50 border border-transparent transition-colors"
               >
                 Cancel
               </button>
               <button
                 onClick={handlePreUpload}
-                className="px-5 py-2 rounded-xl text-white bg-indigo-600 hover:bg-indigo-700"
+                disabled={!newTitle || !newFile}
+                className={`px-6 py-2.5 rounded-xl font-medium text-white transition-all shadow-sm ${(!newTitle || !newFile) ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'}`}
               >
                 Publish Resource
               </button>
@@ -345,17 +403,31 @@ export default function Resources() {
       {/* SUCCESS ANIMATION MODAL */}
       {showSuccessModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 transition-opacity">
-          <div className="bg-white rounded-2xl w-full max-w-xs p-6 shadow-2xl flex flex-col items-center justify-center gap-4 transform transition-transform scale-100 animate-in zoom-in duration-300">
-            <div className="w-16 h-16 bg-green-100 text-green-500 rounded-full flex items-center justify-center">
-              <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <div className="bg-white rounded-2xl w-full max-w-xs p-6 shadow-2xl flex flex-col items-center justify-center gap-4 transform transition-transform scale-100 animate-[pulse_0.5s_ease-out]">
+            <div className="w-20 h-20 bg-green-50 text-green-500 rounded-full flex items-center justify-center relative shadow-inner animate-[popIn_0.4s_ease-out]">
+              <svg className="w-10 h-10 animate-[drawCheck_0.5s_ease-out_forwards]" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style={{ strokeDasharray: 50, strokeDashoffset: 50 }}>
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
               </svg>
             </div>
-            <div className="text-center">
-              <h3 className="text-lg font-semibold text-gray-800">Resource Published</h3>
-              <p className="text-sm text-gray-500 mt-1">Material uploaded to {getSubjectName()}</p>
+            <div className="text-center animate-[fadeIn_0.5s_ease-out_0.2s_both]">
+              <h3 className="text-lg font-bold text-gray-800">Resource Published Successfully</h3>
+              <p className="text-sm text-gray-500 mt-2">{newTitle || "Material"} has been published successfully and students have been notified.</p>
             </div>
           </div>
+          <style>{`
+            @keyframes drawCheck {
+              to { stroke-dashoffset: 0; }
+            }
+            @keyframes popIn {
+              0% { transform: scale(0); opacity: 0; }
+              80% { transform: scale(1.1); opacity: 1; }
+              100% { transform: scale(1); opacity: 1; }
+            }
+            @keyframes fadeIn {
+              from { opacity: 0; transform: translateY(10px); }
+              to { opacity: 1; transform: translateY(0); }
+            }
+          `}</style>
         </div>
       )}
 
@@ -385,19 +457,48 @@ export default function Resources() {
                   {accessDetails.map((a, idx) => {
                     const d = new Date(a.accessed_at);
                     const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                    const dateStr = d.toLocaleDateString();
+                    const dateStr = d.toLocaleDateString("en-GB", { day: '2-digit', month: 'short', year: 'numeric' });
                     return (
-                      <div key={idx} className="flex justify-between items-center bg-gray-50 p-3 rounded-lg">
-                        <span className="font-medium text-gray-700">{a.student_name}</span>
-                        <span className="text-sm text-gray-500">{dateStr} {timeStr}</span>
+                      <div key={idx} className="bg-gray-50 p-4 rounded-xl border border-gray-100 flex flex-col gap-2">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <span className="font-bold text-gray-800 text-sm block">{a.name}</span>
+                            <span className="text-xs text-gray-500 font-medium">Roll No: {a.roll_no}</span>
+                          </div>
+                          <span className={`text-xs px-2.5 py-1 rounded-md font-semibold tracking-wide capitalize ${a.action_type === 'download' ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-200 text-gray-700'}`}>
+                            {a.action_type}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5 text-xs text-gray-400 mt-1">
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                          <span>{dateStr} {timeStr}</span>
+                        </div>
                       </div>
                     )
                   })}
                 </div>
               )}
             </div>
+
+            {/* REMINDER BOX (Only show if there are un-accessed students, deduced by total_students vs access count) */}
+            {!detailsLoading && activeResource.total_students > activeResource.accessed && (
+              <div className="mt-4 bg-orange-50 border border-orange-200 rounded-xl p-4 flex items-center justify-between shadow-sm">
+                <div>
+                  <h4 className="text-orange-800 font-semibold text-sm">Low Engagement Warning</h4>
+                  <p className="text-orange-600 text-xs mt-0.5">Only {activeResource.accessed} of {activeResource.total_students} students engaged.</p>
+                </div>
+                <button
+                  onClick={handleSendReminder}
+                  disabled={sendingReminder}
+                  className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-lg text-sm font-medium shadow-sm disabled:opacity-50 flex items-center gap-1.5 transition"
+                >
+                  {sendingReminder ? 'Sending...' : 'Send Reminder'}
+                </button>
+              </div>
+            )}
+
             <div className="pt-4 border-t mt-3 flex justify-end">
-              <button onClick={() => setShowDetailsModal(false)} className="px-5 py-2 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 font-medium">Close</button>
+              <button onClick={() => setShowDetailsModal(false)} className="px-5 py-2 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 font-medium tracking-wide">Close</button>
             </div>
           </div>
         </div>
@@ -450,14 +551,23 @@ export default function Resources() {
 
                 <div className="pt-2">
                   <div className="flex justify-between items-center text-sm mb-1">
-                    <span className="text-gray-600 font-medium">Accessed</span>
+                    <span className="text-gray-600 font-medium tracking-wide text-xs uppercase">Accessed by</span>
                     <span className="text-indigo-600 font-bold">{r.accessed} <span className="text-gray-400 font-normal">/ {r.total_students} students</span></span>
                   </div>
-                  <div className="w-full h-2.5 bg-gray-100 rounded-full overflow-hidden">
+                  <div className="w-full h-2.5 bg-gray-100 rounded-full overflow-hidden mb-3">
                     <div
                       className="h-full bg-indigo-500 rounded-full transition-all duration-500"
                       style={{ width: `${percent}%` }}
                     />
+                  </div>
+                  <div className="flex justify-between items-center bg-gray-50/80 p-2.5 rounded-xl border border-gray-100/60">
+                    <div className="flex items-center gap-2 text-sm">
+                      <div className="p-1.5 bg-indigo-100 text-indigo-600 rounded-lg">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                      </div>
+                      <span className="text-gray-600 font-medium">Downloaded by</span>
+                    </div>
+                    <span className="text-gray-800 font-bold bg-white px-3 py-1 rounded-lg border shadow-sm">{r.downloads || 0} students</span>
                   </div>
                 </div>
               </div>

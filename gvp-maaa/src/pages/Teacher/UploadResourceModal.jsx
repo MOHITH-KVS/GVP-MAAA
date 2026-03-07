@@ -3,278 +3,232 @@ import CloseIcon from "@mui/icons-material/Close";
 
 export default function UploadResourceModal({ onClose }) {
   const [type, setType] = useState("Study Material");
-  const [year, setYear] = useState("");
-  const [section, setSection] = useState("");
   const [subject, setSubject] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [link, setLink] = useState("");
   const [file, setFile] = useState(null);
 
-  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [subjects, setSubjects] = useState([]);
+  const [uploading, setUploading] = useState(false);
   const [success, setSuccess] = useState(false);
-  const [toast, setToast] = useState(false);
 
-  const canPublish =
-    type && year && section && title && (file || link || description);
+  const token = localStorage.getItem("access_token");
 
-  /* ================= KEYBOARD SHORTCUTS ================= */
+  // Fetch subjects for the dropdown
   useEffect(() => {
-    if (!confirmOpen) return;
+    async function fetchSubjects() {
+      try {
+        const res = await fetch("http://localhost:8000/faculty/subjects", {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setSubjects(data);
+          if (data.length > 0) setSubject(data[0].subject_id);
+        }
+      } catch (err) {
+        console.error("Error fetching subjects:", err);
+      }
+    }
+    if (token) fetchSubjects();
+  }, [token]);
 
-    const handler = (e) => {
-      if (e.key === "Escape") setConfirmOpen(false);
-      if (e.key === "Enter") handleFinalPublish();
-    };
+  const canPublish = type && subject && title && file && !uploading;
 
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [confirmOpen]);
+  const handleFinalPublish = async () => {
+    if (!canPublish) return;
+    try {
+      setUploading(true);
+      const formData = new FormData();
+      formData.append("title", title);
+      formData.append("description", description);
+      formData.append("subject_id", subject);
+      formData.append("type", type);
+      formData.append("file", file);
 
-  /* ================= FINAL PUBLISH ================= */
-  const handleFinalPublish = () => {
-    setConfirmOpen(false);
-    setSuccess(true);
+      const res = await fetch("http://localhost:8000/faculty/upload-resource", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`
+        },
+        body: formData
+      });
+
+      if (res.ok) {
+        setSuccess(true);
+        window.dispatchEvent(new Event("resourceUploaded"));
+        setTimeout(() => {
+          setSuccess(false);
+          onClose();
+        }, 1500);
+      } else {
+        const err = await res.json();
+        alert("Upload failed: " + JSON.stringify(err));
+      }
+    } catch (error) {
+      console.error("Upload error:", error);
+      alert("Upload failed");
+    } finally {
+      setUploading(false);
+    }
   };
-
-  /* ================= SUCCESS FLOW ================= */
-  useEffect(() => {
-    if (!success) return;
-
-    const t1 = setTimeout(() => setToast(true), 1200);
-    const t2 = setTimeout(() => {
-      setToast(false);
-      onClose();
-    }, 3000);
-
-    return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
-    };
-  }, [success]);
 
   return (
     <>
       {/* ================= MAIN MODAL ================= */}
-      <div className="fixed inset-0 z-50 flex items-center justify-center">
-        {/* Backdrop */}
-        <div
-          className="absolute inset-0 bg-black/40 backdrop-blur-md"
-          onClick={onClose}
-        />
+      {!success && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl w-full max-w-lg p-6 space-y-6 shadow-2xl relative animate-[fadeIn_0.2s_ease-out]">
+            <div className="flex justify-between items-center pb-2">
+              <h3 className="text-xl font-bold text-gray-800">Upload Resource</h3>
+              <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors">
+                <CloseIcon />
+              </button>
+            </div>
 
-        {/* Modal */}
-        <div className="relative w-full max-w-4xl mx-4 bg-white/90 backdrop-blur-xl rounded-2xl shadow-2xl">
-          {/* Header */}
-          <div className="flex justify-between items-center px-6 py-4 border-b">
-            <h2 className="text-lg font-semibold">Upload Resource</h2>
-            <button onClick={onClose}>
-              <CloseIcon />
-            </button>
-          </div>
-
-          {/* Body */}
-          <div className="px-6 py-5 space-y-6">
-            {/* Resource Type */}
-            <div>
-              <p className="text-sm font-medium mb-2">Resource Type</p>
-              <div className="flex gap-3 flex-wrap">
-                {["Study Material", "Assignment", "Notice", "External Link"].map(
-                  (t) => (
+            <div className="space-y-4">
+              {/* Type segmented buttons */}
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-widest mb-1.5 block">Resource Type</label>
+                <div className="flex bg-gray-100 p-1 rounded-xl">
+                  {["Study Material", "Assignment", "Notice", "External Link", "Other"].map(o => (
                     <button
-                      key={t}
-                      onClick={() => setType(t)}
-                      className={`px-4 py-2 rounded-full border ${
-                        type === t
-                          ? "bg-indigo-600 text-white border-indigo-600"
-                          : "hover:bg-gray-100"
-                      }`}
+                      key={o}
+                      onClick={() => setType(o)}
+                      className={`flex-1 py-1.5 text-sm font-medium rounded-lg transition-all ${type === o ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
                     >
-                      {t}
+                      {o}
                     </button>
-                  )
-                )}
+                  ))}
+                </div>
               </div>
-            </div>
 
-            {/* Target */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <Select label="Year" value={year} onChange={setYear} options={["3rd Year", "4th Year"]} />
-              <Select label="Section" value={section} onChange={setSection} options={["A", "B"]} />
-              <Select label="Subject" value={subject} onChange={setSubject} options={["DBMS", "OS", "CN"]} />
-            </div>
+              {/* Subject Dropdown */}
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-widest mb-1.5 block">Academic Target (Subject)</label>
+                <select
+                  value={subject}
+                  onChange={(e) => setSubject(e.target.value)}
+                  className="w-full p-2.5 rounded-xl border bg-white focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400 outline-none transition-all text-gray-700 font-medium cursor-pointer"
+                >
+                  {subjects.length === 0 && <option value="">Loading subjects...</option>}
+                  {subjects.map(s => (
+                    <option key={s.subject_id} value={s.subject_id}>
+                      {s.subject_name} ({s.year}-{s.section})
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-            {/* Title */}
-            <Input label="Title" value={title} onChange={setTitle} />
+              {/* Title */}
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-widest mb-1.5 block">Title</label>
+                <input
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="e.g. Machine Learning Unit 3 Notes"
+                  className="w-full p-2.5 rounded-xl border focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400 outline-none transition-all"
+                />
+              </div>
 
-            {/* Description / Link */}
-            {type !== "External Link" ? (
-              <Textarea
-                label={type === "Notice" ? "Notice Message" : "Description"}
-                value={description}
-                onChange={setDescription}
-              />
-            ) : (
-              <Input label="Resource URL" value={link} onChange={setLink} />
-            )}
+              {/* Description */}
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-widest mb-1.5 block">Description <span className="text-gray-400 font-normal normal-case">(Optional)</span></label>
+                <textarea
+                  rows={2}
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="Optional description"
+                  className="w-full p-2.5 rounded-xl border resize-none focus:ring-2 focus:ring-indigo-100 focus:border-indigo-400 outline-none transition-all"
+                />
+              </div>
 
-            {/* File */}
-            {type !== "External Link" && (
-              <input
-                type="file"
-                onChange={(e) => setFile(e.target.files[0])}
-              />
-            )}
-          </div>
-
-          {/* Footer */}
-          <div className="px-6 py-4 border-t flex justify-end gap-3">
-            <button onClick={onClose} className="px-4 py-2 border rounded-lg">
-              Cancel
-            </button>
-            <button
-              disabled={!canPublish}
-              onClick={() => setConfirmOpen(true)}
-              className={`px-5 py-2 rounded-lg text-white ${
-                canPublish
-                  ? "bg-indigo-600 hover:bg-indigo-700"
-                  : "bg-gray-400 cursor-not-allowed"
-              }`}
-            >
-              Publish
-            </button>
-          </div>
-
-          {/* ================= RECHECK MODAL ================= */}
-          {confirmOpen && (
-            <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-              <div className="bg-white rounded-2xl p-6 w-full max-w-md">
-                <h3 className="text-lg font-semibold mb-4">
-                  Recheck Before Publishing
-                </h3>
-
-                <div className="space-y-2 text-sm text-gray-700">
-                  <p><b>Type:</b> {type}</p>
-                  <p><b>Year:</b> {year}</p>
-                  <p><b>Section:</b> {section}</p>
-                  <p><b>Subject:</b> {subject || "All Subjects"}</p>
-
-                  <div>
-                    <label className="text-xs text-gray-500">Title</label>
+              {/* Drag Drop File */}
+              {type !== "External Link" && (
+                <div>
+                  <label className="text-xs font-semibold text-gray-500 uppercase tracking-widest mb-1.5 block">Upload File</label>
+                  <div className="relative border-2 border-dashed border-gray-300 rounded-xl p-6 flex flex-col items-center justify-center bg-gray-50 hover:bg-indigo-50/50 hover:border-indigo-300 transition-colors group">
                     <input
-                      value={title}
-                      onChange={(e) => setTitle(e.target.value)}
-                      className="w-full mt-1 p-2 border rounded-lg"
+                      type="file"
+                      onChange={(e) => setFile(e.target.files[0])}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                     />
+                    {!file ? (
+                      <>
+                        <div className="w-10 h-10 mb-2 rounded-full bg-white shadow-sm flex items-center justify-center text-gray-400 group-hover:text-indigo-500 transition-colors">
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
+                        </div>
+                        <p className="text-sm font-medium text-gray-600">Drag file here or click to upload</p>
+                      </>
+                    ) : (
+                      <div className="flex flex-col items-center gap-2 w-full max-w-[80%] mx-auto">
+                        <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-lg shadow-sm w-full">
+                          <svg className="w-5 h-5 text-indigo-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clipRule="evenodd" /></svg>
+                          <span className="text-sm font-medium text-gray-700 truncate">{file.name}</span>
+                          <span className="text-green-500 font-bold ml-auto">✔</span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
-
-                <div className="mt-6 flex justify-end gap-3">
-                  <button
-                    onClick={() => setConfirmOpen(false)}
-                    className="px-4 py-2 border rounded-lg"
-                  >
-                    Back & Edit
-                  </button>
-                  <button
-                    onClick={handleFinalPublish}
-                    className="px-5 py-2 bg-indigo-600 text-white rounded-lg"
-                  >
-                    Final Publish
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* ================= SUCCESS OVERLAY ================= */}
-      {success && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-emerald-500/10 backdrop-blur-md">
-          <div className="flex flex-col items-center text-center gap-3 animate-uploadSuccess">
-            <div className="relative">
-              <span className="absolute inset-0 rounded-full bg-green-400/20 animate-ripple" />
-              <div className="w-20 h-20 rounded-full border-4 border-green-500 flex items-center justify-center">
-                <svg
-                  className="w-10 h-10 text-green-600"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="3"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M5 13l4 4L19 7"
-                  />
-                </svg>
-              </div>
+              )}
             </div>
 
-            <p className="text-lg font-semibold text-gray-800">
-              Published Successfully
-            </p>
-            <p className="text-xs text-gray-500">
-              Students can view it now
-            </p>
+            <div className="flex justify-between items-center pt-3 border-t border-gray-100">
+              <button
+                onClick={onClose}
+                disabled={uploading}
+                className="px-5 py-2.5 rounded-xl font-medium text-gray-600 hover:bg-gray-50 border border-transparent transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleFinalPublish}
+                disabled={!canPublish}
+                className={`px-6 py-2.5 rounded-xl font-medium text-white transition-all shadow-sm ${(!canPublish) ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'} flex items-center justify-center gap-2`}
+              >
+                {uploading ? (
+                  <>
+                    <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                    Publishing...
+                  </>
+                ) : 'Publish Resource'}
+              </button>
+            </div>
           </div>
         </div>
       )}
 
-      {/* ================= TOAST (ABOVE BLUR) ================= */}
-      {toast && (
-        <div className="fixed bottom-6 right-6 z-[80] bg-green-600 text-white px-5 py-3 rounded-xl shadow-lg">
-          Resource published successfully 🎉
+      {/* ================= SUCCESS ANIMATION MODAL ================= */}
+      {success && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 transition-opacity">
+          <div className="bg-white rounded-2xl w-full max-w-xs p-6 shadow-2xl flex flex-col items-center justify-center gap-4 transform transition-transform scale-100 animate-[pulse_0.5s_ease-out]">
+            <div className="w-20 h-20 bg-green-50 text-green-500 rounded-full flex items-center justify-center relative shadow-inner animate-[popIn_0.4s_ease-out]">
+              <svg className="w-10 h-10 animate-[drawCheck_0.5s_ease-out_forwards]" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style={{ strokeDasharray: 50, strokeDashoffset: 50 }}>
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <div className="text-center animate-[fadeIn_0.5s_ease-out_0.2s_both]">
+              <h3 className="text-lg font-bold text-gray-800">Resource Published Successfully</h3>
+              <p className="text-sm text-gray-500 mt-2">{title || "Material"} has been published successfully and students have been notified.</p>
+            </div>
+          </div>
+          <style>{`
+            @keyframes drawCheck {
+              to { stroke-dashoffset: 0; }
+            }
+            @keyframes popIn {
+              0% { transform: scale(0); opacity: 0; }
+              80% { transform: scale(1.1); opacity: 1; }
+              100% { transform: scale(1); opacity: 1; }
+            }
+            @keyframes fadeIn {
+              from { opacity: 0; transform: translateY(10px); }
+              to { opacity: 1; transform: translateY(0); }
+            }
+          `}</style>
         </div>
       )}
     </>
-  );
-}
-
-/* ================= HELPERS ================= */
-
-function Select({ label, value, onChange, options }) {
-  return (
-    <div>
-      <label className="text-xs text-gray-500">{label}</label>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full mt-1 p-2 border rounded-lg"
-      >
-        <option value="">Select</option>
-        {options.map((o) => (
-          <option key={o}>{o}</option>
-        ))}
-      </select>
-    </div>
-  );
-}
-
-function Input({ label, value, onChange }) {
-  return (
-    <div>
-      <label className="text-xs text-gray-500">{label}</label>
-      <input
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full mt-1 p-2 border rounded-lg"
-      />
-    </div>
-  );
-}
-
-function Textarea({ label, value, onChange }) {
-  return (
-    <div>
-      <label className="text-xs text-gray-500">{label}</label>
-      <textarea
-        rows={3}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full mt-1 p-2 border rounded-lg"
-      />
-    </div>
   );
 }
