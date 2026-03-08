@@ -26,7 +26,10 @@ from models import (
     Assignment,
     AssignmentSubmission,
     Resource,
-    ResourceAccess
+    ResourceAccess,
+    Event,
+    EventAttendance,
+    EventRegistration
 )
 
 
@@ -86,7 +89,16 @@ from schemas import (
     StatusUpdateRequest,
     StudentAssignmentSummaryResponse,
     ResourceResponse,
-    ResourceAccessRequest
+    ResourceAccessRequest,
+    EventCreate,
+    EventResponse,
+    EventAttendanceResponse,
+    EventAttendanceUpdate,
+    BulkEventAttendanceUpdate,
+    EventAlertRequest,
+    EventResultUpdate,
+    EventRegistrationRequest,
+    StudentEventResponse
 )
 from models import User, Student, Faculty,Timetable
 from auth import (
@@ -110,10 +122,62 @@ app.mount(
     name="uploads"
 )
 
+
+def process_event_reminders():
+    db = SessionLocal()
+    try:
+        today = date.today()
+        target_date = today + timedelta(days=2)
+        
+        # Find events exactly 2 days out
+        events_to_remind = db.query(Event).filter(Event.event_date == target_date).all()
+        
+        for event in events_to_remind:
+            # Find students who are 'absent'
+            absent_attendances = db.query(EventAttendance).filter(
+                EventAttendance.event_id == event.id,
+                EventAttendance.status == "absent"
+            ).all()
+            
+            if not absent_attendances:
+                continue
+
+            title = f"Reminder: {event.title}"
+            message = f"Reminder: {event.title} is scheduled on {event.event_date.strftime('%d %b %Y')} at {event.location}."
+            
+            new_alerts = []
+            for att in absent_attendances:
+                new_alerts.append(
+                    Alert(
+                        title=title,
+                        message=message,
+                        type="reminder",
+                        target_role="student",
+                        target_type="individual",
+                        student_id=att.student_id,
+                        faculty_id=event.created_by
+                    )
+                )
+
+            if new_alerts:
+                db.add_all(new_alerts)
+                db.flush()
+                recipients = [
+                    AlertRecipient(alert_id=a.id, user_id=a.student_id, is_read=False)
+                    for a in new_alerts
+                ]
+                db.add_all(recipients)
+                
+        db.commit()
+    except Exception as e:
+        print(f"Error processing event reminders: {e}")
+    finally:
+        db.close()
+
+
 @app.on_event("startup")
 def create_tables():
     Base.metadata.create_all(bind=engine)
-
 
 # -------------------------
 # CORS
@@ -4429,6 +4493,12 @@ def start_scheduler():
         hour=20,
         minute=0
     )
+    scheduler.add_job(
+        process_event_reminders,
+        "cron",
+        hour=8,
+        minute=0
+    )
     scheduler.start()
 
 
@@ -4908,4 +4978,476 @@ def send_resource_reminder(
     db.add_all(recipients)
     db.commit()
     
+    return {"message": "Reminders sent successfully", "sent_count": len(target_ids)}
+
+
+# ==========================================
+# EVENTS MANAGEMENT API
+# ==========================================
+
+@app.post("/faculty/events", response_model=EventResponse)
+def create_event(
+    payload: EventCreate,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "faculty":
+        raise HTTPException(status_code=403, detail="Faculty only")
+
+    # Insert event
+    new_event = Event(
+        title=payload.title,
+        description=payload.description,
+        event_type=payload.event_type,
+        event_date=payload.event_date,
+        location=payload.location,
+        year=payload.year,
+        section=payload.section,
+        created_by=current_user["user_id"],
+        status="upcoming"
+    )
+    db.add(new_event)
+    db.commit()
+    db.refresh(new_event)
+
+    # Fetch students for year, section, and faculty's department
+    dept_id = current_user.get("department_id")
+    
+    query = (
+        db.query(Student.student_id)
+        .join(User, Student.student_id == User.user_id)
+        .filter(
+            User.department_id == dept_id,
+            User.is_deleted == False
+        )
+    )
+
+    if payload.year != "All":
+        query = query.filter(Student.year == int(payload.year))
+    if payload.section != "All":
+        query = query.filter(Student.section == payload.section)
+        
+    students = query.all()
+
+    # Insert default attendance
+    attendance_records = []
+    for (sid,) in students:
+        attendance_records.append(
+            EventAttendance(
+                event_id=new_event.id,
+                student_id=sid,
+                status="absent"
+            )
+        )
+    
+    if attendance_records:
+        db.add_all(attendance_records)
+        db.commit()
+
+    # Create automated alerts for all targeted students
+    title = f"New Event Created: {payload.title}"
+    message = f"New Event Created: {payload.title} on {payload.event_date.strftime('%d %b %Y')} at {payload.location}."
+    new_alerts = []
+    for (sid,) in students:
+        new_alerts.append(
+            Alert(
+                title=title,
+                message=message,
+                type="announcement",
+                target_role="student",
+                target_type="individual",
+                student_id=sid,
+                faculty_id=current_user["user_id"]
+            )
+        )
+    
+    if new_alerts:
+        db.add_all(new_alerts)
+        db.flush()
+        
+        recipients = [
+            AlertRecipient(alert_id=al.id, user_id=al.student_id, is_read=False)
+            for al in new_alerts
+        ]
+        db.add_all(recipients)
+        db.commit()
+
+    # Create response
+    response_data = EventResponse.from_orm(new_event)
+    response_data.total_students = len(students)
+    response_data.present_count = 0
+    response_data.absent_count = len(students)
+    
+    # Auto-adjust status
+    today = date.today()
+    if new_event.event_date > today:
+        response_data.status = "Upcoming"
+    elif new_event.event_date == today:
+        response_data.status = "Ongoing"
+    else:
+        response_data.status = "Completed"
+        
+    return response_data
+
+@app.get("/faculty/events", response_model=List[EventResponse])
+def get_events(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "faculty":
+        raise HTTPException(status_code=403, detail="Faculty only")
+
+    events = db.query(Event).filter(Event.created_by == current_user["user_id"]).order_by(Event.event_date.desc()).all()
+    
+    results = []
+    today = date.today()
+    for ev in events:
+        resp = EventResponse.from_orm(ev)
+        
+        # Adjust status on the fly
+        if ev.event_date > today:
+            resp.status = "Upcoming"
+        elif ev.event_date == today:
+            resp.status = "Ongoing"
+        else:
+            resp.status = "Completed"
+
+        # Compute counts
+        total = db.query(EventAttendance).filter(EventAttendance.event_id == ev.id).count()
+        present = db.query(EventAttendance).filter(EventAttendance.event_id == ev.id, EventAttendance.status == "present").count()
+        absent = total - present
+        
+        resp.total_students = total
+        resp.present_count = present
+        resp.absent_count = absent
+        
+        results.append(resp)
+        
+    return results
+
+@app.get("/faculty/events/{event_id}/attendance", response_model=EventAttendanceResponse)
+def get_event_attendance(
+    event_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "faculty":
+        raise HTTPException(status_code=403, detail="Faculty only")
+
+    event = db.query(Event).filter(Event.id == event_id, Event.created_by == current_user["user_id"]).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+        
+    attendance_records = (
+        db.query(EventAttendance, Student, User)
+        .join(Student, EventAttendance.student_id == Student.student_id)
+        .join(User, Student.student_id == User.user_id)
+        .filter(EventAttendance.event_id == event_id)
+        .order_by(User.name.asc())
+        .all()
+    )
+    
+    students = []
+    for att, st, usr in attendance_records:
+        students.append(EventStudentDetail(
+            student_id=st.student_id,
+            name=usr.name,
+            roll_no=st.roll_no,
+            attendance_status=att.status
+        ))
+        
+    return EventAttendanceResponse(
+        event_id=event.id,
+        title=event.title,
+        date=event.event_date,
+        location=event.location,
+        students=students
+    )
+
+@app.patch("/faculty/events/{event_id}/attendance")
+def update_event_attendance(
+    event_id: int,
+    payload: EventAttendanceUpdate,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "faculty":
+        raise HTTPException(status_code=403, detail="Faculty only")
+
+    # verify ownership
+    event = db.query(Event).filter(Event.id == event_id, Event.created_by == current_user["user_id"]).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+        
+    att = db.query(EventAttendance).filter(
+        EventAttendance.event_id == event_id,
+        EventAttendance.student_id == payload.student_id
+    ).first()
+    
+    if not att:
+        raise HTTPException(status_code=404, detail="Student attendance record not found for this event")
+        
+    att.status = payload.status
+    db.commit()
+    
+    return {"message": "Attendance updated"}
+
+@app.patch("/faculty/events/{event_id}/attendance/bulk")
+def bulk_update_event_attendance(
+    event_id: int,
+    payload: BulkEventAttendanceUpdate,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "faculty":
+        raise HTTPException(status_code=403, detail="Faculty only")
+
+    event = db.query(Event).filter(Event.id == event_id, Event.created_by == current_user["user_id"]).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    for record in payload.students:
+        att = db.query(EventAttendance).filter(
+            EventAttendance.event_id == event_id,
+            EventAttendance.student_id == record.student_id
+        ).first()
+        if att:
+            att.status = record.status
+            
+    db.commit()
+    return {"message": "Bulk attendance updated"}
+
+@app.patch("/faculty/events/result")
+def update_event_result(
+    payload: EventResultUpdate,
+    event_id: int = Query(...),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "faculty":
+        raise HTTPException(status_code=403, detail="Faculty only")
+
+    event = db.query(Event).filter(Event.id == event_id, Event.created_by == current_user["user_id"]).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found or unauthorized")
+
+    att = db.query(EventAttendance).filter(
+        EventAttendance.event_id == event_id,
+        EventAttendance.student_id == payload.student_id
+    ).first()
+
+    if not att:
+        raise HTTPException(status_code=404, detail="Student attendance record not found")
+    
+    if att.status != "present":
+        raise HTTPException(status_code=400, detail="Cannot assign result to absent student")
+
+    att.result = payload.result
+    db.commit()
+
+    return {"message": "Result updated successfully"}
+
+# ==========================================
+# STUDENT EVENTS API
+# ==========================================
+
+@app.get("/student/events", response_model=List[StudentEventResponse])
+def get_student_events(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "student":
+        raise HTTPException(status_code=403, detail="Student only")
+
+    student = db.query(Student).filter(Student.student_id == current_user["user_id"]).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student record not found")
+
+    user_data = db.query(User).filter(User.user_id == student.student_id).first()
+    if not user_data:
+        raise HTTPException(status_code=404, detail="User record not found")
+
+    # Fetch events targeted to this student's year/section/department
+    # "All" represents unrestricted target
+    events = (
+        db.query(Event)
+        .join(Faculty, Event.created_by == Faculty.faculty_id)
+        .join(User, Faculty.faculty_id == User.user_id)
+        .filter(
+            User.department_id == user_data.department_id,
+            or_(Event.year == "All", Event.year == str(student.year)),
+            or_(Event.section == "All", Event.section == student.section)
+        )
+        .order_by(Event.event_date.desc())
+        .all()
+    )
+
+    results = []
+    today = date.today()
+    for ev in events:
+        resp = StudentEventResponse.from_orm(ev)
+        
+        # Adjust dynamic status
+        if ev.event_date > today:
+            resp.status = "Upcoming"
+        elif ev.event_date == today:
+            resp.status = "Ongoing"
+        else:
+            resp.status = "Completed"
+
+        # Check registration
+        reg = db.query(EventRegistration).filter(
+            EventRegistration.event_id == ev.id,
+            EventRegistration.student_id == student.student_id
+        ).first()
+        resp.is_registered = bool(reg)
+
+        # Check attendance / result
+        att = db.query(EventAttendance).filter(
+            EventAttendance.event_id == ev.id,
+            EventAttendance.student_id == student.student_id
+        ).first()
+        
+        if att:
+            resp.attendance_status = att.status
+            resp.result = att.result
+
+        results.append(resp)
+
+    return results
+
+@app.post("/student/events/register")
+def register_student_event(
+    payload: EventRegistrationRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "student":
+        raise HTTPException(status_code=403, detail="Student only")
+
+    event = db.query(Event).filter(Event.id == payload.event_id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    # Check for duplicate
+    existing_reg = db.query(EventRegistration).filter(
+        EventRegistration.event_id == event.id,
+        EventRegistration.student_id == current_user["user_id"]
+    ).first()
+
+    if existing_reg:
+        raise HTTPException(status_code=400, detail="Already registered")
+
+    new_reg = EventRegistration(
+        event_id=event.id,
+        student_id=current_user["user_id"]
+    )
+    db.add(new_reg)
+    db.commit()
+
+    return {"message": "Successfully registered for event"}
+
+@app.post("/faculty/events/{event_id}/alert")
+def send_event_alert(
+    event_id: int,
+    payload: EventAlertRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "faculty":
+        raise HTTPException(status_code=403, detail="Faculty only")
+
+    event = db.query(Event).filter(Event.id == event_id, Event.created_by == current_user["user_id"]).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    query = db.query(EventAttendance.student_id).filter(EventAttendance.event_id == event_id)
+    if payload.target == "present":
+        query = query.filter(EventAttendance.status == "present")
+    elif payload.target == "absent":
+        query = query.filter(EventAttendance.status == "absent")
+        
+    students = query.all()
+    target_ids = [s[0] for s in students]
+    
+    if not target_ids:
+        return {"message": "No students found for the given target"}
+        
+    title = f"Alert: {event.title}"
+
+    new_alerts = []
+    for sid in target_ids:
+        new_alert = Alert(
+            title=title,
+            message=payload.message,
+            type=payload.type,
+            target_role="student",
+            target_type="individual",
+            student_id=sid,
+            faculty_id=current_user["user_id"]
+        )
+        new_alerts.append(new_alert)
+        
+    db.add_all(new_alerts)
+    db.flush()
+    
+    recipients = [
+        AlertRecipient(alert_id=al.id, user_id=al.student_id, is_read=False)
+        for al in new_alerts
+    ]
+    
+    db.add_all(recipients)
+    db.commit()
+
+    return {"message": "Alerts sent successfully", "sent_count": len(target_ids)}
+
+@app.post("/faculty/events/{event_id}/reminder")
+def remind_absent_students(
+    event_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "faculty":
+        raise HTTPException(status_code=403, detail="Faculty only")
+
+    event = db.query(Event).filter(Event.id == event_id, Event.created_by == current_user["user_id"]).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    students = db.query(EventAttendance.student_id).filter(
+        EventAttendance.event_id == event_id,
+        EventAttendance.status == "absent"
+    ).all()
+    
+    target_ids = [s[0] for s in students]
+    if not target_ids:
+        return {"message": "No absent students to remind"}
+
+    title = f"Reminder: {event.title}"
+    message = f"Reminder: Please make sure to attend the event '{event.title}' scheduled on {event.event_date}."
+
+    new_alerts = []
+    for sid in target_ids:
+        new_alert = Alert(
+            title=title,
+            message=message,
+            type="reminder",
+            target_role="student",
+            target_type="individual",
+            student_id=sid,
+            faculty_id=current_user["user_id"]
+        )
+        new_alerts.append(new_alert)
+        
+    db.add_all(new_alerts)
+    db.flush()
+    
+    recipients = [
+        AlertRecipient(alert_id=al.id, user_id=al.student_id, is_read=False)
+        for al in new_alerts
+    ]
+    
+    db.add_all(recipients)
+    db.commit()
+
     return {"message": "Reminders sent successfully", "sent_count": len(target_ids)}

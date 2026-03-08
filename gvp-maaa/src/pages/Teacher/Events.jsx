@@ -1,380 +1,600 @@
-import { useState, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
+import axios from "axios";
 import CampaignIcon from "@mui/icons-material/Campaign";
 import CloseIcon from "@mui/icons-material/Close";
 
-/* ================= SAMPLE DATA ================= */
-const EVENTS = [
-  {
-    id: 1,
-    title: "AI & ML Workshop",
-    type: "Workshop",
-    date: "22 Sep 2025",
-    venue: "Seminar Hall",
-    year: "3rd Year",
-    section: "A",
-    status: "Upcoming",
-    students: [
-      { name: "Ravi", roll: "21CS001", attended: true },
-      { name: "Anusha", roll: "21CS014", attended: false },
-      { name: "Kiran", roll: "21CS045", attended: true },
-      { name: "Priya", roll: "21CS032", attended: false },
-    ],
-  },
-];
+const API_URL = "http://localhost:8000";
 
-/* ================= MAIN ================= */
 export default function Events() {
-  const [openId, setOpenId] = useState(null);
-  const [search, setSearch] = useState("");
+  const [events, setEvents] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
+  const [successMsg, setSuccessMsg] = useState("");
 
-  /* FILTERS */
-  const [year, setYear] = useState("All");
-  const [section, setSection] = useState("All");
-  const [type, setType] = useState("All");
-  const [status, setStatus] = useState("All");
+  const [selectedEventId, setSelectedEventId] = useState(null);
+  const [attendanceData, setAttendanceData] = useState(null);
 
-  /* ALERT COMPOSER */
-  const [showAlert, setShowAlert] = useState(false);
-  const [alertTarget, setAlertTarget] = useState("");
-  const [alertType, setAlertType] = useState("Reminder");
+  // Filters for Events List
+  const [filterYear, setFilterYear] = useState("All");
+  const [filterSection, setFilterSection] = useState("All");
+  const [filterType, setFilterType] = useState("All");
+  const [filterStatus, setFilterStatus] = useState("All");
+
+  // Filters for Attendance Table
+  const [searchStudent, setSearchStudent] = useState("");
+  const [attendanceFilter, setAttendanceFilter] = useState("All");
+
+  // Modals
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showAlertModal, setShowAlertModal] = useState(false);
+  const [alertTarget, setAlertTarget] = useState("all");
+  const [alertType, setAlertType] = useState("announcement");
   const [alertMessage, setAlertMessage] = useState("");
 
-  /* FILTER CONTEXT */
-  const filterContext = `${year !== "All" ? year : "All Years"} · ${
-    section !== "All" ? `Section ${section}` : "All Sections"
-  } · ${type !== "All" ? type : "All Events"}`;
+  const token = localStorage.getItem("access_token");
 
-  /* APPLY FILTERS */
+  useEffect(() => {
+    fetchEvents();
+  }, []);
+
+  useEffect(() => {
+    if (selectedEventId) {
+      fetchAttendance(selectedEventId);
+    } else {
+      setAttendanceData(null);
+    }
+  }, [selectedEventId]);
+
+  const fetchEvents = async () => {
+    try {
+      setLoading(true);
+      const res = await axios.get(`${API_URL}/faculty/events`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setEvents(res.data);
+    } catch (err) {
+      setErrorMsg("Failed to load events");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchAttendance = async (eventId) => {
+    try {
+      setLoading(true);
+      const res = await axios.get(`${API_URL}/faculty/events/${eventId}/attendance`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setAttendanceData(res.data);
+    } catch (err) {
+      setErrorMsg("Failed to load attendance");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCreateEvent = async (e) => {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+    const data = {
+      title: formData.get("title"),
+      description: formData.get("description"),
+      event_type: formData.get("event_type"),
+      event_date: formData.get("event_date"),
+      location: formData.get("location"),
+      year: formData.get("year"),
+      section: formData.get("section")
+    };
+
+    try {
+      setLoading(true);
+      await axios.post(`${API_URL}/faculty/events`, data, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setSuccessMsg("Event created successfully");
+      setShowCreateModal(false);
+      fetchEvents();
+    } catch (err) {
+      setErrorMsg("Failed to create event");
+    } finally {
+      setLoading(false);
+      setTimeout(() => setSuccessMsg(""), 3000);
+    }
+  };
+
+  const handleMarkAttendance = async (studentId, status) => {
+    try {
+      await axios.patch(`${API_URL}/faculty/events/${selectedEventId}/attendance`, {
+        student_id: studentId,
+        status: status
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setSuccessMsg("Attendance updated");
+      fetchAttendance(selectedEventId);
+      fetchEvents(); // Update stats on cards
+    } catch (err) {
+      setErrorMsg("Failed to mark attendance");
+    } finally {
+      setTimeout(() => setSuccessMsg(""), 3000);
+    }
+  };
+
+  const handleMarkResult = async (studentId, resultValue) => {
+    try {
+      await axios.patch(`${API_URL}/faculty/events/result?event_id=${selectedEventId}`, {
+        student_id: studentId,
+        result: resultValue === "none" ? null : resultValue
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      fetchAttendance(selectedEventId);
+      setSuccessMsg("Result updated");
+      setTimeout(() => setSuccessMsg(""), 3000);
+    } catch (err) {
+      if (err.response && err.response.status === 400) {
+        setErrorMsg("Cannot assign result to an absent student");
+      } else {
+        setErrorMsg("Failed to update result");
+      }
+    } finally {
+      setTimeout(() => setErrorMsg(""), 3000);
+    }
+  };
+
+  const handleSendReminder = async () => {
+    try {
+      setLoading(true);
+      await axios.post(`${API_URL}/faculty/events/${selectedEventId}/reminder`, {}, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setSuccessMsg("Reminders sent successfully");
+    } catch (err) {
+      setErrorMsg("Failed to send reminders");
+    } finally {
+      setLoading(false);
+      setTimeout(() => setSuccessMsg(""), 3000);
+    }
+  };
+
+  const handleSendAlert = async () => {
+    try {
+      setLoading(true);
+      await axios.post(`${API_URL}/faculty/events/${selectedEventId}/alert`, {
+        type: alertType,
+        message: alertMessage,
+        target: alertTarget
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setSuccessMsg("Alert sent successfully");
+      setShowAlertModal(false);
+      setAlertMessage("");
+    } catch (err) {
+      setErrorMsg("Failed to send alert");
+    } finally {
+      setLoading(false);
+      setTimeout(() => setSuccessMsg(""), 3000);
+    }
+  };
+
+  // Filtered Events
   const filteredEvents = useMemo(() => {
-    return EVENTS.filter(
-      (e) =>
-        (year === "All" || e.year === year) &&
-        (section === "All" || e.section === section) &&
-        (type === "All" || e.type === type) &&
-        (status === "All" || e.status === status)
-    );
-  }, [year, section, type, status]);
+    return events.filter(e => {
+      if (filterYear !== "All" && e.year.toString() !== filterYear) return false;
+      if (filterSection !== "All" && e.section !== filterSection) return false;
+      if (filterType !== "All" && e.event_type !== filterType) return false;
+      if (filterStatus !== "All" && e.status !== filterStatus) return false;
+      return true;
+    });
+  }, [events, filterYear, filterSection, filterType, filterStatus]);
 
-  const openAlertComposer = (target) => {
-    setAlertTarget(`${target} (${filterContext})`);
-    setAlertMessage("");
-    setShowAlert(true);
-  };
+  // Filtered Students in Attendance Table
+  const filteredStudents = useMemo(() => {
+    if (!attendanceData) return [];
+    return attendanceData.students.filter(s => {
+      const matchSearch = s.name.toLowerCase().includes(searchStudent.toLowerCase()) ||
+        (s.roll_no && s.roll_no.toLowerCase().includes(searchStudent.toLowerCase()));
+      const matchStatus = attendanceFilter === "All" ||
+        (attendanceFilter === "Present" && s.attendance_status === "present") ||
+        (attendanceFilter === "Absent" && s.attendance_status === "absent");
+      return matchSearch && matchStatus;
+    });
+  }, [attendanceData, searchStudent, attendanceFilter]);
 
-  const sendAlert = () => {
-    alert(
-      `Alert Sent\n\nTo: ${alertTarget}\nType: ${alertType}\n\n${alertMessage}`
-    );
-    setShowAlert(false);
-  };
-
-  /* ================= OVERALL ANALYTICS ================= */
-  const overallStats = useMemo(() => {
-    let present = 0;
-    let absent = 0;
-
-    filteredEvents.forEach((e) =>
-      e.students.forEach((s) =>
-        s.attended ? present++ : absent++
-      )
-    );
-
-    return { present, absent };
-  }, [filteredEvents]);
+  const selectedEventDetails = events.find(e => e.id === selectedEventId);
 
   return (
-    <div className="space-y-10">
-
-      {/* ================= HEADER ================= */}
-      <div>
-        <h1 className="text-2xl font-semibold">Events</h1>
-        <p className="text-sm text-gray-500">
-          Manage participants, attendance, and event alerts
-        </p>
-      </div>
-
-      {/* ================= FILTER BAR ================= */}
-      <div className="glass rounded-2xl px-6 py-4">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-          <Filter label="Year" value={year} onChange={setYear}
-            options={["All", "3rd Year", "4th Year"]} />
-          <Filter label="Section" value={section} onChange={setSection}
-            options={["All", "A", "B"]} />
-          <Filter label="Event Type" value={type} onChange={setType}
-            options={["All", "Workshop", "Hackathon"]} />
-          <Filter label="Status" value={status} onChange={setStatus}
-            options={["All", "Upcoming", "Completed"]} />
+    <div className="space-y-8 relative">
+      {/* HEADER & NOTIFICATIONS */}
+      <div className="flex justify-between items-center">
+        <div>
+          <h1 className="text-2xl font-bold bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">
+            Events Management
+          </h1>
+          <p className="text-sm text-gray-500 mt-1">
+            Manage class activities, attendance, and alerts
+          </p>
         </div>
+        <button
+          onClick={() => setShowCreateModal(true)}
+          className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-semibold shadow-lg hover:shadow-xl transition-all"
+        >
+          + Create Event
+        </button>
       </div>
 
-      {/* ================= OVERALL ANALYTICS ================= */}
-      <div className="space-y-4">
-        <h3 className="text-lg font-semibold">
-          Overall Event Analytics ({filterContext})
-        </h3>
+      {successMsg && (
+        <div className="p-4 rounded-xl bg-green-50 border border-green-100 text-green-700 font-medium flex items-center gap-2">
+          ✅ {successMsg}
+        </div>
+      )}
+      {errorMsg && (
+        <div className="p-4 rounded-xl bg-red-50 border border-red-100 text-red-700 font-medium flex items-center gap-2 justify-between">
+          <div className="flex items-center gap-2">❌ {errorMsg}</div>
+          <button onClick={() => setErrorMsg("")} className="text-red-700 font-bold">✕</button>
+        </div>
+      )}
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <ChartBox title="Overall Attendance Ratio (Donut Chart)" />
-          <ChartBox title="Event Type Participation (Bar Chart)" />
-          <ChartBox title="Attendance Trend Over Time (Line Chart)" />
+      {/* SECTION 1: FILTERS */}
+      <div className="bg-white/70 backdrop-blur-md rounded-2xl p-6 border border-white/50 shadow-sm flex flex-wrap gap-4">
+        <FilterSelect label="Year" value={filterYear} onChange={setFilterYear} options={["All", "1", "2", "3", "4"]} />
+        <FilterSelect label="Section" value={filterSection} onChange={setFilterSection} options={["All", "A", "B", "C", "D"]} />
+        <FilterSelect label="Event Type" value={filterType} onChange={setFilterType} options={["All", "Workshop", "Seminar", "Guest Lecture", "Hackathon", "Internal Event", "Other"]} />
+        <FilterSelect label="Status" value={filterStatus} onChange={setFilterStatus} options={["All", "Upcoming", "Ongoing", "Completed"]} />
+      </div>
+
+      {/* SECTION 2 & 3: MAIN LAYOUT */}
+      <div className="flex gap-6 flex-col lg:flex-row items-start">
+
+        {/* LEFT COLUMN: EVENTS GRID */}
+        <div className={`transition-all duration-300 w-full ${selectedEventId ? 'lg:w-[40%] xl:w-[45%]' : 'lg:w-full'}`}>
+          <h2 className="text-lg font-semibold text-gray-800 mb-4">Your Events ({filteredEvents.length})</h2>
+          {loading && !events.length ? (
+            <p className="text-gray-500">Loading events...</p>
+          ) : filteredEvents.length === 0 ? (
+            <p className="text-gray-500 bg-white p-6 rounded-2xl">No events found matching your filters.</p>
+          ) : (
+            <div className={`grid gap-4 ${selectedEventId ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3'}`}>
+              {filteredEvents.map(e => (
+                <div
+                  key={e.id}
+                  onClick={() => setSelectedEventId(e.id)}
+                  className={`p-5 rounded-2xl border transition-all cursor-pointer ${selectedEventId === e.id ? "bg-indigo-50 border-indigo-200 ring-2 ring-indigo-500" : "bg-white border-gray-100 hover:border-indigo-100 hover:shadow-md"}`}
+                >
+                  <div className="flex justify-between items-start">
+                    <h3 className="font-semibold text-gray-800 break-words">{e.title}</h3>
+                    <span className={`text-xs px-2 py-1 rounded-full font-medium ${e.status === 'Upcoming' ? 'bg-blue-100 text-blue-700' : e.status === 'Ongoing' ? 'bg-orange-100 text-orange-700' : 'bg-green-100 text-green-700'}`}>
+                      {e.status}
+                    </span>
+                  </div>
+                  <p className="text-sm text-gray-500 mt-2">{e.event_type} • {e.location}</p>
+                  <p className="text-xs font-medium text-gray-400 mb-4">{new Date(e.event_date).toLocaleDateString()} • {e.year === 'All' ? 'All Yrs' : `Yr ${e.year}`} {e.section === 'All' ? 'All Sec' : `Sec ${e.section}`}</p>
+
+                  <div className="flex justify-between items-center text-sm border-t border-gray-100/50 pt-3">
+                    <span className="text-gray-600 font-medium">Reg: {e.total_students}</span>
+                    <span className="text-green-600 font-medium">Prs: {e.present_count}</span>
+                    <span className="text-red-600 font-medium">Abs: {e.absent_count}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
-        <p className="text-sm text-gray-500">
-          Present: {overallStats.present} · Absent: {overallStats.absent}
-        </p>
-      </div>
+        {/* RIGHT COLUMN: SELECTED EVENT & ATTENDANCE */}
+        {selectedEventId && selectedEventDetails && (
+          <div className="w-full lg:w-[60%] xl:w-[55%] shrink-0 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden lg:sticky lg:top-6 transition-all duration-300">
 
-      {/* ================= EVENTS ================= */}
-      {filteredEvents.map((e) => {
-        const isOpen = openId === e.id;
+            {/* OVERVIEW CONTENT */}
+            <div className="p-6 border-b border-gray-100 bg-gradient-to-br from-indigo-50/50 to-purple-50/50 relative">
+              <button
+                onClick={() => setSelectedEventId(null)}
+                className="absolute top-4 right-4 text-gray-400 hover:text-gray-700 hover:bg-white rounded-full p-1"
+              >
+                <CloseIcon />
+              </button>
 
-        const searched = e.students.filter(
-          (s) =>
-            s.name.toLowerCase().includes(search.toLowerCase()) ||
-            s.roll.toLowerCase().includes(search.toLowerCase())
-        );
-
-        const absent = searched.filter((s) => !s.attended);
-        const present = searched.filter((s) => s.attended);
-        const totalRegistered = e.students.length;
-
-        return (
-          <div key={e.id} className="glass rounded-2xl p-6 space-y-6">
-
-            {/* ================= EVENT SUMMARY ================= */}
-            <div className="flex flex-wrap justify-between gap-6">
-              <div>
-                <h3 className="text-lg font-semibold">{e.title}</h3>
-                <p className="text-sm text-gray-500">
-                  {e.type} · {e.date} · {e.venue}
-                </p>
-                <p className="text-sm text-gray-500">
-                  {e.year} · Sec {e.section}
-                </p>
-
-                <div className="mt-2 flex gap-6 text-sm">
-                  <span>
-                    Total Registered: <strong>{totalRegistered}</strong>
-                  </span>
-                  <span className="text-green-600">
-                    Present: <strong>{present.length}</strong>
-                  </span>
-                  <span className="text-red-600">
-                    Absent: <strong>{absent.length}</strong>
-                  </span>
+              <div className="flex justify-between items-start mb-4 pr-8">
+                <div>
+                  <h2 className="text-xl font-bold text-gray-800">{selectedEventDetails.title}</h2>
+                  <p className="text-sm text-gray-500 mt-1">{new Date(selectedEventDetails.event_date).toLocaleDateString()} • {selectedEventDetails.location}</p>
+                  <p className="text-sm font-medium text-indigo-600 mt-1">Class: {selectedEventDetails.year === 'All' ? 'All Years' : `Year ${selectedEventDetails.year}`} - {selectedEventDetails.section === 'All' ? 'All Sections' : `Section ${selectedEventDetails.section}`}</p>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      setAlertTarget("all");
+                      setShowAlertModal(true);
+                    }}
+                    className="p-2 border border-gray-200 bg-white rounded-lg hover:bg-gray-50 transition tooltip-wrap" title="Send Alert"
+                  >
+                    <CampaignIcon fontSize="small" className="text-indigo-600" />
+                  </button>
+                  <button
+                    onClick={handleSendReminder}
+                    className="px-3 py-1.5 border border-indigo-200 bg-indigo-50 text-indigo-700 font-medium text-sm rounded-lg hover:bg-indigo-100 transition"
+                  >
+                    Remind Absent
+                  </button>
                 </div>
               </div>
 
-              <div className="flex items-center gap-4">
-                <button
-                  onClick={() =>
-                    openAlertComposer("All Registered Students")
-                  }
-                  className="px-4 py-2 rounded-xl bg-indigo-600 text-white flex items-center gap-2"
-                >
-                  <CampaignIcon fontSize="small" />
-                  Send Alert
-                </button>
-
-                <button
-                  onClick={() => {
-                    setOpenId(isOpen ? null : e.id);
-                    setSearch("");
-                  }}
-                  className="px-4 py-2 rounded-xl border"
-                >
-                  {isOpen ? "Hide Students" : "View Students"}
-                </button>
+              {/* STATS OVERVIEW */}
+              <div className="grid grid-cols-3 gap-3 mb-2">
+                <div className="p-3 bg-white rounded-xl border border-gray-100 text-center">
+                  <span className="block text-xs text-gray-500 mb-1">Total Reg</span>
+                  <span className="font-bold text-gray-800">{selectedEventDetails.total_students}</span>
+                </div>
+                <div className="p-3 bg-green-50 rounded-xl border border-green-100 text-center">
+                  <span className="block text-xs text-green-700 mb-1">Present</span>
+                  <span className="font-bold text-green-800">{selectedEventDetails.present_count}</span>
+                </div>
+                <div className="p-3 bg-red-50 rounded-xl border border-red-100 text-center">
+                  <span className="block text-xs text-red-700 mb-1">Absent</span>
+                  <span className="font-bold text-red-800">{selectedEventDetails.absent_count}</span>
+                </div>
               </div>
             </div>
 
-            {/* ================= EVENT ANALYTICS ================= */}
-            {isOpen && <EventAnalytics />}
+            {/* EVENT ANALYTICS (PLACEHOLDERS) */}
+            <div className="p-6 border-b border-gray-100">
+              <h4 className="font-semibold text-gray-700 text-sm mb-3">Event Analytics</h4>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="p-3 border border-gray-100 rounded-xl flex items-center justify-center bg-gray-50 h-20 text-xs text-gray-400 text-center">Attendance Ratio (Donut Chart)</div>
+                <div className="p-3 border border-gray-100 rounded-xl flex items-center justify-center bg-gray-50 h-20 text-xs text-gray-400 text-center">Participation Trend (Line Chart)</div>
+                <div className="p-3 border border-gray-100 rounded-xl flex items-center justify-center bg-gray-50 h-20 text-xs text-gray-400 text-center">Alert Engagement (Bar Chart)</div>
+              </div>
+            </div>
 
-            {/* ================= STUDENT LIST ================= */}
-            {isOpen && (
-              <div className="border-t pt-6 space-y-6">
+            {/* ATTENDANCE TABLE */}
+            <div className="p-6">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="font-bold text-gray-800">Attendance Roster</h3>
+                <select
+                  className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm bg-gray-50 outline-none focus:ring-2 focus:ring-indigo-100"
+                  value={attendanceFilter} onChange={e => setAttendanceFilter(e.target.value)}
+                >
+                  <option value="All">All Students</option>
+                  <option value="Present">Present Only</option>
+                  <option value="Absent">Absent Only</option>
+                </select>
+              </div>
 
+              <div className="relative mb-4">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">🔍</span>
                 <input
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search by name or roll number"
-                  className="w-full max-w-3xl px-5 py-3 rounded-xl border focus:ring-2 focus:ring-indigo-500 outline-none"
+                  type="text"
+                  placeholder="Search name or roll number..."
+                  value={searchStudent} onChange={e => setSearchStudent(e.target.value)}
+                  className="w-full pl-9 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-100 transition-all"
                 />
+              </div>
 
-                {absent.length > 0 && (
-                  <div>
-                    <h4 className="text-red-600 font-semibold mb-3">
-                      Absent Students ({absent.length})
-                    </h4>
-
-                    <div className="space-y-2">
-                      {absent.map((s) => (
-                        <StudentRow
-                          key={s.roll}
-                          student={s}
-                          onAlert={() =>
-                            openAlertComposer(`${s.name} (${s.roll})`)
-                          }
-                        />
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {present.length > 0 && (
-                  <div>
-                    <h4 className="text-green-600 font-semibold mb-3">
-                      Present Students ({present.length})
-                    </h4>
-
-                    <div className="space-y-2">
-                      {present.map((s) => (
-                        <StudentRow
-                          key={s.roll}
-                          student={s}
-                          onAlert={() =>
-                            openAlertComposer(`${s.name} (${s.roll})`)
-                          }
-                        />
-                      ))}
-                    </div>
-                  </div>
+              <div className="max-h-[350px] overflow-y-auto pr-2 custom-scrollbar">
+                {attendanceData ? (
+                  <table className="w-full text-left text-sm border-collapse">
+                    <thead className="sticky top-0 bg-white shadow-[0_1px_0_rgba(0,0,0,0.05)] z-10">
+                      <tr>
+                        <th className="py-2.5 px-3 text-gray-500 font-medium">Name & Roll</th>
+                        <th className="py-2.5 px-3 text-gray-500 font-medium w-24">Status</th>
+                        <th className="py-2.5 px-3 text-gray-500 font-medium w-36">Result</th>
+                        <th className="py-2.5 px-3 text-gray-500 font-medium text-right w-28">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {filteredStudents.length > 0 ? filteredStudents.map(student => (
+                        <tr key={student.student_id} className="hover:bg-gray-50/50 group">
+                          <td className="py-3 px-3">
+                            <div className="font-medium text-gray-800">{student.name}</div>
+                            <div className="text-[10px] uppercase tracking-wider text-gray-500 font-bold">{student.roll_no}</div>
+                          </td>
+                          <td className="py-3 px-3">
+                            <span className={`px-2.5 py-1 rounded-lg text-xs font-semibold ${student.attendance_status === 'present' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                              {student.attendance_status === 'present' ? 'Present' : 'Absent'}
+                            </span>
+                          </td>
+                          <td className="py-3 px-3">
+                            <select
+                              className="text-xs p-1.5 border border-gray-200 rounded-lg outline-none cursor-pointer focus:ring-1 focus:ring-indigo-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                              value={student.result || "none"}
+                              onChange={(e) => handleMarkResult(student.student_id, e.target.value)}
+                              disabled={student.attendance_status === 'absent'}
+                            >
+                              <option value="none">None</option>
+                              <option value="participant">Participant</option>
+                              <option value="runner_up">Runner-up</option>
+                              <option value="winner">Winner</option>
+                            </select>
+                          </td>
+                          <td className="py-3 px-3 text-right">
+                            <button
+                              onClick={() => handleMarkAttendance(student.student_id, student.attendance_status === 'present' ? 'absent' : 'present')}
+                              className="text-[11px] font-bold uppercase tracking-wider text-indigo-600 hover:text-indigo-800 px-3 py-1.5 rounded-lg border border-indigo-100 bg-indigo-50/50 hover:bg-indigo-100 transition-colors"
+                            >
+                              Mark {student.attendance_status === 'present' ? 'Absent' : 'Present'}
+                            </button>
+                          </td>
+                        </tr>
+                      )) : (
+                        <tr><td colSpan="3" className="text-center py-6 text-gray-400">No students match your filter</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                ) : (
+                  <p className="text-center text-gray-400 py-6">Loading attendance...</p>
                 )}
               </div>
-            )}
-          </div>
-        );
-      })}
+            </div>
 
-      {/* ================= ALERT COMPOSER ================= */}
-      {showAlert && (
-        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
-          <div className="bg-white w-full max-w-lg rounded-2xl p-6 space-y-4">
-            <div className="flex justify-between items-center">
-              <h3 className="text-lg font-semibold">Send Alert</h3>
-              <button onClick={() => setShowAlert(false)}>
+            {/* QUICK ACTIONS FOOTER */}
+            <div className="bg-gray-50 p-4 border-t border-gray-100 flex gap-3 justify-center">
+              <button
+                onClick={() => { setAlertTarget("all"); setShowAlertModal(true); }}
+                className="text-xs font-semibold text-gray-700 px-3 py-2 bg-white border border-gray-200 rounded-lg hover:shadow-sm transition"
+              >
+                Alert All
+              </button>
+              <button
+                onClick={() => { setAlertTarget("absent"); setShowAlertModal(true); }}
+                className="text-xs font-semibold text-gray-700 px-3 py-2 bg-white border border-gray-200 rounded-lg hover:shadow-sm transition"
+              >
+                Alert Absent
+              </button>
+              <button
+                onClick={() => { setAlertTarget("present"); setShowAlertModal(true); }}
+                className="text-xs font-semibold text-gray-700 px-3 py-2 bg-white border border-gray-200 rounded-lg hover:shadow-sm transition"
+              >
+                Alert Present
+              </button>
+            </div>
+
+          </div>
+        )}
+      </div>
+
+      {/* CREATE EVENT MODAL */}
+      {showCreateModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-fade-in">
+          <div className="bg-white rounded-3xl w-full max-w-lg shadow-xl overflow-hidden">
+            <div className="flex justify-between items-center px-6 py-4 border-b border-gray-100">
+              <h3 className="font-bold text-xl text-gray-800">Create Event</h3>
+              <button onClick={() => setShowCreateModal(false)} className="text-gray-400 hover:text-gray-600">
                 <CloseIcon />
               </button>
             </div>
 
-            <div className="rounded-xl bg-indigo-50 p-3 text-sm">
-              <p className="text-gray-600">Sending alert to:</p>
-              <p className="font-semibold text-indigo-700">
-                {alertTarget}
-              </p>
+            <form onSubmit={handleCreateEvent} className="p-6 space-y-4 max-h-[75vh] overflow-y-auto">
+              <div>
+                <label className="text-sm font-medium text-gray-700 block mb-1">Event Title</label>
+                <input required type="text" name="title" className="w-full p-2.5 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-100 transition-all outline-none" placeholder="e.g. AI & ML Workshop" />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm font-medium text-gray-700 block mb-1">Event Type</label>
+                  <select required name="event_type" className="w-full p-2.5 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-100 outline-none">
+                    <option value="">Select Type</option>
+                    <option value="Workshop">Workshop</option>
+                    <option value="Seminar">Seminar</option>
+                    <option value="Guest Lecture">Guest Lecture</option>
+                    <option value="Hackathon">Hackathon</option>
+                    <option value="Internal Event">Internal Event</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-gray-700 block mb-1">Date</label>
+                  <input required type="date" name="event_date" className="w-full p-2.5 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-100 outline-none" />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm font-medium text-gray-700 block mb-1">Target Year</label>
+                  <select name="year" className="w-full p-2.5 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-100 outline-none">
+                    <option value="All">All</option>
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="3">3</option>
+                    <option value="4">4</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-gray-700 block mb-1">Target Section</label>
+                  <select name="section" className="w-full p-2.5 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-100 outline-none">
+                    <option value="All">All</option>
+                    <option value="A">A</option>
+                    <option value="B">B</option>
+                    <option value="C">C</option>
+                    <option value="D">D</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-sm font-medium text-gray-700 block mb-1">Location / Venue</label>
+                <input required type="text" name="location" className="w-full p-2.5 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-100 outline-none" placeholder="e.g. Seminar Hall" />
+              </div>
+
+              <div>
+                <label className="text-sm font-medium text-gray-700 block mb-1">Description (Optional)</label>
+                <textarea name="description" rows={3} className="w-full p-2.5 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-100 outline-none" placeholder="Details about the event..." />
+              </div>
+
+              <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
+                <button type="button" onClick={() => setShowCreateModal(false)} className="px-5 py-2.5 rounded-xl border border-gray-200 text-gray-600 font-medium hover:bg-gray-50 transition">Cancel</button>
+                <button type="submit" disabled={loading} className="px-6 py-2.5 rounded-xl bg-indigo-600 text-white font-medium hover:bg-indigo-700 shadow-md hover:shadow-lg transition flex items-center gap-2">
+                  {loading ? "Creating..." : "Create Event"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ALERT MODAL */}
+      {showAlertModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-fade-in">
+          <div className="bg-white rounded-3xl w-full max-w-md shadow-xl overflow-hidden p-6 space-y-4">
+            <div className="flex justify-between items-center mb-2">
+              <h3 className="font-bold text-xl text-gray-800">Send Event Alert</h3>
+              <button onClick={() => setShowAlertModal(false)} className="text-gray-400 hover:text-gray-600"><CloseIcon /></button>
             </div>
 
-            <select
-              value={alertType}
-              onChange={(e) => setAlertType(e.target.value)}
-              className="w-full p-2 rounded-xl border"
-            >
-              <option>Reminder</option>
-              <option>Event Starting Soon</option>
-              <option>Absent Notification</option>
-              <option>Custom Message</option>
-            </select>
+            <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-3 flex gap-2">
+              <CampaignIcon className="text-indigo-600" />
+              <div className="text-sm text-indigo-800 font-medium">Sending to: <b>{alertTarget.toUpperCase()}</b> students</div>
+            </div>
 
-            <textarea
-              rows={4}
-              value={alertMessage}
-              onChange={(e) => setAlertMessage(e.target.value)}
-              placeholder="Type your message here..."
-              className="w-full p-3 rounded-xl border"
-            />
+            <div>
+              <label className="text-sm font-medium text-gray-700 block mb-1">Alert Type</label>
+              <select value={alertType} onChange={e => setAlertType(e.target.value)} className="w-full p-2.5 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-100 outline-none">
+                <option value="announcement">Announcement</option>
+                <option value="emergency">Emergency / Important</option>
+                <option value="info">Information</option>
+                <option value="reminder">Reminder</option>
+              </select>
+            </div>
 
-            <div className="flex justify-end gap-3">
-              <button
-                onClick={() => setShowAlert(false)}
-                className="px-4 py-2 rounded-xl border"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={sendAlert}
-                className="px-4 py-2 rounded-xl bg-indigo-600 text-white"
-              >
-                Send Alert
+            <div>
+              <label className="text-sm font-medium text-gray-700 block mb-1">Message</label>
+              <textarea
+                value={alertMessage} onChange={e => setAlertMessage(e.target.value)}
+                rows={4}
+                placeholder="Type your message here..."
+                className="w-full p-2.5 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-100 outline-none"
+              />
+            </div>
+
+            <div className="flex justify-end gap-3 pt-2">
+              <button onClick={() => setShowAlertModal(false)} className="px-5 py-2.5 rounded-xl border border-gray-200 text-gray-600 font-medium hover:bg-gray-50 transition">Cancel</button>
+              <button onClick={handleSendAlert} disabled={!alertMessage || loading} className="px-6 py-2.5 rounded-xl bg-indigo-600 text-white font-medium hover:bg-indigo-700 shadow-md transition disabled:opacity-50">
+                {loading ? "Sending..." : "Send Alert"}
               </button>
             </div>
           </div>
         </div>
       )}
+
     </div>
   );
 }
 
-/* ================= HELPERS ================= */
-
-function Filter({ label, value, onChange, options }) {
+// Subcomponent for simple filters
+function FilterSelect({ label, value, onChange, options }) {
   return (
-    <div className="flex flex-col gap-1">
-      <label className="text-xs text-gray-500">{label}</label>
+    <div className="flex flex-col gap-1 min-w-[120px]">
+      <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider ml-1">{label}</label>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="h-[44px] px-3 rounded-xl border"
+        className="h-10 px-4 rounded-xl border border-gray-200 bg-white text-sm font-medium text-gray-700 hover:border-indigo-300 focus:ring-2 focus:ring-indigo-100 outline-none cursor-pointer transition-all"
       >
         {options.map((o) => (
-          <option key={o}>{o}</option>
+          <option key={o} value={o}>{o}</option>
         ))}
       </select>
-    </div>
-  );
-}
-
-function StudentRow({ student, onAlert }) {
-  return (
-    <div className="flex justify-between items-center p-3 rounded-xl bg-white/70">
-      <span>
-        {student.name} ({student.roll})
-      </span>
-
-      <div className="flex items-center gap-4">
-        <span
-          className={`px-3 py-1 rounded-full text-xs ${
-            student.attended
-              ? "bg-green-100 text-green-700"
-              : "bg-red-100 text-red-700"
-          }`}
-        >
-          {student.attended ? "Present" : "Absent"}
-        </span>
-
-        <button
-          onClick={onAlert}
-          className="px-3 py-1.5 rounded-xl bg-amber-500 text-white text-sm"
-        >
-          Alert
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function ChartBox({ title }) {
-  return (
-    <div className="glass rounded-2xl p-6 text-center text-gray-400">
-      {title}
-      <br />
-      (Analytics Agent will render here)
-    </div>
-  );
-}
-
-function EventAnalytics() {
-  return (
-    <div className="glass rounded-2xl p-5 space-y-4">
-      <h4 className="font-semibold text-gray-700">
-        Event Analytics
-      </h4>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <ChartBox title="Attendance Ratio (Donut Chart)" />
-        <ChartBox title="Participation Trend (Line Chart)" />
-        <ChartBox title="Alert Impact / Engagement (Bar Chart)" />
-      </div>
     </div>
   );
 }

@@ -1,0 +1,29 @@
+C:\Users\my pc\OneDrive\Desktop\GVP-MAAA\gvp-maaa\Backend\venv\lib\site-packages\pydantic\_internal\_config.py:383: UserWarning: Valid config keys have changed in V2:
+* 'orm_mode' has been renamed to 'from_attributes'
+  warnings.warn(message, UserWarning)
+--- Testing faculty get_events ---
+2026-03-08 16:09:18,835 INFO sqlalchemy.engine.Engine select pg_catalog.version()
+2026-03-08 16:09:18,835 INFO sqlalchemy.engine.Engine [raw sql] {}
+2026-03-08 16:09:18,836 INFO sqlalchemy.engine.Engine select current_schema()
+2026-03-08 16:09:18,836 INFO sqlalchemy.engine.Engine [raw sql] {}
+2026-03-08 16:09:18,838 INFO sqlalchemy.engine.Engine show standard_conforming_strings
+2026-03-08 16:09:18,838 INFO sqlalchemy.engine.Engine [raw sql] {}
+2026-03-08 16:09:18,839 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+2026-03-08 16:09:18,843 INFO sqlalchemy.engine.Engine SELECT events.id AS events_id, events.title AS events_title, events.description AS events_description, events.event_type AS events_event_type, events.event_date AS events_event_date, events.location AS events_location, events.year AS events_year, events.section AS events_section, events.created_by AS events_created_by, events.status AS events_status, events.created_at AS events_created_at 
+FROM events 
+WHERE events.created_by = %(created_by_1)s ORDER BY events.event_date DESC
+2026-03-08 16:09:18,843 INFO sqlalchemy.engine.Engine [generated in 0.00029s] {'created_by_1': 1}
+Success! returned 0 items
+
+--- Testing student get_student_events ---
+2026-03-08 16:09:18,849 INFO sqlalchemy.engine.Engine SELECT students.student_id AS students_student_id, students.roll_no AS students_roll_no, students.joining_year AS students_joining_year, students.year AS students_year, students.semester AS students_semester, students.section AS students_section, students.cgpa AS students_cgpa, students.phone AS students_phone, students.skills AS students_skills, students.certificates AS students_certificates, students.linkedin AS students_linkedin, students.github AS students_github, students.portfolio AS students_portfolio, students.bio AS students_bio, students.is_deleted AS students_is_deleted, students.deleted_at AS students_deleted_at 
+FROM students 
+WHERE students.student_id = %(student_id_1)s 
+ LIMIT %(param_1)s
+2026-03-08 16:09:18,849 INFO sqlalchemy.engine.Engine [generated in 0.00024s] {'student_id_1': 3, 'param_1': 1}
+Traceback (most recent call last):
+  File "C:\Users\my pc\OneDrive\Desktop\GVP-MAAA\gvp-maaa\Backend\test_api.py", line 16, in <module>
+    res = get_student_events(current_user={"role": "student", "user_id": 3, "department_id": 1}, db=db)
+  File "C:\Users\my pc\OneDrive\Desktop\GVP-MAAA\gvp-maaa\Backend\main.py", line 5264, in get_student_events
+    raise HTTPException(status_code=404, detail="Student record not found")
+fastapi.exceptions.HTTPException: 404: Student record not found

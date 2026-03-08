@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Any, Union
 from datetime import datetime ,date
 
 
@@ -416,3 +416,91 @@ class StudentResourceResponse(BaseModel):
 
     class Config:
         orm_mode = True
+
+
+# =========================
+# EVENTS SCHEMAS
+# =========================
+from typing import Optional, List, Union, Any
+
+class EventCreate(BaseModel):
+    title: str
+    description: Optional[str] = None
+    event_type: str
+    event_date: date
+    location: Optional[str] = None
+    year: Any  # Can be "All" or an integer/string like "1"
+    section: Any # Can be "All" or "A", "B", etc.
+
+class EventResponse(BaseModel):
+    id: int
+    title: str
+    description: Optional[str] = None
+    event_type: str
+    event_date: date
+    location: Optional[str] = None
+    year: Any
+    section: Any
+    created_by: int
+    status: str
+    created_at: datetime
+    
+    total_students: int = 0
+    present_count: int = 0
+    absent_count: int = 0
+
+    class Config:
+        from_attributes = True
+
+class EventAttendanceItem(BaseModel):
+    student_id: int
+    status: str
+
+class EventAttendanceUpdate(BaseModel):
+    student_id: int
+    status: str
+
+class BulkEventAttendanceUpdate(BaseModel):
+    students: List[EventAttendanceItem]
+
+class EventStudentDetail(BaseModel):
+    student_id: int
+    name: str
+    roll_no: Optional[str] = None
+    attendance_status: str
+    result: Optional[str] = None
+
+class EventAttendanceResponse(BaseModel):
+    event_id: int
+    title: str
+    date: date
+    location: Optional[str] = None
+    students: List[EventStudentDetail]
+
+class EventAlertRequest(BaseModel):
+    type: str
+    message: str
+    target: str # "all", "present", "absent"
+
+class EventResultUpdate(BaseModel):
+    student_id: int
+    result: Optional[str] = None
+
+class EventRegistrationRequest(BaseModel):
+    event_id: int
+
+class StudentEventResponse(BaseModel):
+    id: int
+    title: str
+    event_type: str
+    event_date: date
+    location: Optional[str] = None
+    description: Optional[str] = None
+    status: str
+    
+    is_registered: bool = False
+    attendance_status: Optional[str] = None
+    result: Optional[str] = None
+
+    class Config:
+        from_attributes = True

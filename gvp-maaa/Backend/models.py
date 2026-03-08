@@ -354,3 +354,53 @@ class ResourceAccess(Base):
     student_id = Column(Integer)
     action_type = Column(String, default="view")
     accessed_at = Column(DateTime)
+
+# =========================
+# EVENTS
+# =========================
+class Event(Base):
+    __tablename__ = "events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    event_type = Column(String(100), nullable=False)
+    event_date = Column(Date, nullable=False)
+    location = Column(String(255), nullable=True)
+    
+    year = Column(String(20), nullable=False)
+    section = Column(String(10), nullable=False)
+    
+    created_by = Column(Integer, ForeignKey("faculty.faculty_id"), nullable=False)
+    status = Column(String(50), default="upcoming") # upcoming, ongoing, completed
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    faculty = relationship("Faculty")
+
+class EventAttendance(Base):
+    __tablename__ = "event_attendance"
+
+    id = Column(Integer, primary_key=True, index=True)
+    event_id = Column(Integer, ForeignKey("events.id", ondelete="CASCADE"), nullable=False)
+    student_id = Column(Integer, ForeignKey("students.student_id", ondelete="CASCADE"), nullable=False)
+    
+    status = Column(String(50), default="absent")  # present / absent
+    result = Column(String(50), nullable=True)     # winner, runner_up, participant, None
+    marked_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    event = relationship("Event")
+    student = relationship("Student")
+
+
+class EventRegistration(Base):
+    __tablename__ = "event_registrations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    event_id = Column(Integer, ForeignKey("events.id", ondelete="CASCADE"), nullable=False)
+    student_id = Column(Integer, ForeignKey("students.student_id", ondelete="CASCADE"), nullable=False)
+    
+    registered_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    event = relationship("Event")
+    student = relationship("Student")
