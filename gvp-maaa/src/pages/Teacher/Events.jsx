@@ -40,7 +40,8 @@ export default function Events() {
   const [alertTarget, setAlertTarget] = useState("all");
   const [alertType, setAlertType] = useState("announcement");
   const [alertMessage, setAlertMessage] = useState("");
-  const [tempFormData, setTempFormData] = useState(null);
+  const [eventPreview, setEventPreview] = useState(null);
+  const [targetStudentCount, setTargetStudentCount] = useState(0);
 
   const token = localStorage.getItem("access_token");
 
@@ -129,22 +130,36 @@ export default function Events() {
     }
   };
 
-  const handleCreateEvent = async (formDataObj) => {
+  const handleCreateEvent = async () => {
+
+  if (!eventPreview) return;
 
   const data = {
-    title: formDataObj.get("title"),
-    description: formDataObj.get("description"),
-    event_type: createEventType,
-    event_date: formDataObj.get("event_date"),
-    location: formDataObj.get("location"),
-    year: formDataObj.get("year"),
-    section: formDataObj.get("section"),
+    title: eventPreview.title,
+    description: eventPreview.description,
+    event_type: eventPreview.event_type,
+    event_date: eventPreview.event_date,
+    location: eventPreview.venue,
+    year: eventPreview.year,
+    section: eventPreview.section,
 
-    organizer: formDataObj.get("organizer"),
-    venue: formDataObj.get("venue"),
-    max_participants: createEventType === "Internal" ? formDataObj.get("max_participants") || null : null,
-    registration_deadline: createEventType === "Internal" ? formDataObj.get("registration_deadline") || null : null,
-    external_registration_link: createEventType === "External" ? formDataObj.get("external_registration_link") : null,
+    organizer: eventPreview.organizer,
+    venue: eventPreview.venue,
+
+    max_participants:
+      eventPreview.event_type === "Internal"
+        ? eventPreview.max_participants || null
+        : null,
+
+    registration_deadline:
+      eventPreview.event_type === "Internal"
+        ? eventPreview.registration_deadline || null
+        : null,
+
+    external_registration_link:
+      eventPreview.event_type === "External"
+        ? eventPreview.external_registration_link || null
+        : null,
   };
 
   try {
@@ -158,6 +173,8 @@ export default function Events() {
     setShowCreateModal(false);
 
     setShowSuccessAnimation(true);
+
+    setEventPreview(null);
 
     fetchEvents();
 
@@ -676,10 +693,48 @@ export default function Events() {
               </button>
             </div>
 
-            <form onSubmit={handleCreateEvent} className="p-6 space-y-4 max-h-[75vh] overflow-y-auto">
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+
+                const formData = new FormData(e.target);
+
+                const previewData = {
+                  title: formData.get("title"),
+                  description: formData.get("description"),
+                  event_type: createEventType,
+                  event_date: formData.get("event_date"),
+                  venue: formData.get("venue"),
+                  organizer: formData.get("organizer"),
+                  year: formData.get("year"),
+                  section: formData.get("section"),
+                  max_participants: formData.get("max_participants"),
+                  registration_deadline: formData.get("registration_deadline"),
+                  external_registration_link: formData.get("external_registration_link")
+                };
+
+                setEventPreview(previewData);
+
+                // calculate how many students will receive alert
+                let students = events.filter(e => {
+                  if (previewData.year !== "All" && e.year !== previewData.year) return false;
+                  if (previewData.section !== "All" && e.section !== previewData.section) return false;
+                  return true;
+                });
+
+                setTargetStudentCount(students.length);
+
+                setShowConfirmModal(true);
+              }}
+              className="p-6 space-y-4 max-h-[75vh] overflow-y-auto"
+            >
               <div>
                 <label className="text-sm font-medium text-gray-700 block mb-1">Event Title</label>
-                <input required type="text" name="title" className="w-full p-2.5 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-100 transition-all outline-none" placeholder="e.g. AI & ML Workshop" />
+                <input
+                  required
+                  type="text"
+                  name="title"
+                  defaultValue={eventPreview?.title || ""}className="w-full p-2.5 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-100 transition-all outline-none" placeholder="e.g. AI & ML Workshop" />
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -692,7 +747,13 @@ export default function Events() {
                 </div>
                 <div>
                   <label className="text-sm font-medium text-gray-700 block mb-1">Date</label>
-                  <input required type="date" name="event_date" className="w-full p-2.5 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-100 outline-none" />
+                  <input
+                    required
+                    type="date"
+                    name="event_date"
+                    defaultValue={eventPreview?.event_date || ""}
+                    className="w-full p-2.5 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-100 outline-none"
+                  />
                 </div>
               </div>
 
@@ -700,17 +761,33 @@ export default function Events() {
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="text-sm font-medium text-gray-700 block mb-1">Max Participants (Optional)</label>
-                    <input type="number" name="max_participants" className="w-full p-2.5 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-100 outline-none" placeholder="e.g. 100" />
+                    <input
+                      type="number"
+                      name="max_participants"
+                      defaultValue={eventPreview?.max_participants || ""}
+                      className="w-full p-2.5 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-100 outline-none"
+                      placeholder="e.g. 100"
+                    />
                   </div>
                   <div>
                     <label className="text-sm font-medium text-gray-700 block mb-1">Registration Deadline</label>
-                    <input type="datetime-local" name="registration_deadline" className="w-full p-2.5 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-100 outline-none" />
+                    <input
+                      type="datetime-local"
+                      name="registration_deadline"
+                      defaultValue={eventPreview?.registration_deadline || ""}
+                      className="w-full p-2.5 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-100 outline-none"
+                   />
                   </div>
                 </div>
               ) : (
                 <div>
                   <label className="text-sm font-medium text-gray-700 block mb-1">External Registration Link</label>
-                  <input required type="url" name="external_registration_link" className="w-full p-2.5 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-100 outline-none" placeholder="https://example.com/register" />
+                  <input
+                    required
+                    type="url"
+                    name="external_registration_link"
+                    defaultValue={eventPreview?.external_registration_link || ""} 
+                    className="w-full p-2.5 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-100 outline-none" placeholder="https://example.com/register" />
                 </div>
               )}
 
@@ -718,7 +795,7 @@ export default function Events() {
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="text-sm font-medium text-gray-700 block mb-1">Target Year</label>
-                    <select name="year" className="w-full p-2.5 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-100 outline-none">
+                    <select name="year" defaultValue={eventPreview?.year || "All"} className="w-full p-2.5 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-100 outline-none">
                       <option value="All">All</option>
                       <option value="1">1</option>
                       <option value="2">2</option>
@@ -728,7 +805,7 @@ export default function Events() {
                   </div>
                   <div>
                     <label className="text-sm font-medium text-gray-700 block mb-1">Target Section</label>
-                    <select name="section" className="w-full p-2.5 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-100 outline-none">
+                    <select name="section" defaultValue={eventPreview?.section || "All"} className="w-full p-2.5 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-100 outline-none">
                       <option value="All">All</option>
                       <option value="A">A</option>
                       <option value="B">B</option>
@@ -742,18 +819,38 @@ export default function Events() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="text-sm font-medium text-gray-700 block mb-1">Location / Venue</label>
-                  <input required type="text" name="venue" className="w-full p-2.5 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-100 outline-none" placeholder="e.g. Seminar Hall" />
+                  <input
+                    required
+                    type="text"
+                    name="venue"
+                    defaultValue={eventPreview?.venue || ""}
+                    className="w-full p-2.5 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-100 outline-none"
+                    placeholder="e.g. Seminar Hall"
+                  />
                   <input type="hidden" name="location" value="Default" />
                 </div>
                 <div>
                   <label className="text-sm font-medium text-gray-700 block mb-1">Organizer</label>
-                  <input required type="text" name="organizer" className="w-full p-2.5 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-100 outline-none" placeholder="e.g. Google / IT Dept" />
+                  <input
+                    required
+                    type="text"
+                    name="organizer"
+                    defaultValue={eventPreview?.organizer || ""}
+                    className="w-full p-2.5 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-100 outline-none"
+                    placeholder="e.g. Google / IT Dept"
+                  />
                 </div>
               </div>
 
               <div>
                 <label className="text-sm font-medium text-gray-700 block mb-1">Description (Optional)</label>
-                <textarea name="description" rows={3} className="w-full p-2.5 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-100 outline-none" placeholder="Details about the event..." />
+                <textarea
+                  name="description"
+                  rows={3}
+                  defaultValue={eventPreview?.description || ""}
+                  className="w-full p-2.5 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-indigo-100 outline-none"
+                  placeholder="Details about the event..."
+                />
               </div>
 
               <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
@@ -812,42 +909,144 @@ export default function Events() {
       )}
 
       {showConfirmModal && (
-        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
 
-          <div className="bg-white rounded-2xl p-6 w-[420px] text-center shadow-xl animate-fade-in">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl animate-fade-in">
 
-            <h3 className="text-lg font-bold mb-3">
+            <h3 className="text-lg font-bold mb-5 text-center">
               Confirm Event Creation
             </h3>
 
-            <p className="text-gray-600 text-sm mb-6">
-              Are you sure you want to create this event?
-              Students will receive alerts immediately.
-            </p>
+            {eventPreview && (
+              <div className="space-y-3 text-sm">
 
-            <div className="flex justify-center gap-3">
+                <div className="border rounded-lg p-3 bg-gray-50">
+                  <span className="font-semibold text-gray-700">Title:</span>
+                  <div className="mt-1 text-gray-800">{eventPreview.title}</div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+
+                  <div className="border rounded-lg p-3 bg-gray-50">
+                    <span className="font-semibold text-gray-700">Date</span>
+                    <div className="mt-1 text-gray-800">
+                      {new Date(eventPreview.event_date).toLocaleDateString()}
+                    </div>
+                  </div>
+
+                  <div className="border rounded-lg p-3 bg-gray-50">
+                    <span className="font-semibold text-gray-700">Venue</span>
+                    <div className="mt-1 text-gray-800">
+                      {eventPreview.venue}
+                    </div>
+                  </div>
+
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+
+                  <div className="border rounded-lg p-3 bg-gray-50">
+                    <span className="font-semibold text-gray-700">Organizer</span>
+                    <div className="mt-1 text-gray-800">
+                      {eventPreview.organizer}
+                    </div>
+                  </div>
+
+                  <div className="border rounded-lg p-3 bg-gray-50">
+                    <span className="font-semibold text-gray-700">Event Type</span>
+                    <div className="mt-1 text-gray-800">
+                      {eventPreview.event_type}
+                    </div>
+                  </div>
+
+                </div>
+
+                {eventPreview.year && (
+                  <div className="border rounded-lg p-3 bg-indigo-50 border-indigo-200">
+                    <span className="font-semibold text-indigo-700">Target Students</span>
+
+                    <div className="mt-1 text-gray-800">
+                      Year {eventPreview.year} • Section {eventPreview.section}
+                    </div>
+
+                    <div className="mt-2 text-sm font-semibold text-indigo-700">
+                      Alerts will be sent to approximately {targetStudentCount} students
+                    </div>
+                  </div>
+                )}
+
+                {eventPreview.max_participants && (
+                  <div className="border rounded-lg p-3 bg-gray-50">
+                    <span className="font-semibold text-gray-700">Max Participants</span>
+                    <div className="mt-1 text-gray-800">
+                      {eventPreview.max_participants}
+                    </div>
+                  </div>
+                )}
+
+                {eventPreview.registration_deadline && (
+                  <div className="border rounded-lg p-3 bg-gray-50">
+                    <span className="font-semibold text-gray-700">Registration Deadline</span>
+                    <div className="mt-1 text-gray-800">
+                      {new Date(eventPreview.registration_deadline).toLocaleString()}
+                    </div>
+                  </div>
+                )}
+
+                {eventPreview.external_registration_link && (
+                  <div className="border rounded-lg p-3 bg-gray-50">
+                    <span className="font-semibold text-gray-700">External Link</span>
+                    <div className="mt-1 text-blue-600 break-all">
+                      {eventPreview.external_registration_link}
+                    </div>
+                  </div>
+                )}
+
+                {eventPreview.description && (
+                  <div className="border rounded-lg p-3 bg-gray-50">
+                    <span className="font-semibold text-gray-700">Description</span>
+                    <div className="mt-1 text-gray-800 whitespace-pre-line">
+                      {eventPreview.description}
+                    </div>
+                  </div>
+                )}
+
+              </div>
+            )}
+
+            <div className="flex justify-between items-center mt-6">
 
               <button
-                onClick={() => setShowConfirmModal(false)}
-                className="px-4 py-2 border rounded-lg"
+              onClick={() => {
+                setShowConfirmModal(false);
+                setShowCreateModal(true);
+              }}
+              className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
               >
-                Cancel
+              Back to Edit
+              </button>
+
+              <div className="flex gap-3">
+
+              <button
+              onClick={() => setShowConfirmModal(false)}
+              className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+              >
+              Cancel
               </button>
 
               <button
-                onClick={() => handleCreateEvent(tempFormData)}
-                className="px-5 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+              onClick={handleCreateEvent}
+              className="px-5 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
               >
-                Proceed
+              Confirm & Create
               </button>
 
+              </div>
             </div>
-
           </div>
-
         </div>
       )}
-
 
       {showSuccessAnimation && (
         <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/40 backdrop-blur-sm">
