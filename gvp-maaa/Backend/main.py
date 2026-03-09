@@ -118,6 +118,17 @@ from auth import (
 
 app = FastAPI(title="GVP Academic Analytics Backend")
 
+# -------------------------
+# CORS
+# -------------------------
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+ )
+
 from fastapi.staticfiles import StaticFiles
 
 app.mount(
@@ -179,16 +190,7 @@ def startup_event():
     scheduler.add_job(process_event_reminders, "interval", hours=24)
     scheduler.start()
 
-# -------------------------
-# CORS
-# -------------------------
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:5174", "http://localhost:5175"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
- )
+
 
 
 # -------------------------
