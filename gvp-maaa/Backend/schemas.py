@@ -427,17 +427,15 @@ class EventCreate(BaseModel):
     title: str
     description: Optional[str] = None
     event_type: str
-    
     organizer: Optional[str] = None
     venue: Optional[str] = None
     event_date: date
     max_participants: Optional[int] = None
     registration_deadline: Optional[datetime] = None
     external_registration_link: Optional[str] = None
+    year: str
+    section: str
     
-    year: Any  # Can be "All" or an integer/string like "1"
-    section: Any # Can be "All" or "A", "B", etc.
-
 class EventResponse(BaseModel):
     id: int
     title: str

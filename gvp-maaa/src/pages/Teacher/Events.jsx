@@ -35,9 +35,12 @@ export default function Events() {
   // Modals
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showAlertModal, setShowAlertModal] = useState(false);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [showSuccessAnimation, setShowSuccessAnimation] = useState(false);
   const [alertTarget, setAlertTarget] = useState("all");
   const [alertType, setAlertType] = useState("announcement");
   const [alertMessage, setAlertMessage] = useState("");
+  const [tempFormData, setTempFormData] = useState(null);
 
   const token = localStorage.getItem("access_token");
 
@@ -126,41 +129,48 @@ export default function Events() {
     }
   };
 
-  const handleCreateEvent = async (e) => {
-    e.preventDefault();
-    const formData = new FormData(e.target);
-    const data = {
-      title: formData.get("title"),
-      description: formData.get("description"),
-      event_type: createEventType,
-      event_date: formData.get("event_date"),
-      location: formData.get("location"),
-      year: formData.get("year"),
-      section: formData.get("section"),
+  const handleCreateEvent = async (formDataObj) => {
 
-      organizer: formData.get("organizer"),
-      venue: formData.get("venue"),
-      max_participants: createEventType === "Internal" ? formData.get("max_participants") || null : null,
-      registration_deadline: createEventType === "Internal" ? formData.get("registration_deadline") || null : null,
-      external_registration_link: createEventType === "External" ? formData.get("external_registration_link") : null,
-    };
+  const data = {
+    title: formDataObj.get("title"),
+    description: formDataObj.get("description"),
+    event_type: createEventType,
+    event_date: formDataObj.get("event_date"),
+    location: formDataObj.get("location"),
+    year: formDataObj.get("year"),
+    section: formDataObj.get("section"),
 
-    try {
-      setLoading(true);
-      await axios.post(`${API_URL}/faculty/events`, data, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      setSuccessMsg("Event created successfully");
-      setShowCreateModal(false);
-      fetchEvents();
-    } catch (err) {
-      setErrorMsg("Failed to create event");
-    } finally {
-      setLoading(false);
-      setTimeout(() => setSuccessMsg(""), 3000);
-    }
+    organizer: formDataObj.get("organizer"),
+    venue: formDataObj.get("venue"),
+    max_participants: createEventType === "Internal" ? formDataObj.get("max_participants") || null : null,
+    registration_deadline: createEventType === "Internal" ? formDataObj.get("registration_deadline") || null : null,
+    external_registration_link: createEventType === "External" ? formDataObj.get("external_registration_link") : null,
   };
 
+  try {
+    setLoading(true);
+
+    await axios.post(`${API_URL}/faculty/events`, data, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+
+    setShowConfirmModal(false);
+    setShowCreateModal(false);
+
+    setShowSuccessAnimation(true);
+
+    fetchEvents();
+
+    setTimeout(() => {
+      setShowSuccessAnimation(false);
+    }, 2200);
+
+  } catch (err) {
+    setErrorMsg("Failed to create event");
+  } finally {
+    setLoading(false);
+  }
+ };
   const handleMarkAttendance = async (studentId, status) => {
     try {
       await axios.patch(`${API_URL}/faculty/events/${selectedEventId}/attendance`, {
@@ -801,6 +811,84 @@ export default function Events() {
         </div>
       )}
 
+      {showConfirmModal && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+
+          <div className="bg-white rounded-2xl p-6 w-[420px] text-center shadow-xl animate-fade-in">
+
+            <h3 className="text-lg font-bold mb-3">
+              Confirm Event Creation
+            </h3>
+
+            <p className="text-gray-600 text-sm mb-6">
+              Are you sure you want to create this event?
+              Students will receive alerts immediately.
+            </p>
+
+            <div className="flex justify-center gap-3">
+
+              <button
+                onClick={() => setShowConfirmModal(false)}
+                className="px-4 py-2 border rounded-lg"
+              >
+                Cancel
+              </button>
+
+              <button
+                onClick={() => handleCreateEvent(tempFormData)}
+                className="px-5 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+              >
+                Proceed
+              </button>
+
+            </div>
+
+          </div>
+
+        </div>
+      )}
+
+
+      {showSuccessAnimation && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/40 backdrop-blur-sm">
+
+          <div className="bg-white p-10 rounded-2xl shadow-xl text-center animate-fade-in">
+
+            <svg
+              className="mx-auto mb-4"
+              width="90"
+              height="90"
+              viewBox="0 0 100 100"
+            >
+              <circle
+                cx="50"
+                cy="50"
+                r="45"
+                fill="none"
+                stroke="#22c55e"
+                strokeWidth="5"
+                className="circle-animation"
+              />
+
+              <path
+                d="M30 52 L45 65 L70 40"
+                fill="none"
+                stroke="#22c55e"
+                strokeWidth="6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="check-animation"
+              />
+            </svg>
+
+            <h2 className="text-lg font-bold text-gray-800">
+              Event Created Successfully
+            </h2>
+
+          </div>
+
+        </div>
+      )}
     </div>
   );
 }

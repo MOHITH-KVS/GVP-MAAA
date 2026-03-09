@@ -158,7 +158,7 @@ def process_event_reminders():
             students = student_query.all()
             
             title = f"Reminder: {event.title}"
-            message = f"Gentle Reminder: The event '{event.title}' is scheduled for {event.event_date.strftime('%d %b %Y')} at {event.venue or event.location}."
+            message = f"Reminder: The event '{event.title}' will be held on {event.event_date.strftime('%d %b %Y')} at {event.venue}. Don't miss it!"
             
             for s in students:
                 # Check if reminder already sent to avoid duplicates (optional but good)
@@ -4996,85 +4996,101 @@ def create_event(
     if current_user["role"] != "faculty":
         raise HTTPException(status_code=403, detail="Faculty only")
 
-    # Insert event
+    # -------------------------
+    # Create Event
+    # -------------------------
     new_event = Event(
         title=payload.title,
         description=payload.description,
         event_type=payload.event_type,
-        
         organizer=payload.organizer,
         venue=payload.venue,
+        location=payload.venue,
         event_date=payload.event_date,
         max_participants=payload.max_participants,
         registration_deadline=payload.registration_deadline,
         external_registration_link=payload.external_registration_link,
-        
-        location=payload.location,
         year=payload.year,
         section=payload.section,
         created_by=current_user["user_id"],
         status="upcoming"
     )
+
     db.add(new_event)
     db.commit()
     db.refresh(new_event)
 
+    # -------------------------
+    # Find Target Students
+    # -------------------------
     query = (
         db.query(Student.student_id)
         .join(User, Student.student_id == User.user_id)
-        .filter(User.is_deleted == False)
+        .filter(or_(User.is_deleted == False, User.is_deleted == None))
     )
 
     if payload.year != "All":
         query = query.filter(Student.year == int(payload.year))
+
     if payload.section != "All":
-        query = query.filter(Student.section == payload.section)
-        
+        query = query.filter(Student.section.ilike(payload.section))
+
     students = query.all()
 
-    # Create automated alerts for all targeted students
+    # Debug output
+    print("TARGET YEAR:", payload.year)
+    print("TARGET SECTION:", payload.section)
+    print("STUDENTS FOUND:", students)
+
+    # -------------------------
+    # Create Alerts
+    # -------------------------
     title = f"New Event Created: {payload.title}"
-    message = f"New Event Created: {payload.title} on {payload.event_date.strftime('%d %b %Y')} at {payload.location}."
+    message = f"New Event Created: {payload.title} on {payload.event_date.strftime('%d %b %Y')} at {payload.venue}."
+
     new_alerts = []
+
     for (sid,) in students:
-        new_alerts.append(
-            Alert(
-                title=title,
-                message=message,
-                type="announcement",
-                target_role="student",
-                target_type="individual",
-                student_id=sid,
-                faculty_id=current_user["user_id"]
-            )
+        new_alert = Alert(
+            title=title,
+            message=message,
+            type="announcement",
+            target_role="student",
+            target_type="individual",
+            student_id=sid,
+            faculty_id=current_user["user_id"]
         )
-    
-    if new_alerts:
+        new_alerts.append(new_alert)
+
+    if len(new_alerts) > 0:
         db.add_all(new_alerts)
         db.flush()
-        
+
         recipients = [
             AlertRecipient(alert_id=al.id, user_id=al.student_id, is_read=False)
             for al in new_alerts
         ]
+
         db.add_all(recipients)
         db.commit()
 
-    # Create response
+    # -------------------------
+    # Prepare Response
+    # -------------------------
     response_data = EventResponse.from_orm(new_event)
     response_data.total_students = len(students)
     response_data.present_count = 0
-    response_data.absent_count = len(students)
-    
-    # Auto-adjust status
+    response_data.absent_count = 0
+
     today = date.today()
+
     if new_event.event_date > today:
         response_data.status = "Upcoming"
     elif new_event.event_date == today:
         response_data.status = "Ongoing"
     else:
         response_data.status = "Completed"
-        
+
     return response_data
 
 @app.get("/faculty/events", response_model=List[EventResponse])
