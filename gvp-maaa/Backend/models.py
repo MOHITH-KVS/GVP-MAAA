@@ -367,9 +367,14 @@ class Event(Base):
     event_type = Column(String(100), nullable=False)
     event_date = Column(Date, nullable=False)
     location = Column(String(255), nullable=True)
+    venue = Column(String(255), nullable=True)
+    organizer = Column(String(255), nullable=True)
+    max_participants = Column(Integer, nullable=True)
+    registration_deadline = Column(DateTime, nullable=True)
+    external_registration_link = Column(String, nullable=True)
     
-    year = Column(String(20), nullable=False)
-    section = Column(String(10), nullable=False)
+    year = Column(String(20), nullable=True)
+    section = Column(String(10), nullable=True)
     
     created_by = Column(Integer, ForeignKey("faculty.faculty_id"), nullable=False)
     status = Column(String(50), default="upcoming") # upcoming, ongoing, completed
@@ -401,6 +406,29 @@ class EventRegistration(Base):
     student_id = Column(Integer, ForeignKey("students.student_id", ondelete="CASCADE"), nullable=False)
     
     registered_at = Column(DateTime(timezone=True), server_default=func.now())
+    attendance = Column(String(50), default=None, nullable=True)
+    result = Column(String(50), nullable=True)
+    certificate_uploaded = Column(String, nullable=True)
+    faculty_verified = Column(Boolean, default=False)
 
     event = relationship("Event")
+    student = relationship("Student")
+
+
+class ExternalEventSubmission(Base):
+    __tablename__ = "external_event_submissions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    student_id = Column(Integer, ForeignKey("students.student_id", ondelete="CASCADE"), nullable=False)
+    event_name = Column(String(255), nullable=False)
+    organizer = Column(String(255), nullable=True)
+    event_date = Column(Date, nullable=False)
+    achievement_type = Column(String(100), nullable=True) # Participation, Winner, etc.
+    position = Column(String(100), nullable=True)
+    certificate_file = Column(String, nullable=True)
+    proof_file = Column(String, nullable=True)
+    status = Column(String(50), default="pending")  # pending / approved / rejected
+    submitted_at = Column(DateTime(timezone=True), server_default=func.now())
+    faculty_reviewed_by = Column(Integer, ForeignKey("faculty.faculty_id"), nullable=True)
+
     student = relationship("Student")

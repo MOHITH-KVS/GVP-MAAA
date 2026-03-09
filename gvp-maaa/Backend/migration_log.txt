@@ -1,0 +1,5 @@
+Connecting to database: gvp_ maaa
+Executing: ALTER TABLE external_event_submissions ADD COLUMN IF NOT EXISTS achievement_type VARCHAR(100);
+Executing: ALTER TABLE external_event_submissions ADD COLUMN IF NOT EXISTS certificate_file TEXT;
+Executing: ALTER TABLE external_event_submissions ADD COLUMN IF NOT EXISTS proof_file TEXT;
+Migration successful.

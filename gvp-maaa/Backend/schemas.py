@@ -427,8 +427,14 @@ class EventCreate(BaseModel):
     title: str
     description: Optional[str] = None
     event_type: str
+    
+    organizer: Optional[str] = None
+    venue: Optional[str] = None
     event_date: date
-    location: Optional[str] = None
+    max_participants: Optional[int] = None
+    registration_deadline: Optional[datetime] = None
+    external_registration_link: Optional[str] = None
+    
     year: Any  # Can be "All" or an integer/string like "1"
     section: Any # Can be "All" or "A", "B", etc.
 
@@ -437,8 +443,15 @@ class EventResponse(BaseModel):
     title: str
     description: Optional[str] = None
     event_type: str
+    
+    organizer: Optional[str] = None
+    venue: Optional[str] = None
     event_date: date
+    max_participants: Optional[int] = None
+    registration_deadline: Optional[datetime] = None
+    external_registration_link: Optional[str] = None
     location: Optional[str] = None
+    
     year: Any
     section: Any
     created_by: int
@@ -476,6 +489,7 @@ class EventAttendanceResponse(BaseModel):
     date: date
     location: Optional[str] = None
     students: List[EventStudentDetail]
+    message: Optional[str] = None
 
 class EventAlertRequest(BaseModel):
     type: str
@@ -493,7 +507,14 @@ class StudentEventResponse(BaseModel):
     id: int
     title: str
     event_type: str
+    
+    organizer: Optional[str] = None
+    venue: Optional[str] = None
     event_date: date
+    max_participants: Optional[int] = None
+    registration_deadline: Optional[datetime] = None
+    external_registration_link: Optional[str] = None
+    
     location: Optional[str] = None
     description: Optional[str] = None
     status: str
@@ -504,3 +525,31 @@ class StudentEventResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+class ExternalEventSubmissionCreate(BaseModel):
+    event_name: str
+    organizer: Optional[str] = None
+    event_date: date
+    achievement_type: Optional[str] = None # New field
+    position: Optional[str] = None
+
+class ExternalEventSubmissionResponse(BaseModel):
+    id: int
+    student_id: int
+    event_name: str
+    organizer: Optional[str] = None
+    event_date: date
+    achievement_type: Optional[str] = None # New field
+    position: Optional[str] = None
+    certificate_file: Optional[str] = None
+    proof_file: Optional[str] = None
+    status: str
+    submitted_at: datetime
+    faculty_reviewed_by: Optional[int] = None
+
+    class Config:
+        from_attributes = True
+
+class FacultyExternalSubmissionDetail(ExternalEventSubmissionResponse):
+    student_name: str
+    student_roll_no: Optional[str] = None
