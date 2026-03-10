@@ -1,13 +1,7 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
+import axios from "axios";
 
-/* ================= SAMPLE DATA ================= */
-const STUDENTS = [
-  { name: "Ravi", roll: "21CS001", marks: 42 },
-  { name: "Anusha", roll: "21CS014", marks: 68 },
-  { name: "Suresh", roll: "21CS021", marks: 81 },
-  { name: "Priya", roll: "21CS032", marks: 55 },
-  { name: "Kiran", roll: "21CS045", marks: 90 },
-];
+const API = "http://localhost:8000";
 
 export default function Marks() {
   const [year, setYear] = useState("3rd Year");
@@ -19,28 +13,99 @@ export default function Marks() {
   const [showUpload, setShowUpload] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
 
-  /* ================= PERFORMANCE FIRST ================= */
+  const [students, setStudents] = useState([]);
+
+  /* ================= FETCH STUDENTS ================= */
+
+  useEffect(() => {
+    fetchStudents();
+  }, [year, section]);
+
+  const fetchStudents = async () => {
+    try {
+      const res = await axios.get(`${API}/faculty/students`, {
+        params: { year, section }
+      });
+
+      setStudents(res.data);
+
+    } catch (err) {
+      console.error("Failed to load students");
+    }
+  };
+
+  /* ================= SORTING ================= */
+
   const sortedStudents = useMemo(() => {
-    return [...STUDENTS]
+    return [...students]
       .filter(
         (s) =>
           s.name.toLowerCase().includes(search.toLowerCase()) ||
-          s.roll.toLowerCase().includes(search.toLowerCase())
+          s.roll_no.toLowerCase().includes(search.toLowerCase())
       )
-      .sort((a, b) => b.marks - a.marks);
-  }, [search]);
+      .sort((a, b) => (b.marks || 0) - (a.marks || 0));
+  }, [students, search]);
 
   /* ================= METRICS ================= */
-  const total = STUDENTS.length;
+
+  const total = students.length;
+
   const avg =
-    Math.round(STUDENTS.reduce((s, x) => s + x.marks, 0) / total) || 0;
-  const highest = Math.max(...STUDENTS.map((s) => s.marks));
-  const failCount = STUDENTS.filter((s) => s.marks < 40).length;
+    total > 0
+      ? Math.round(
+          students.reduce((s, x) => s + (x.marks || 0), 0) / total
+        )
+      : 0;
+
+  const highest =
+    students.length > 0
+      ? Math.max(...students.map((s) => s.marks || 0))
+      : 0;
+
+  const failCount = students.filter((s) => (s.marks || 0) < 40).length;
+
+  /* ================= UPDATE MARKS ================= */
+
+  const updateMark = (roll, value) => {
+    setStudents((prev) =>
+      prev.map((s) =>
+        s.roll_no === roll ? { ...s, marks: Number(value) } : s
+      )
+    );
+  };
+
+  /* ================= SUBMIT MARKS ================= */
+
+  const submitMarks = async () => {
+    try {
+      await axios.post(`${API}/faculty/upload-marks`, {
+        year,
+        section,
+        subject,
+        exam,
+        marks: students.map((s) => ({
+          student_id: s.student_id,
+          marks: s.marks || 0
+        }))
+      });
+
+      alert("Marks uploaded successfully");
+
+      setShowConfirm(false);
+      setShowUpload(false);
+
+      fetchStudents();
+
+    } catch (err) {
+      alert("Failed to upload marks");
+    }
+  };
 
   return (
     <div className="space-y-10">
 
       {/* ================= HEADER ================= */}
+
       <div>
         <h1 className="text-2xl font-semibold">Marks & Performance</h1>
         <p className="text-sm text-gray-500">
@@ -49,6 +114,7 @@ export default function Marks() {
       </div>
 
       {/* ================= FILTER BAR ================= */}
+
       <div className="glass rounded-2xl px-6 py-4">
         <div className="flex flex-wrap items-end gap-6">
 
@@ -68,60 +134,75 @@ export default function Marks() {
         </div>
       </div>
 
-      {/* ================= UPLOAD MARKS ================= */}
+      {/* ================= UPLOAD CONTEXT ================= */}
+
       {showUpload && (
         <div className="glass rounded-2xl p-6 space-y-4">
 
-          <h3 className="text-lg font-semibold">Upload Marks</h3>
+          <h3 className="text-lg font-semibold">Enter Marks</h3>
 
-          {/* CONTEXT */}
-          <div className="bg-indigo-50 rounded-xl p-3 text-sm text-gray-700">
+          <div className="bg-indigo-50 rounded-xl p-3 text-sm">
             Uploading for <b>{year}</b>, Section <b>{section}</b>, <b>{subject}</b>, <b>{exam}</b>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Input label="Max Marks" />
-            <div className="md:col-span-2">
-              <label className="text-xs font-medium text-gray-500">
-                Upload File (CSV / Excel)
-              </label>
-              <input type="file" className="w-full mt-1 p-2 rounded-xl border" />
-              <p className="mt-2 text-xs text-gray-500">
-                ⚠️ Please ensure you upload the correct file. Once published,
-                students will see these marks on their dashboard.
-              </p>
-            </div>
+          <div className="space-y-2">
+
+            {students.map((s) => (
+
+              <div
+                key={s.roll_no}
+                className="flex justify-between items-center bg-white p-3 rounded-xl"
+              >
+
+                <div>
+                  <p className="font-medium">{s.name}</p>
+                  <p className="text-xs text-gray-500">{s.roll_no}</p>
+                </div>
+
+                <input
+                  type="number"
+                  value={s.marks || ""}
+                  onChange={(e) => updateMark(s.roll_no, e.target.value)}
+                  className="w-20 px-2 py-1 border rounded"
+                />
+
+              </div>
+
+            ))}
+
           </div>
 
-          <div className="flex justify-end gap-3">
+          <div className="flex justify-end gap-3 pt-3">
+
             <button
               onClick={() => setShowUpload(false)}
               className="px-4 py-2 rounded-xl border"
             >
               Cancel
             </button>
+
             <button
               onClick={() => setShowConfirm(true)}
               className="px-4 py-2 rounded-xl bg-indigo-600 text-white"
             >
               Save & Publish
             </button>
+
           </div>
+
         </div>
       )}
 
-      {/* ================= CONFIRMATION POPUP ================= */}
+      {/* ================= CONFIRM ================= */}
+
       {showConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+
           <div className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4">
 
             <h3 className="text-lg font-semibold">
               Confirm Marks Publication
             </h3>
-
-            <p className="text-sm text-gray-600">
-              Please verify the details before final submission.
-            </p>
 
             <div className="bg-gray-50 rounded-xl p-4 text-sm space-y-1">
               <p><b>Year:</b> {year}</p>
@@ -131,32 +212,34 @@ export default function Marks() {
             </div>
 
             <p className="text-xs text-red-600">
-              Once published, students will be able to view their marks.
+              Students will immediately see their marks.
             </p>
 
-            <div className="flex justify-end gap-3 pt-2">
+            <div className="flex justify-end gap-3">
+
               <button
                 onClick={() => setShowConfirm(false)}
                 className="px-4 py-2 rounded-xl border"
               >
                 Edit
               </button>
+
               <button
-                onClick={() => {
-                  setShowConfirm(false);
-                  setShowUpload(false);
-                  alert("Marks published successfully!");
-                }}
+                onClick={submitMarks}
                 className="px-4 py-2 rounded-xl bg-indigo-600 text-white"
               >
                 Final Submit
               </button>
+
             </div>
+
           </div>
+
         </div>
       )}
 
       {/* ================= KPI CARDS ================= */}
+
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <Kpi title="Class Average" value={`${avg}%`} />
         <Kpi title="Highest Score" value={highest} />
@@ -165,9 +248,11 @@ export default function Marks() {
       </div>
 
       {/* ================= STUDENT LIST ================= */}
+
       <div className="glass rounded-2xl p-6 space-y-4">
 
-        <div className="flex flex-wrap items-center gap-4">
+        <div className="flex items-center gap-4">
+
           <h3 className="text-lg font-semibold">
             Student Marks ({exam})
           </h3>
@@ -175,62 +260,43 @@ export default function Marks() {
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by name or roll number"
-            className="ml-auto w-full md:w-80 px-4 py-2.5 rounded-xl border focus:ring-2 focus:ring-indigo-500"
+            placeholder="Search student"
+            className="ml-auto w-72 px-4 py-2 border rounded-xl"
           />
+
         </div>
 
         <div className="space-y-2">
+
           {sortedStudents.map((s) => (
+
             <div
-              key={s.roll}
-              className="flex justify-between items-center p-3 rounded-xl bg-white/70"
+              key={s.roll_no}
+              className="flex justify-between items-center p-3 bg-white rounded-xl"
             >
+
               <div>
                 <p className="font-medium">{s.name}</p>
-                <p className="text-xs text-gray-500">{s.roll}</p>
+                <p className="text-xs text-gray-500">{s.roll_no}</p>
               </div>
 
-              <div className="flex items-center gap-4">
-                <span
-                  className={`px-3 py-1 rounded-full text-sm font-medium ${
-                    s.marks < 40
-                      ? "bg-red-100 text-red-700"
-                      : s.marks >= 75
-                      ? "bg-green-100 text-green-700"
-                      : "bg-yellow-100 text-yellow-700"
-                  }`}
-                >
-                  {s.marks}
-                </span>
+              <span className="font-medium">
+                {s.marks || "-"}
+              </span>
 
-                <span className="text-sm text-gray-500">
-                  {s.marks < 40 ? "Fail" : s.marks >= 75 ? "Top Performer" : "Pass"}
-                </span>
-              </div>
             </div>
+
           ))}
-        </div>
-      </div>
 
-      {/* ================= ANALYTICS ================= */}
-      <div className="space-y-6">
-        <h3 className="text-lg font-semibold">
-          Performance Analytics ({year} – Sec {section})
-        </h3>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <ChartBox title="Marks Distribution (Bar Chart)" />
-          <ChartBox title="Pass vs Fail (Donut Chart)" />
         </div>
 
-        <ChartBox title="Performance Trend Across Exams (Line Chart)" />
       </div>
+
     </div>
   );
 }
 
-/* ================= REUSABLE ================= */
+/* ================= COMPONENTS ================= */
 
 function FilterSelect({ label, value, onChange, options }) {
   return (
@@ -239,7 +305,7 @@ function FilterSelect({ label, value, onChange, options }) {
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="h-[44px] w-40 px-3 rounded-xl border bg-white focus:ring-2 focus:ring-indigo-500"
+        className="h-[44px] w-40 px-3 rounded-xl border"
       >
         {options.map((o) => (
           <option key={o}>{o}</option>
@@ -249,30 +315,11 @@ function FilterSelect({ label, value, onChange, options }) {
   );
 }
 
-function Input({ label }) {
-  return (
-    <div>
-      <label className="text-xs font-medium text-gray-500">{label}</label>
-      <input className="w-full mt-1 p-2 rounded-xl border" />
-    </div>
-  );
-}
-
 function Kpi({ title, value, danger }) {
   return (
     <div className={`glass rounded-2xl p-4 ${danger ? "text-red-600" : ""}`}>
       <p className="text-xs text-gray-500">{title}</p>
       <p className="text-2xl font-semibold mt-1">{value}</p>
-    </div>
-  );
-}
-
-function ChartBox({ title }) {
-  return (
-    <div className="glass rounded-2xl p-6 text-center text-gray-400">
-      {title}
-      <br />
-      (Analytics Agent will render here)
     </div>
   );
 }

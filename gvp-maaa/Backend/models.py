@@ -432,3 +432,20 @@ class ExternalEventSubmission(Base):
     faculty_reviewed_by = Column(Integer, ForeignKey("faculty.faculty_id"), nullable=True)
 
     student = relationship("Student")
+
+
+# -------------------------
+# MARKS
+# -------------------------
+class Mark(Base):
+    __tablename__ = "marks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    student_id = Column(Integer)
+    subject = Column(String)
+    exam_type = Column(String)
+    marks = Column(Integer)
+    year = Column(String)
+    section = Column(String)
+    faculty_id = Column(Integer)
+    created_at = Column(DateTime, default=datetime.utcnow)

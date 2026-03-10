@@ -7,7 +7,7 @@ from sqlalchemy import text,extract, func, or_
 from typing import Optional, List
 from security import hash_password, verify_password
 from mail import send_reset_email
-from schemas import  AlertCreate, AssignSubjectRequest, AttendanceCreate, ResetPasswordRequest, StudentPromotionRequest, TeacherAdminUpdate, TeacherDeleteRequest,TimetableCreate, TimetableResponse,StudentDeleteRequest,SubjectCreate,AttendanceAnalyticsResponse
+from schemas import  AlertCreate, AssignSubjectRequest, AttendanceCreate, ResetPasswordRequest, StudentPromotionRequest, TeacherAdminUpdate, TeacherDeleteRequest,TimetableCreate, TimetableResponse,StudentDeleteRequest,SubjectCreate,AttendanceAnalyticsResponse, MarksUpload
 import schemas
 from datetime import datetime, timedelta
 from database import engine
@@ -30,7 +30,9 @@ from models import (
     Event,
     EventAttendance,
     EventRegistration,
-    ExternalEventSubmission
+    ExternalEventSubmission,
+    Mark
+
 )
 
 
@@ -117,6 +119,8 @@ from auth import (
 
 
 app = FastAPI(title="GVP Academic Analytics Backend")
+
+Base.metadata.create_all(bind=engine)
 
 # -------------------------
 # CORS
@@ -5639,3 +5643,34 @@ def update_external_submission_status(
     db.commit()
     
     return {"message": f"External submission {status} successfully"}
+
+
+#==========================================
+# FACULTY MARKS UPLOAD API
+#==========================================
+
+@app.post("/faculty/upload-marks")
+def upload_marks(
+    data: MarksUpload,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+
+    for item in data.marks:
+        new_mark = Mark(
+            student_id=item.student_id,
+            subject=data.subject,
+            exam_type=data.exam,
+            marks=item.marks,
+            year=data.year,
+            section=data.section,
+            faculty_id=current_user.id
+        )
+
+        db.add(new_mark)
+
+    db.commit()
+
+    return {"message": "Marks uploaded successfully"}
+
+

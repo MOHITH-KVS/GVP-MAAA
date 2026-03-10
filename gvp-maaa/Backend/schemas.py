@@ -551,3 +551,19 @@ class ExternalEventSubmissionResponse(BaseModel):
 class FacultyExternalSubmissionDetail(ExternalEventSubmissionResponse):
     student_name: str
     student_roll_no: Optional[str] = None
+
+
+# =========================
+# MARKS SCHEMAS
+# =========================
+
+class MarkCreate(BaseModel):
+    student_id: int
+    marks: int
+
+class MarksUpload(BaseModel):
+    year: str
+    section: str
+    subject: str
+    exam: str
+    marks: List[MarkCreate]
