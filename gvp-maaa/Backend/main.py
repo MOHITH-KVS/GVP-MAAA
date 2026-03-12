@@ -5657,17 +5657,157 @@ def upload_marks(
 ):
 
     for item in data.marks:
-        new_mark = Mark(
-            student_id=item.student_id,
-            subject=data.subject,
-            exam_type=data.exam,
-            marks=item.marks,
-            year=data.year,
-            section=data.section,
-            faculty_id=current_user.id
-        )
 
-        db.add(new_mark)
+        existing = db.query(Mark).filter(
+            Mark.student_id == item.student_id,
+            Mark.subject == data.subject,
+            Mark.exam_type == data.exam,
+            Mark.year == data.year,
+            Mark.section == data.section
+        ).first()
+
+        if existing:
+            existing.marks = item.marks
+        else:
+            new_mark = Mark(
+                student_id=item.student_id,
+                subject=data.subject,
+                exam_type=data.exam,
+                marks=item.marks,
+                year=data.year,
+                section=data.section,
+                faculty_id=current_user.id
+            )
+
+            db.add(new_mark)
+
+    db.commit()
+
+    return {"message": "Marks uploaded successfully"}
+
+
+#==========================================
+# GET MARKS FOR SELECTED SUBJECT & EXAM
+#==========================================
+
+@app.get("/faculty/marks")
+def get_marks(
+    year: str,
+    section: str,
+    subject_id: int,
+    exam: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+
+    students = db.query(Student).filter(
+        Student.year == year,
+        Student.section == section
+    ).all()
+
+    result = []
+
+    for s in students:
+
+        mark = db.query(Mark).filter(
+            Mark.student_id == s.student_id,
+            Mark.subject_id == subject_id,
+            Mark.exam_type == exam
+        ).first()
+
+        result.append({
+            "student_id": s.student_id,
+            "name": db.query(User).filter(User.user_id == s.student_id).first().name,
+            "roll_no": s.roll_no,
+            "marks": mark.marks if mark else None
+        })
+
+    return result
+
+
+# ==========================================
+# DOWNLOAD MARKS TEMPLATE
+# ==========================================
+
+from fastapi.responses import FileResponse
+import pandas as pd
+
+@app.get("/faculty/marks/template")
+def download_marks_template():
+
+    columns = [
+        "RollNo",
+        "StudentName",
+        "Mid-1",
+        "Mid-2",
+        "Assignment-1",
+        "Assignment-2",
+        "Assignment-3",
+        "Assignment-4",
+        "Assignment-5",
+        "Semester"
+    ]
+
+    df = pd.DataFrame(columns=columns)
+
+    file_path = "marks_template.xlsx"
+
+    df.to_excel(file_path, index=False)
+
+    return FileResponse(
+        path=file_path,
+        filename="marks_template.xlsx",
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+# ==========================================
+# UPLOAD MARKS VIA EXCEL
+# ==========================================
+
+@app.post("/faculty/marks/upload-excel")
+async def upload_marks_excel(
+    file: UploadFile = File(...),
+    subject: str = "",
+    year: str = "",
+    section: str = "",
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+
+    df = pd.read_excel(file.file)
+
+    for _, row in df.iterrows():
+
+        roll_no = row["RollNo"]
+
+        student = db.query(Student).filter(Student.roll_no == roll_no).first()
+
+        if not student:
+            continue
+
+        student_id = student.student_id
+
+        for column in df.columns:
+
+            if column in ["RollNo", "StudentName"]:
+                continue
+
+            value = row[column]
+
+            if pd.isna(value):
+                continue
+
+            new_mark = Mark(
+                student_id=student_id,
+                subject=subject,
+                exam_type=column,
+                marks=int(value),
+                year=year,
+                section=section,
+                faculty_id=current_user.id
+            )
+
+            db.add(new_mark)
 
     db.commit()
 
