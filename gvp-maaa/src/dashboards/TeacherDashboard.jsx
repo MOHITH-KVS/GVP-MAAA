@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import api from "../utils/axios";
 import Overview from "../pages/Teacher/Overview";
 import Timetable from "../pages/Teacher/Timetable";
 import Attendance from "../pages/Teacher/Attendance";
@@ -50,26 +51,12 @@ export default function TeacherDashboard() {
 
   useEffect(() => {
     const fetchProfile = async () => {
-      const token = localStorage.getItem("access_token");
-
-      if (!token) {
-        console.error("No access token found");
-        return;
+      try {
+        const res = await api.get("/faculty/profile");
+        setProfile(res.data);
+      } catch (err) {
+        console.error("Failed to fetch profile", err);
       }
-
-      const res = await fetch("http://localhost:8000/faculty/profile", {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      if (!res.ok) {
-        console.error("Failed to fetch profile", res.status);
-        return;
-      }
-
-      const data = await res.json();
-      setProfile(data);
     };
 
     fetchProfile();
@@ -79,21 +66,8 @@ export default function TeacherDashboard() {
   useEffect(() => {
     const fetchAlerts = async () => {
       try {
-        const token = localStorage.getItem("access_token");
-
-        const res = await fetch("http://localhost:8000/faculty/alerts", {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
-
-        if (!res.ok) {
-          console.error("Failed to fetch alerts");
-          return;
-        }
-
-        const data = await res.json();
-        setAlerts(data);
+        const res = await api.get("/faculty/alerts");
+        setAlerts(res.data);
       } catch (error) {
         console.error("Error fetching alerts", error);
       } finally {

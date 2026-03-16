@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import axios from "axios";
+import api from "../../utils/axios";
 
 const API_URL = "http://localhost:8000";
 
@@ -29,7 +29,7 @@ export default function Events() {
     certificate_file: null,
     proof_file: null
   });
-  const token = localStorage.getItem("access_token");
+  const token = localStorage.getItem("token");
 
   useEffect(() => {
     fetchEvents();
@@ -45,9 +45,7 @@ export default function Events() {
   const fetchEvents = async () => {
     try {
       setLoading(true);
-      const res = await axios.get(`${API_URL}/student/events`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await api.get("/student/events");
       setEvents(res.data);
     } catch (err) {
       setErrorMsg("Failed to load events");
@@ -59,9 +57,7 @@ export default function Events() {
   const handleRegister = async (eventId) => {
     try {
       setLoading(true);
-      await axios.post(`${API_URL}/student/events/register`, { event_id: eventId }, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      await api.post("/student/events/register", { event_id: eventId });
       setSuccessMsg("Successfully registered for event!");
       fetchEvents(); // refresh list
     } catch (err) {
@@ -90,9 +86,8 @@ export default function Events() {
         formData.append("proof_file", externalForm.proof_file);
       }
 
-      await axios.post(`${API_URL}/student/events/external-submit`, formData, {
+      await api.post("/student/events/external-submit", formData, {
         headers: {
-          Authorization: `Bearer ${token}`,
           "Content-Type": "multipart/form-data"
         }
       });

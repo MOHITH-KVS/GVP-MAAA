@@ -1,153 +1,77 @@
-import { useState } from "react";
-
-/* ===== SAMPLE DATA ===== */
-const DATA = {
-  "Sem 6": {
-    DBMS: { mid1: 24, mid2: 18, assign: 8, sem: 45 },
-    OS: { mid1: 18, mid2: 16, assign: 7, sem: 38 },
-    CN: { mid1: 22, mid2: 24, assign: 9, sem: 50 },
-  },
-  "Sem 5": {
-    DBMS: { mid1: 21, mid2: 20, assign: 8, sem: 42 },
-    OS: { mid1: 17, mid2: 15, assign: 6, sem: 36 },
-    CN: { mid1: 20, mid2: 22, assign: 8, sem: 44 },
-  },
-};
-
-/* ===== COLOR LOGIC ===== */
-function getColor(percent) {
-  if (percent < 50) return "bg-red-500";
-  if (percent <= 75) return "bg-yellow-400";
-  return "bg-green-500";
-}
+import { useState, useEffect } from "react";
+import api from "../../utils/axios";
 
 export default function Marks() {
-  const [semester, setSemester] = useState("Sem 6");
-  const [subject, setSubject] = useState("DBMS");
+  const [marks, setMarks] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-  const subjects = Object.keys(DATA[semester]);
-  const s = DATA[semester][subject];
+  useEffect(() => {
+    fetchMarks();
+  }, []);
 
-  const internal = Math.round((s.mid1 + s.mid2) / 2) + s.assign;
-  const total = internal + s.sem;
+  const fetchMarks = async () => {
+    try {
+      const res = await api.get("/student/my-marks");
+      setMarks(res.data);
+    } catch (err) {
+      console.error("Failed to load marks", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="space-y-10">
+        <div className="text-center py-10">Loading marks...</div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-10">
-
-      {/* ===== HEADER WITH SGPA / CGPA ===== */}
-      <div className="flex justify-between items-start">
-        <div>
-          <h1 className="text-2xl font-semibold">Marks Dashboard</h1>
-          <p className="text-gray-500">
-            Semester-wise academic performance
-          </p>
-        </div>
-
-        <div className="flex gap-4">
-          <StatBox label="SGPA" value="8.12" />
-          <StatBox label="CGPA" value="8.02" />
-        </div>
+      {/* HEADER */}
+      <div>
+        <h1 className="text-2xl font-semibold">My Marks</h1>
+        <p className="text-sm text-gray-500">
+          View your academic performance across subjects and exams
+        </p>
       </div>
 
-      {/* ===== SEMESTER BUTTONS ===== */}
-      <Section title="Semester">
-        <ButtonGroup
-          options={Object.keys(DATA)}
-          active={semester}
-          onChange={setSemester}
-        />
-      </Section>
-
-      {/* ===== SUBJECT BUTTONS ===== */}
-      <Section title="Subjects">
-        <ButtonGroup
-          options={subjects}
-          active={subject}
-          onChange={setSubject}
-        />
-      </Section>
-
-      {/* ===== MARKS VISUALIZATION ===== */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-        <Gauge title="Mid 1" value={s.mid1} max={30} />
-        <Gauge title="Mid 2" value={s.mid2} max={30} />
-        <Gauge title="Assignments" value={s.assign} max={10} />
-        <Gauge title="Internal" value={internal} max={40} highlight />
-        <Gauge title="Semester Exam" value={s.sem} max={70} />
-        <Gauge title="Total" value={total} max={110} highlight />
-      </div>
-
-      {/* ===== PERFORMANCE SUMMARY ===== */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <InfoCard title="Strongest Subject" value="DBMS" />
-        <InfoCard title="Weakest Subject" value="OS" />
-        <InfoCard
-          title="Performance Status"
-          value="On Track"
-          accent="text-green-600"
-        />
-      </div>
-
-      {/* ===== ANALYTICS ===== */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <ChartBox title="Mid 1 vs Mid 2 vs Semester Comparison" />
-        <ChartBox title="Subject-wise Marks Comparison" />
-      </div>
-
-      {/* ===== FEEDBACK ===== */}
+      {/* MARKS TABLE */}
       <div className="glass rounded-2xl p-6">
-        <h3 className="text-lg font-semibold mb-2">
-          Feedback & Suggestions
-        </h3>
-        <ul className="text-sm text-gray-600 list-disc ml-5 space-y-1">
-          <li>Focus more on OS to improve overall score.</li>
-          <li>Strong consistency observed in DBMS.</li>
-          <li>Aim 45+ in semester exam for distinction.</li>
-        </ul>
+        <h3 className="text-lg font-semibold mb-4">Marks Overview</h3>
+
+        {marks.length === 0 ? (
+          <div className="text-center text-gray-400 py-6">
+            No marks available yet.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b">
+                  <th className="text-left py-2">Subject</th>
+                  <th className="text-left py-2">Exam</th>
+                  <th className="text-left py-2">Marks</th>
+                </tr>
+              </thead>
+              <tbody>
+                {marks.map((mark, index) => (
+                  <tr key={index} className="border-b">
+                    <td className="py-2">{mark.subject}</td>
+                    <td className="py-2">{mark.exam}</td>
+                    <td className="py-2 font-medium">{mark.marks}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
-
     </div>
   );
 }
-
-/* ================= COMPONENTS ================= */
-
-function Section({ title, children }) {
-  return (
-    <div>
-      <p className="text-sm text-gray-500 mb-2">{title}</p>
-      {children}
-    </div>
-  );
-}
-
-function ButtonGroup({ options, active, onChange }) {
-  return (
-    <div className="flex flex-wrap gap-3">
-      {options.map((opt) => (
-        <button
-          key={opt}
-          onClick={() => onChange(opt)}
-          className={`px-4 py-2 rounded-xl text-sm transition
-            ${
-              active === opt
-                ? "bg-indigo-600 text-white"
-                : "bg-white/70 hover:bg-white"
-            }`}
-        >
-          {opt}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function Gauge({ title, value, max, highlight }) {
-  const percent = Math.round((value / max) * 100);
-
-  return (
-    <div
-      className={`glass rounded-2xl p-6 ${
         highlight && "ring-2 ring-indigo-200"
       }`}
     >

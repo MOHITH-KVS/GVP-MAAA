@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import axios from "axios";
+import api from "../../utils/axios";
 
 const API_URL = "http://localhost:8000";
 
@@ -49,7 +49,7 @@ export default function Assignments() {
   });
 
   // Get token from localStorage
-  const token = localStorage.getItem("access_token");
+  const token = localStorage.getItem("token");
 
   // Fetch initial subjects
   useEffect(() => {
@@ -82,9 +82,7 @@ export default function Assignments() {
 
   const fetchSubjects = async () => {
     try {
-      const res = await axios.get(`${API_URL}/teacher/my-subjects`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await api.get("/teacher/my-subjects");
       setSubjects(res.data.subjects || []);
     } catch (err) {
       console.error("Failed to load subjects", err);
@@ -94,9 +92,8 @@ export default function Assignments() {
   const fetchStudentSummaries = async () => {
     try {
       setLoading(true);
-      const res = await axios.get(
-        `${API_URL}/teacher/student-assignments-summary/${year}/${section}`,
-        { headers: { Authorization: `Bearer ${token}` } }
+      const res = await api.get(
+        `/teacher/student-assignments-summary/${year}/${section}`
       );
       setStudentSummaries(res.data.students || []);
     } catch (error) {
@@ -109,9 +106,8 @@ export default function Assignments() {
 
   const fetchAssignments = async () => {
     try {
-      const response = await axios.get(
-        `${API_URL}/teacher/assignments/${year}/${section}`,
-        { headers: { Authorization: `Bearer ${token}` } }
+      const response = await api.get(
+        `/teacher/assignments/${year}/${section}`
       );
       setAssignments(response.data.assignments || []);
     } catch (error) {
@@ -122,9 +118,8 @@ export default function Assignments() {
   const fetchAssignmentDetails = async (assignmentId) => {
     try {
       setLoading(true);
-      const res = await axios.get(
-        `${API_URL}/teacher/assignment-details/${assignmentId}`,
-        { headers: { Authorization: `Bearer ${token}` } }
+      const res = await api.get(
+        `/teacher/assignment-details/${assignmentId}`
       );
 
       const submittedList = res.data.submitted || [];
@@ -197,9 +192,8 @@ export default function Assignments() {
         form.append("file", formData.file);
       }
 
-      await axios.post(`${API_URL}/teacher/create-assignment`, form, {
+      await api.post("/teacher/create-assignment", form, {
         headers: {
-          Authorization: `Bearer ${token}`,
           "Content-Type": "multipart/form-data",
         },
       });
@@ -232,9 +226,7 @@ export default function Assignments() {
         alertFormData.append("title", "New Assignment Posted");
         alertFormData.append("message", `A new assignment "${formData.title}" has been posted for ${subjectName} and is due on ${new Date(formData.due_date).toLocaleDateString()}. Please check your assignments dashboard.`);
 
-        await axios.post(`${API_URL}/faculty/alerts`, alertFormData, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
+        await api.post("/faculty/alerts", alertFormData);
         console.log("Alert sent successfully for new assignment creation");
       } catch (alertError) {
         console.error("Failed to implicitly send assignment creation alert:", alertError);
@@ -259,9 +251,8 @@ export default function Assignments() {
   const handleViewAssignment = async (assignmentId, title) => {
     try {
       setLoading(true);
-      const response = await axios.get(
-        `${API_URL}/teacher/assignment-details/${assignmentId}`,
-        { headers: { Authorization: `Bearer ${token}` } }
+      const response = await api.get(
+        `/teacher/assignment-details/${assignmentId}`
       );
 
       setViewAssignmentSubmissions({
@@ -763,7 +754,7 @@ export default function Assignments() {
                   type="button"
                   onClick={async () => {
                     try {
-                      await axios.put(`${API_URL}/teacher/assignment-submissions/${reviewSubmission.submissionId}/status`, { status: "rejected" }, { headers: { Authorization: `Bearer ${token}` } });
+                      await api.put(`/teacher/assignment-submissions/${reviewSubmission.submissionId}/status`, { status: "rejected" });
                       setSuccessMsg("Submission rejected.");
                       setReviewSubmission(null);
                       fetchStudentSummaries();
@@ -785,7 +776,7 @@ export default function Assignments() {
                         return;
                       }
 
-                      await axios.put(`${API_URL}/teacher/assignment-submissions/${reviewSubmission.submissionId}/status`, { status: "approved" }, { headers: { Authorization: `Bearer ${token}` } });
+                      await api.put(`/teacher/assignment-submissions/${reviewSubmission.submissionId}/status`, { status: "approved" });
 
                       // === ADD: Send Alert on Approval ===
                       try {
@@ -797,9 +788,7 @@ export default function Assignments() {
                         alertFormData.append("title", "Assignment Approved");
                         alertFormData.append("message", `Your submission for "${reviewSubmission.assignmentTitle}" has been reviewed and approved.`);
 
-                        await axios.post(`${API_URL}/faculty/alerts`, alertFormData, {
-                          headers: { Authorization: `Bearer ${token}` }
-                        });
+                        await api.post("/faculty/alerts", alertFormData);
                         console.log("Alert sent successfully for assignment approval");
                       } catch (alertError) {
                         console.error("Failed to implicitly send approval alert:", alertError);
@@ -906,7 +895,7 @@ export default function Assignments() {
                         <button
                           onClick={async () => {
                             try {
-                              await axios.put(`${API_URL}/teacher/assignment-submissions/${sub.submission_id}/status`, { status: "approved" }, { headers: { Authorization: `Bearer ${token}` } });
+                              await api.put(`/teacher/assignment-submissions/${sub.submission_id}/status`, { status: "approved" });
                               // Optimistically update
                               setViewAssignmentSubmissions(prev => ({
                                 ...prev,
@@ -923,7 +912,7 @@ export default function Assignments() {
                         <button
                           onClick={async () => {
                             try {
-                              await axios.put(`${API_URL}/teacher/assignment-submissions/${sub.submission_id}/status`, { status: "rejected" }, { headers: { Authorization: `Bearer ${token}` } });
+                              await api.put(`/teacher/assignment-submissions/${sub.submission_id}/status`, { status: "rejected" });
                               // Optimistically update
                               setViewAssignmentSubmissions(prev => ({
                                 ...prev,

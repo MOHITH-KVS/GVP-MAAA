@@ -1,3 +1,4 @@
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Body, Query
 from fastapi.middleware.cors import CORSMiddleware
 from io import BytesIO
@@ -118,10 +119,9 @@ from auth import (
 
 
 
+
 app = FastAPI(title="GVP Academic Analytics Backend")
-
 Base.metadata.create_all(bind=engine)
-
 # -------------------------
 # CORS
 # -------------------------
@@ -131,7 +131,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
- )
+)
 
 from fastapi.staticfiles import StaticFiles
 
@@ -2870,6 +2870,31 @@ def get_student_alerts(
             "type": alert.type,
             "created_at": alert.created_at,
             "is_read": recipient.is_read
+        })
+
+    return result
+
+
+# =========================
+# STUDENT – GET MY MARKS
+# =========================
+@app.get("/student/my-marks")
+def get_my_marks(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "student":
+        raise HTTPException(status_code=403, detail="Student only")
+
+    marks = db.query(Mark).filter(Mark.student_id == current_user["user_id"]).all()
+
+    result = []
+    for m in marks:
+        subject = db.query(Subject).filter(Subject.subject_id == int(m.subject)).first()
+        result.append({
+            "subject": subject.subject_name if subject else "Unknown",
+            "exam": m.exam_type,
+            "marks": m.marks
         })
 
     return result
@@ -5711,7 +5736,7 @@ def get_marks(
 
         mark = db.query(Mark).filter(
             Mark.student_id == s.student_id,
-            Mark.subject_id == subject_id,
+            Mark.subject == str(subject_id),
             Mark.exam_type == exam
         ).first()
 
@@ -5732,33 +5757,37 @@ def get_marks(
 from fastapi.responses import FileResponse
 import pandas as pd
 
+
 @app.get("/faculty/marks/template")
-def download_marks_template():
+def download_marks_template(
+    year: int = Query(...),
+    section: str = Query(...),
+    subject_id: int = Query(...),
+    db: Session = Depends(get_db)
+):
+    # Fetch students for the given year and section
+    students = db.query(Student, User).join(User, Student.student_id == User.user_id).filter(
+        Student.year == str(year),
+        Student.section == section,
+        User.is_deleted == False
+    ).order_by(Student.roll_no.asc()).all()
 
-    columns = [
-        "RollNo",
-        "StudentName",
-        "Mid-1",
-        "Mid-2",
-        "Assignment-1",
-        "Assignment-2",
-        "Assignment-3",
-        "Assignment-4",
-        "Assignment-5",
-        "Semester"
-    ]
+    data = []
+    for s, u in students:
+        data.append({
+            "Register Number": s.roll_no,
+            "Student Name": u.name,
+            "Marks": ""
+        })
 
-    df = pd.DataFrame(columns=columns)
+    df = pd.DataFrame(data)
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False)
+    output.seek(0)
 
-    file_path = "marks_template.xlsx"
-
-    df.to_excel(file_path, index=False)
-
-    return FileResponse(
-        path=file_path,
-        filename="marks_template.xlsx",
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+    filename = f"marks_template_year{year}_section{section}.xlsx"
+    return StreamingResponse(output, media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', headers={"Content-Disposition": f"attachment; filename={filename}"})
 
 # ==========================================
 # UPLOAD MARKS VIA EXCEL

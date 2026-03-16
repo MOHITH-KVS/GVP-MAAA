@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
-import axios from "axios";
+import api from "../../utils/axios";
 
 const API = "http://localhost:8000";
 
@@ -28,28 +28,25 @@ export default function Marks() {
   }, []);
 
   const fetchSubjects = async () => {
-    try {
 
-      const token = localStorage.getItem("token");
+  try {
 
-      const res = await axios.get(`${API}/faculty/my-subjects`,{
-        headers:{
-          Authorization:`Bearer ${token}`
-        }
-      });
+    const res = await api.get("/faculty/my-subjects");
 
-      setSubjects(res.data);
+    console.log("Subjects from backend:", res.data);
 
-      if(res.data.length > 0){
-        setSubject(res.data[0].subject.subject_name);
-      }
+    const data = Array.isArray(res.data) ? res.data : [];
+    setSubjects(data);
 
-    } catch(err){
-      console.error("Failed to load subjects",err);
+    if (data.length > 0) {
+      setSubject(data[0].subject_name);
     }
 
-  };
+  } catch(err){
+    console.error("Failed to load subjects",err);
+  }
 
+ };
   /* ================= FETCH STUDENTS ================= */
 
   useEffect(() => {
@@ -59,14 +56,13 @@ export default function Marks() {
   }, [year, section, subject, exam]);
 
   const fetchStudents = async () => {
-
     try {
-
+      // For flat subject structure
       const subjectObj = subjects.find(
-        s => s.subject.subject_name === subject
+        s => s.subject_name === subject
       );
 
-      const res = await axios.get(`${API}/faculty/marks`, {
+      const res = await api.get("/faculty/marks", {
         params: {
           year,
           section,
@@ -75,18 +71,65 @@ export default function Marks() {
         }
       });
 
-      setStudents(res.data);
-
+      // If backend returns [] (no marks), fetch student list for year/section
+      if (Array.isArray(res.data) && res.data.length === 0) {
+        // Try to fetch students for the class
+        try {
+          const studentsRes = await api.get("/faculty/students", {
+            params: { year, section }
+          });
+          // Map to expected structure (no marks)
+          setStudents(
+            studentsRes.data.map(s => ({
+              ...s,
+              marks: null
+            }))
+          );
+        } catch (e) {
+          setStudents([]);
+        }
+      } else {
+        setStudents(res.data);
+      }
     } catch (err) {
       console.error("Failed to load students/marks");
+      setStudents([]);
     }
   };
 
   /* ================= DOWNLOAD TEMPLATE ================= */
 
-  const downloadTemplate = () => {
-    window.open(`${API}/faculty/marks/template`);
-  };
+  const downloadTemplate = async () => {
+  try {
+
+    if (!year || !section || !subject) {
+      alert("Please select year, section and subject");
+      return;
+    }
+
+    const subjectObj = subjects.find(
+      s => s.subject_name === subject
+    );
+
+    const response = await fetch(
+      `http://localhost:8000/faculty/marks/template?year=${year}&section=${section}&subject_id=${subjectObj?.subject_id}`
+    );
+
+    const blob = await response.blob();
+
+    const url = window.URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "marks_template.xlsx";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+
+  } catch (error) {
+    console.error("Template download failed", error);
+  }
+ };
 
   /* ================= SORTING ================= */
 
@@ -149,7 +192,7 @@ export default function Marks() {
         s => s.subject.subject_name === subject
       );
 
-      await axios.post(`${API}/faculty/upload-marks`, {
+      await api.post("/faculty/upload-marks", {
 
         year,
         section,
@@ -188,8 +231,14 @@ export default function Marks() {
     }
 
     const subjectObj = subjects.find(
-      s => s.subject.subject_name === subject
+      (s) => s.subject_name === subject
     );
+
+    if (!subjectObj?.subject_id) {
+      console.warn("No matching subject selected; skipping student fetch.");
+      setStudents([]);
+      return;
+    }
 
     const formData = new FormData();
 
@@ -201,8 +250,8 @@ export default function Marks() {
 
     try {
 
-      await axios.post(
-        `${API}/faculty/marks/upload-excel`,
+      await api.post(
+        "/faculty/marks/upload-excel",
         formData,
         { headers: { "Content-Type": "multipart/form-data" } }
       );
@@ -258,7 +307,7 @@ export default function Marks() {
             label="Subject"
             value={subject}
             onChange={setSubject}
-            options={subjects.map(s => s.subject_name)}
+            options={subjects.map((s) => s.subject_name).filter(Boolean)}
           />
 
           <FilterSelect
@@ -268,7 +317,7 @@ export default function Marks() {
             options={["Mid-1","Mid-2","Assignment","Semester"]}
           />
 
-          <div className="ml-auto flex items-end gap-3">
+          <div className="flex justify-center gap-4 w-full mt-3">
 
             <button
               onClick={downloadTemplate}
@@ -371,23 +420,24 @@ export default function Marks() {
 
         <div className="space-y-2">
 
-          {sortedStudents.map((s)=>(
-            <div
-              key={s.roll_no}
-              className="flex justify-between items-center p-3 bg-white rounded-xl"
-            >
-
-              <div>
-                <p className="font-medium">{s.name}</p>
-                <p className="text-xs text-gray-500">{s.roll_no}</p>
+          {sortedStudents.length === 0 ? (
+            <div className="text-center text-gray-400 py-6">No students found for this class.</div>
+          ) : (
+            sortedStudents.map((s) => (
+              <div
+                key={s.roll_no}
+                className="flex justify-between items-center p-3 bg-white rounded-xl"
+              >
+                <div>
+                  <p className="font-medium">{s.name}</p>
+                  <p className="text-xs text-gray-500">{s.roll_no}</p>
+                </div>
+                <span className="font-medium">
+                  {s.marks === null || s.marks === undefined ? "-" : s.marks}
+                </span>
               </div>
-
-              <span className="font-medium">
-                {s.marks || "-"}
-              </span>
-
-            </div>
-          ))}
+            ))
+          )}
 
         </div>
 

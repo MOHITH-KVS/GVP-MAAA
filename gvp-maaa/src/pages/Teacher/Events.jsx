@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import axios from "axios";
+import api from "../../utils/axios";
 import CampaignIcon from "@mui/icons-material/Campaign";
 import CloseIcon from "@mui/icons-material/Close";
 
@@ -43,7 +43,7 @@ export default function Events() {
   const [eventPreview, setEventPreview] = useState(null);
   const [targetStudentCount, setTargetStudentCount] = useState(0);
 
-  const token = localStorage.getItem("access_token");
+  const token = localStorage.getItem("token");
 
   useEffect(() => {
     fetchEvents();
@@ -62,9 +62,7 @@ export default function Events() {
   const fetchEvents = async () => {
     try {
       setLoading(true);
-      const res = await axios.get(`${API_URL}/faculty/events`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await api.get("/faculty/events");
       setEvents(res.data);
     } catch (err) {
       setErrorMsg("Failed to load events");
@@ -77,9 +75,7 @@ export default function Events() {
     try {
       setLoading(true);
       setSubmissionsError(false);
-      const res = await axios.get(`${API_URL}/faculty/external-submissions`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await api.get("/faculty/external-submissions");
       setSubmissions(res.data);
     } catch (err) {
       // If it's a network error (no response) or CORS, show the fallback UI instead of a red banner
@@ -96,9 +92,7 @@ export default function Events() {
   const handleReviewSubmission = async (id, status) => {
     try {
       setLoading(true);
-      await axios.patch(`${API_URL}/faculty/external-submissions/${id}/status?status=${status}`, null, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      await api.patch(`/faculty/external-submissions/${id}/status?status=${status}`);
       setSuccessMsg(`Submission ${status} successfully`);
       fetchSubmissions();
     } catch (err) {
@@ -111,9 +105,7 @@ export default function Events() {
   const fetchAttendance = async (eventId) => {
     try {
       setLoading(true);
-      const res = await axios.get(`${API_URL}/faculty/events/${eventId}/attendance`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await api.get(`/faculty/events/${eventId}/attendance`);
       setAttendanceData(res.data);
       if (res.data.message && res.data.students.length === 0) {
         // Optional: show info msg instead of error
@@ -165,9 +157,7 @@ export default function Events() {
   try {
     setLoading(true);
 
-    await axios.post(`${API_URL}/faculty/events`, data, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
+    await api.post("/faculty/events", data);
 
     setShowConfirmModal(false);
     setShowCreateModal(false);
@@ -190,11 +180,9 @@ export default function Events() {
  };
   const handleMarkAttendance = async (studentId, status) => {
     try {
-      await axios.patch(`${API_URL}/faculty/events/${selectedEventId}/attendance`, {
+      await api.patch(`/faculty/events/${selectedEventId}/attendance`, {
         student_id: studentId,
         status: status
-      }, {
-        headers: { Authorization: `Bearer ${token}` }
       });
       setSuccessMsg("Attendance updated");
       fetchAttendance(selectedEventId);
@@ -208,11 +196,9 @@ export default function Events() {
 
   const handleMarkResult = async (studentId, resultValue) => {
     try {
-      await axios.patch(`${API_URL}/faculty/events/result?event_id=${selectedEventId}`, {
+      await api.patch(`/faculty/events/result?event_id=${selectedEventId}`, {
         student_id: studentId,
         result: resultValue === "none" ? null : resultValue
-      }, {
-        headers: { Authorization: `Bearer ${token}` }
       });
       fetchAttendance(selectedEventId);
       setSuccessMsg("Result updated");
@@ -231,9 +217,7 @@ export default function Events() {
   const handleSendReminder = async () => {
     try {
       setLoading(true);
-      await axios.post(`${API_URL}/faculty/events/${selectedEventId}/reminder`, {}, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      await api.post(`/faculty/events/${selectedEventId}/reminder`, {});
       setSuccessMsg("Reminders sent successfully");
     } catch (err) {
       setErrorMsg("Failed to send reminders");
@@ -246,12 +230,10 @@ export default function Events() {
   const handleSendAlert = async () => {
     try {
       setLoading(true);
-      await axios.post(`${API_URL}/faculty/events/${selectedEventId}/alert`, {
+      await api.post(`/faculty/events/${selectedEventId}/alert`, {
         type: alertType,
         message: alertMessage,
         target: alertTarget
-      }, {
-        headers: { Authorization: `Bearer ${token}` }
       });
       setSuccessMsg("Alert sent successfully");
       setShowAlertModal(false);

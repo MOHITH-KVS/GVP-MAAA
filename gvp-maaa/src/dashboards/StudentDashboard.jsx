@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import api from "../utils/axios";
 
 
 
@@ -55,13 +56,8 @@ export default function StudentDashboard() {
   // Fetch student profile on mount
   const fetchProfile = async () => {
     try {
-      const token = localStorage.getItem("access_token");
-      const res = await fetch("http://127.0.0.1:8000/student/profile", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      const data = await res.json();
-      setProfile(data);
+      const res = await api.get("/student/profile");
+      setProfile(res.data);
     } catch (err) {
       console.error(err);
     }
@@ -74,21 +70,8 @@ export default function StudentDashboard() {
   useEffect(() => {
     const fetchAlerts = async () => {
       try {
-        const token = localStorage.getItem("access_token");
-
-        const res = await fetch("http://localhost:8000/student/alerts", {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
-
-        if (!res.ok) {
-          console.error("Failed to fetch alerts");
-          return;
-        }
-
-        const data = await res.json();
-        setAlerts(data);
+        const res = await api.get("/student/alerts");
+        setAlerts(res.data);
       } catch (error) {
         console.error("Error fetching alerts", error);
       } finally {

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import axios from "axios";
+import api from "../../utils/axios";
 
 const API_URL = "http://127.0.0.1:8000";
 
@@ -11,7 +11,7 @@ export default function Assignments() {
   const [success, setSuccess] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [filter, setFilter] = useState("all");
-  const token = localStorage.getItem("access_token");
+  const token = localStorage.getItem("token");
 
   const [form, setForm] = useState({
     assignment_id: "",
@@ -27,9 +27,7 @@ export default function Assignments() {
   const fetchAssignments = async () => {
     try {
       setLoading(true);
-      const response = await axios.get(`${API_URL}/student/assignments`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const response = await api.get("/student/assignments");
       setAssignments(response.data.assignments || []);
     } catch (error) {
       console.error("Error fetching assignments:", error);
@@ -54,12 +52,11 @@ export default function Assignments() {
         formData.append("file", form.file);
       }
 
-      const response = await axios.post(
-        `${API_URL}/student/submit-assignment/${form.assignment_id}`,
+      const response = await api.post(
+        `/student/submit-assignment/${form.assignment_id}`,
         formData,
         {
           headers: {
-            Authorization: `Bearer ${token}`,
             "Content-Type": "multipart/form-data",
           },
         }

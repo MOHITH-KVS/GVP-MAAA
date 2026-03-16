@@ -5,6 +5,7 @@ import SchoolIcon from "@mui/icons-material/School";
 import CircularProgress from "@mui/material/CircularProgress";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
+import axios from "axios";
 
 /* ===== ALLOWED COLLEGE DOMAINS ===== */
 const ALLOWED_DOMAINS = ["@gvpcdpgc.edu.in"];
@@ -45,51 +46,36 @@ export default function StudentSignIn() {
   try {
     setLoading(true);
 
-    const response = await fetch("http://127.0.0.1:8000/login", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        email,
-        password,
-      }),
+    const response = await axios.post("http://127.0.0.1:8000/login", {
+      email,
+      password
     });
 
-    const data = await response.json();
-    localStorage.setItem("access_token", data.access_token);
+    const data = response.data;
+
+    // Store JWT token
+    localStorage.setItem("token", data.access_token);
     localStorage.setItem("role", "student");
-
-
-
-    if (!response.ok) {
-      throw new Error(data.detail || "Login failed");
-    }
-
-    // Optional: store user session
     localStorage.setItem("user", JSON.stringify(data));
 
-    // Redirect based on role
-    if (data.role === "student") {
+    // role check
+    if (data.role !== "student") {
+      throw new Error("Invalid student credentials");
+    }
+
     setLoginSuccess(true);
 
     setTimeout(() => {
-      setLoading(false);
-      navigate("/student", { replace: true }); // 🔒 replaces history
+      navigate("/student", { replace: true });
     }, 1200);
 
-  }else {
-      setError("Invalid role access");
-    }
-
   } catch (err) {
-  setTimeout(() => {
-    setLoading(false);
-    setError(err.message);
-  }, 1000); // small delay so spinner feels real
-}
-
-};
+    setTimeout(() => {
+      setLoading(false);
+      setError(err.response?.data?.detail || err.message || "Login failed");
+    }, 1000);
+  }
+ };
 
 
   return (

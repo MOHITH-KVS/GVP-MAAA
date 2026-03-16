@@ -5,6 +5,7 @@ import SchoolIcon from "@mui/icons-material/School";
 import CircularProgress from "@mui/material/CircularProgress";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
+import axios from "axios";
 
 /* ===== ALLOWED COLLEGE DOMAINS ===== */
 const ALLOWED_DOMAINS = ["@gvpcdpgc.edu.in"];
@@ -44,29 +45,22 @@ export default function TeacherSignIn() {
   try {
     setLoading(true);
 
-    const response = await fetch("http://127.0.0.1:8000/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
+    const response = await axios.post("http://127.0.0.1:8000/login", {
+      email,
+      password
     });
 
-    const data = await response.json();
-    // 🔐 SAVE JWT TOKEN
-    localStorage.setItem("access_token", data.access_token);
+    const data = response.data;
+
+    // Store JWT token
+    localStorage.setItem("token", data.access_token);
     localStorage.setItem("role", "faculty");
-
-
-
-    if (!response.ok) {
-      throw new Error(data.detail || "Login failed");
-    }
+    localStorage.setItem("user", JSON.stringify(data));
 
     // role check
     if (data.role !== "faculty") {
       throw new Error("Invalid teacher credentials");
     }
-
-    localStorage.setItem("user", JSON.stringify(data));
 
     setLoginSuccess(true);
 
@@ -74,11 +68,10 @@ export default function TeacherSignIn() {
       navigate("/teacher", { replace: true });
     }, 1200);
 
-
   } catch (err) {
     setTimeout(() => {
       setLoading(false);
-      setError(err.message);
+      setError(err.response?.data?.detail || err.message || "Login failed");
     }, 1000);
   }
  };

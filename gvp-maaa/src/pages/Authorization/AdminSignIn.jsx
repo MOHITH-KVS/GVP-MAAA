@@ -4,6 +4,7 @@ import AdminPanelSettingsIcon from "@mui/icons-material/AdminPanelSettings";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
 import CircularProgress from "@mui/material/CircularProgress";
+import axios from "axios";
 
 
 export default function AdminSignIn() {
@@ -21,51 +22,46 @@ export default function AdminSignIn() {
 
 
   const handleSignIn = async () => {
-  setError("");
+    setError("");
 
-  if (!email || !password || !adminKey) {
-    setError("All fields are required for administrative access.");
-    return;
-  }
+    if (!email || !password || !adminKey) {
+      setError("All fields are required for administrative access.");
+      return;
+    }
 
-  try {
-    setLoading(true);
+    try {
+      setLoading(true);
 
-    const response = await fetch("http://127.0.0.1:8000/login/admin", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+      const response = await axios.post("http://127.0.0.1:8000/login/admin", {
         email,
         password,
         access_key: adminKey
-      })
-    });
+      });
 
-    const data = await response.json();
+      const data = response.data;
 
-    if (!response.ok) {
-      throw new Error(data.detail || "Admin login failed");
+      // Store JWT token
+      localStorage.setItem("token", data.access_token);
+      localStorage.setItem("role", "admin");
+      localStorage.setItem("user", JSON.stringify(data));
+
+      // role check
+      if (data.role !== "admin") {
+        throw new Error("Invalid admin credentials");
+      }
+
+      setLoginSuccess(true);
+      setLoading(false);
+
+      setTimeout(() => {
+        navigate("/admin", { replace: true });
+      }, 1200);
+
+    } catch (err) {
+      setError(err.response?.data?.detail || err.message || "Admin login failed");
+      setLoading(false);
     }
-
-  
-    // ✅ STORE TOKEN CORRECTLY
-    localStorage.setItem("access_token", data.access_token);
-    localStorage.setItem("role", "admin");
-    localStorage.setItem("user", JSON.stringify(data));
-
-
-    setLoginSuccess(true);
-    setLoading(false); // ✅ VERY IMPORTANT
-
-    setTimeout(() => {
-      navigate("/admin", { replace: true });
-    }, 1200);
-
-  } catch (err) {
-    setError(err.message);
-    setLoading(false);
-  }
-};
+  };
 
 
   return (
