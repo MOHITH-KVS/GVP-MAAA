@@ -5774,11 +5774,25 @@ def download_marks_template(
 
     data = []
     for s, u in students:
-        data.append({
-            "Register Number": s.roll_no,
-            "Student Name": u.name,
-            "Marks": ""
-        })
+            data.append({
+                "Register Number": s.roll_no,
+                "Student Name": u.name,
+                "Assignment 1": "",
+                "Assignment 2": "",
+                "Assignment 3": "",
+                "Assignment 4": "",
+                "Assignment 5": "",
+                "Assignment Total (Scaled to 10)": "",
+                "Mid 1": "",
+                "Mid 1 (Scaled to 20)": "",
+                "Mid 2": "",
+                "Mid 2 (Scaled to 20)": "",
+                "Semester": "",
+                "Semester (Scaled)": "",
+                "Total Marks": "",
+                "SGPA": "",
+                "CGPA": ""
+            })
 
     df = pd.DataFrame(data)
     output = BytesIO()
