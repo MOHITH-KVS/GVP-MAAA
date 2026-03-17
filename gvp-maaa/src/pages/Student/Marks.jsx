@@ -53,7 +53,13 @@ export default function Marks() {
                 <tr className="border-b">
                   <th className="text-left py-2">Subject</th>
                   <th className="text-left py-2">Exam</th>
-                  <th className="text-left py-2">Marks</th>
+                  <th className="text-left py-2">Assignment</th>
+                  <th className="text-left py-2">Mid-1</th>
+                  <th className="text-left py-2">Mid-2</th>
+                  <th className="text-left py-2">Semester</th>
+                  <th className="text-left py-2">Total</th>
+                  <th className="text-left py-2">SGPA</th>
+                  <th className="text-left py-2">CGPA</th>
                 </tr>
               </thead>
               <tbody>
@@ -61,7 +67,13 @@ export default function Marks() {
                   <tr key={index} className="border-b">
                     <td className="py-2">{mark.subject}</td>
                     <td className="py-2">{mark.exam}</td>
-                    <td className="py-2 font-medium">{mark.marks}</td>
+                    <td className="py-2">{mark.assignment_total}</td>
+                    <td className="py-2">{mark.mid1}</td>
+                    <td className="py-2">{mark.mid2}</td>
+                    <td className="py-2">{mark.semester}</td>
+                    <td className="py-2 font-medium">{mark.total}</td>
+                    <td className="py-2">{mark.sgpa}</td>
+                    <td className="py-2">{mark.cgpa}</td>
                   </tr>
                 ))}
               </tbody>

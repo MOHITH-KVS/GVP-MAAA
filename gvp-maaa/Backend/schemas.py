@@ -567,3 +567,27 @@ class MarksUpload(BaseModel):
     subject: str
     exam: str
     marks: List[MarkCreate]
+
+class FacultyMarkResponse(BaseModel):
+    id: int
+    student_id: int
+    student_name: str
+    roll_no: Optional[str]
+    assignment_total: float
+    mid1: float
+    mid2: float
+    semester: float
+    total: float
+    sgpa: float
+    cgpa: float
+
+class StudentMarkResponse(BaseModel):
+    subject: str
+    exam: str
+    assignment_total: float
+    mid1: float
+    mid2: float
+    semester: float
+    total: float
+    sgpa: float
+    cgpa: float

@@ -71,26 +71,13 @@ export default function Marks() {
         }
       });
 
-      // If backend returns [] (no marks), fetch student list for year/section
-      if (Array.isArray(res.data) && res.data.length === 0) {
-        // Try to fetch students for the class
-        try {
-          const studentsRes = await api.get("/faculty/students", {
-            params: { year, section }
-          });
-          // Map to expected structure (no marks)
-          setStudents(
-            studentsRes.data.map(s => ({
-              ...s,
-              marks: null
-            }))
-          );
-        } catch (e) {
-          setStudents([]);
-        }
-      } else {
-        setStudents(res.data);
-      }
+      // Map to expected structure with marks as total
+      const studentsData = res.data.map(s => ({
+        ...s,
+        marks: s.total || 0
+      }));
+
+      setStudents(studentsData);
     } catch (err) {
       console.error("Failed to load students/marks");
       setStudents([]);
@@ -100,8 +87,6 @@ export default function Marks() {
   /* ================= DOWNLOAD TEMPLATE ================= */
 
   const downloadTemplate = async () => {
-  try {
-
     if (!year || !section || !subject) {
       alert("Please select year, section and subject");
       return;
@@ -111,25 +96,39 @@ export default function Marks() {
       s => s.subject_name === subject
     );
 
-    const response = await fetch(
-      `http://localhost:8000/faculty/marks/template?year=${year}&section=${section}&subject_id=${subjectObj?.subject_id}`
-    );
+    if (!subjectObj?.subject_id) {
+      alert("Invalid subject selected");
+      return;
+    }
 
-    const blob = await response.blob();
+    try {
+      const response = await fetch(
+        `http://localhost:8000/faculty/marks/template?year=${year}&section=${section}&subject_id=${subjectObj.subject_id}`,
+        {
+          headers: {
+            "Authorization": `Bearer ${localStorage.getItem("token")}`
+          }
+        }
+      );
 
-    const url = window.URL.createObjectURL(blob);
+      if (!response.ok) {
+        const err = await response.json();
+        alert(err.detail || err.error || "Download failed");
+        return;
+      }
 
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "marks_template.xlsx";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+      const blob = await response.blob();
 
-  } catch (error) {
-    console.error("Template download failed", error);
-  }
- };
+      const link = document.createElement("a");
+      link.href = window.URL.createObjectURL(blob);
+      link.download = "marks_template.xlsx";
+      link.click();
+
+    } catch (err) {
+      console.error("Download error:", err);
+      alert("Download failed: " + err.message);
+    }
+  };
 
   /* ================= SORTING ================= */
 
@@ -189,29 +188,39 @@ export default function Marks() {
     try {
 
       const subjectObj = subjects.find(
-        s => s.subject.subject_name === subject
+        s => s.subject_name === subject
       );
 
-      await api.post("/faculty/upload-marks", {
+      // Prepare marks array for bulk submission
+      const marksArray = students
+        .filter(student => student.marks !== null && student.marks !== undefined)
+        .map(student => ({
+          student_id: student.student_id,
+          assignment_total: 0,  // These can be extended later for detailed entry
+          mid1: 0,
+          mid2: 0,
+          semester: 0,
+          total: student.marks,
+          sgpa: 0,
+          cgpa: 0
+        }));
 
-        year,
-        section,
-        subject_id: subjectObj?.subject_id,
-        exam,
-
-        marks: students.map((s) => ({
-          student_id: s.student_id,
-          marks: s.marks || 0
-        }))
-
-      });
+      if (marksArray.length > 0) {
+        await api.post("/faculty/marks/manual-entry", {
+          marks: marksArray,
+          subject_id: subjectObj?.subject_id,
+          exam,
+          year: parseInt(year),
+          section
+        });
+      }
 
       alert("Marks uploaded successfully");
 
       setShowConfirm(false);
       setShowUpload(false);
 
-      fetchStudents();
+      fetchStudents();  // Refresh the UI
 
     } catch (err) {
 
@@ -243,17 +252,21 @@ export default function Marks() {
     const formData = new FormData();
 
     formData.append("file", excelFile);
-    formData.append("year", year);
-    formData.append("section", section);
-    formData.append("subject_id", subjectObj?.subject_id);
-    formData.append("subject", subject);
 
     try {
 
-      await api.post(
-        "/faculty/marks/upload-excel",
+      const response = await api.post(
+        "/faculty/marks/upload",
         formData,
-        { headers: { "Content-Type": "multipart/form-data" } }
+        {
+          params: {
+            year,
+            section,
+            subject_id: subjectObj.subject_id,
+            exam
+          },
+          headers: { "Content-Type": "multipart/form-data" }
+        }
       );
 
       alert("Excel marks uploaded successfully");
@@ -346,38 +359,132 @@ export default function Marks() {
 
       </div>
 
-      {/* EXCEL UPLOAD */}
+      {/* MANUAL ENTRY MODAL */}
 
-      {showExcelUpload && (
+      {showUpload && (
 
         <div className="glass rounded-2xl p-6 space-y-4">
 
           <h3 className="text-lg font-semibold">
-            Upload Excel Marks
+            Manual Entry - {exam}
           </h3>
 
-          <input
-            type="file"
-            accept=".xlsx,.xls"
-            onChange={(e)=>setExcelFile(e.target.files[0])}
-            className="w-full border p-2 rounded"
-          />
+          <div className="max-h-96 overflow-y-auto space-y-2">
+
+            {students.map((s) => (
+
+              <div
+                key={s.roll_no}
+                className="flex justify-between items-center p-3 bg-white rounded-xl"
+              >
+
+                <div>
+
+                  <p className="font-medium">{s.name}</p>
+
+                  <p className="text-xs text-gray-500">{s.roll_no}</p>
+
+                </div>
+
+                <input
+
+                  type="number"
+
+                  value={s.marks || ""}
+
+                  onChange={(e) => updateMark(s.roll_no, e.target.value)}
+
+                  placeholder="Enter marks"
+
+                  className="w-24 px-2 py-1 border rounded"
+
+                  min="0"
+
+                  max="100"
+
+                />
+
+              </div>
+
+            ))}
+
+          </div>
 
           <div className="flex justify-end gap-3">
 
             <button
-              onClick={()=>setShowExcelUpload(false)}
+
+              onClick={() => setShowUpload(false)}
+
               className="px-4 py-2 border rounded-xl"
+
             >
+
               Cancel
+
             </button>
 
             <button
-              onClick={uploadExcel}
-              className="px-4 py-2 bg-indigo-600 text-white rounded-xl"
+
+              onClick={() => setShowConfirm(true)}
+
+              className="px-4 py-2 bg-green-600 text-white rounded-xl"
+
             >
-              Upload
+
+              Submit
+
             </button>
+
+          </div>
+
+        </div>
+
+      )}
+
+      {/* CONFIRMATION MODAL */}
+
+      {showConfirm && (
+
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full mx-4">
+
+            <h3 className="text-lg font-semibold mb-4">Confirm Submission</h3>
+
+            <p className="text-gray-600 mb-6">
+
+              Are you sure you want to submit marks for {students.length} students?
+
+            </p>
+
+            <div className="flex justify-end gap-3">
+
+              <button
+
+                onClick={() => setShowConfirm(false)}
+
+                className="px-4 py-2 border rounded-xl"
+
+              >
+
+                Cancel
+
+              </button>
+
+              <button
+
+                onClick={submitMarks}
+
+                className="px-4 py-2 bg-green-600 text-white rounded-xl"
+
+              >
+
+                Confirm
+
+              </button>
+
+            </div>
 
           </div>
 

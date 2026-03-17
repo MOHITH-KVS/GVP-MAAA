@@ -441,11 +441,22 @@ class Mark(Base):
     __tablename__ = "marks"
 
     id = Column(Integer, primary_key=True, index=True)
-    student_id = Column(Integer)
-    subject = Column(String)
-    exam_type = Column(String)
-    marks = Column(Integer)
-    year = Column(String)
+    student_id = Column(Integer, ForeignKey("students.student_id"))
+    subject_id = Column(Integer, ForeignKey("subjects.subject_id"))
+    exam = Column(String)  # Mid-1, Mid-2, Assignment, Semester
+    assignment_total = Column(Numeric(5,2), default=0.00)
+    mid1 = Column(Numeric(5,2), default=0.00)
+    mid2 = Column(Numeric(5,2), default=0.00)
+    semester = Column(Numeric(5,2), default=0.00)
+    total = Column(Numeric(5,2), default=0.00)
+    sgpa = Column(Numeric(4,2), default=0.00)
+    cgpa = Column(Numeric(4,2), default=0.00)
+    year = Column(Integer)
     section = Column(String)
-    faculty_id = Column(Integer)
+    faculty_id = Column(Integer, ForeignKey("faculty.faculty_id"))
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    student = relationship("Student")
+    subject = relationship("Subject")
+    faculty = relationship("Faculty")

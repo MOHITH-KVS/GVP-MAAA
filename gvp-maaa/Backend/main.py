@@ -2842,6 +2842,291 @@ def get_my_subjects(
 
 
 # =========================
+# FACULTY – GET MARKS
+# =========================
+@app.get("/faculty/marks")
+def get_faculty_marks(
+    year: int = Query(...),
+    section: str = Query(...),
+    subject_id: int = Query(...),
+    exam: str = Query(...),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "faculty":
+        raise HTTPException(status_code=403, detail="Faculty only")
+
+    print("Fetching marks:", year, section, subject_id, exam)
+
+    # Get JOINED data: Marks with Student and User info
+    results = db.query(Mark, Student, User).join(
+        Student, Mark.student_id == Student.student_id
+    ).join(
+        User, Student.student_id == User.user_id
+    ).filter(
+        Mark.year == year,
+        Mark.section == section,
+        Mark.subject_id == subject_id,
+        Mark.exam == exam
+    ).all()
+
+    print(f"Records found: {len(results)}")
+
+    result = []
+    for mark, student, user in results:
+        result.append({
+            "student_id": student.student_id,
+            "name": user.name,
+            "roll_no": student.roll_no,
+            "assignment_total": float(mark.assignment_total or 0),
+            "mid1": float(mark.mid1 or 0),
+            "mid2": float(mark.mid2 or 0),
+            "semester": float(mark.semester or 0),
+            "total": float(mark.total or 0),
+            "sgpa": float(mark.sgpa or 0),
+            "cgpa": float(mark.cgpa or 0)
+        })
+
+    # If no marks found, return students with zero marks
+    if len(result) == 0:
+        print("No marks found, returning students with zero marks")
+        students = db.query(Student, User).join(
+            User, Student.student_id == User.user_id
+        ).filter(
+            Student.year == year,
+            Student.section == section
+        ).all()
+
+        for student, user in students:
+            result.append({
+                "student_id": student.student_id,
+                "name": user.name,
+                "roll_no": student.roll_no,
+                "assignment_total": 0,
+                "mid1": 0,
+                "mid2": 0,
+                "semester": 0,
+                "total": 0,
+                "sgpa": 0,
+                "cgpa": 0
+            })
+
+    return result
+
+
+# =========================
+# REUSABLE MARKS SAVE FUNCTION
+# =========================
+def save_or_update_marks(db, student_id, subject_id, exam, data):
+    """Reusable function to save or update marks"""
+    print(f"Saving marks for student_id: {student_id}, subject_id: {subject_id}, exam: {exam}")
+
+    existing = db.query(Mark).filter(
+        Mark.student_id == student_id,
+        Mark.subject_id == subject_id,
+        Mark.exam == exam
+    ).first()
+
+    if existing:
+        print(f"Updating existing mark for student {student_id}")
+        existing.assignment_total = data.get("assignment_total", 0) or 0
+        existing.mid1 = data.get("mid1", 0) or 0
+        existing.mid2 = data.get("mid2", 0) or 0
+        existing.semester = data.get("semester", 0) or 0
+        existing.total = data.get("total", 0) or 0
+        existing.sgpa = data.get("sgpa", 0) or 0
+        existing.cgpa = data.get("cgpa", 0) or 0
+    else:
+        print(f"Creating new mark for student {student_id}")
+        new_mark = Mark(
+            student_id=student_id,
+            subject_id=subject_id,
+            exam=exam,
+            assignment_total=data.get("assignment_total", 0) or 0,
+            mid1=data.get("mid1", 0) or 0,
+            mid2=data.get("mid2", 0) or 0,
+            semester=data.get("semester", 0) or 0,
+            total=data.get("total", 0) or 0,
+            sgpa=data.get("sgpa", 0) or 0,
+            cgpa=data.get("cgpa", 0) or 0,
+            year=data["year"],
+            section=data["section"],
+            faculty_id=data.get("faculty_id")
+        )
+        db.add(new_mark)
+@app.post("/faculty/marks/upload")
+async def upload_marks_excel(
+    file: UploadFile = File(...),
+    year: int = Query(...),
+    section: str = Query(...),
+    subject_id: int = Query(...),
+    exam: str = Query(...),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "faculty":
+        raise HTTPException(status_code=403, detail="Faculty only")
+
+    try:
+        import pandas as pd
+    except ImportError:
+        return {"error": "pandas not installed"}
+
+    try:
+        df = pd.read_excel(file.file)
+        df.fillna(0, inplace=True)  # Fill NaN values with 0
+    except Exception as e:
+        return {"error": f"Excel read failed: {str(e)}"}
+
+    print("Excel columns:", list(df.columns))
+    print("Excel rows:", len(df))
+
+    required_columns = ["Register Number", "Student Name"]
+    for col in required_columns:
+        if col not in df.columns:
+            return {"error": f"Required column '{col}' missing in Excel"}
+
+    processed_count = 0
+    for _, row in df.iterrows():
+        reg_no = str(row["Register Number"]).strip()
+
+        # Find student by roll_no
+        student = db.query(Student).filter(Student.roll_no == reg_no).first()
+        if not student:
+            print(f"Student with roll_no {reg_no} not found, skipping")
+            continue
+
+        # Extract marks safely
+        mark_data = {
+            "assignment_total": row.get("Assignment Total (Scaled to 10)", 0) or 0,
+            "mid1": row.get("Mid 1 (Scaled to 20)", 0) or 0,
+            "mid2": row.get("Mid 2 (Scaled to 20)", 0) or 0,
+            "semester": row.get("Semester", 0) or 0,
+            "total": row.get("Total (30)", 0) or 0,
+            "sgpa": row.get("SGPA", 0) or 0,
+            "cgpa": row.get("CGPA", 0) or 0,
+            "year": year,
+            "section": section,
+            "faculty_id": current_user["user_id"]
+        }
+
+        save_or_update_marks(db, student.student_id, subject_id, exam, mark_data)
+        processed_count += 1
+
+    db.commit()
+    print(f"Successfully processed {processed_count} marks from Excel")
+    return {"message": f"Marks uploaded successfully. Processed {processed_count} records."}
+
+
+# =========================
+# FACULTY – MANUAL ENTRY MARKS
+# =========================
+@app.post("/faculty/marks/manual-entry")
+def manual_entry_marks(
+    data: dict,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "faculty":
+        raise HTTPException(status_code=403, detail="Faculty only")
+
+    marks_list = data.get("marks", [])
+    subject_id = data["subject_id"]
+    exam = data["exam"]
+    year = data["year"]
+    section = data["section"]
+
+    print(f"Manual entry: {len(marks_list)} marks for subject {subject_id}, exam {exam}")
+
+    for m in marks_list:
+        student_id = m["student_id"]
+        mark_data = {
+            **m,
+            "year": year,
+            "section": section,
+            "faculty_id": current_user["user_id"]
+        }
+        save_or_update_marks(db, student_id, subject_id, exam, mark_data)
+
+    db.commit()
+    return {"message": "Marks updated successfully"}
+
+
+# =========================
+# FACULTY – DOWNLOAD MARKS TEMPLATE
+# =========================
+@app.get("/faculty/marks/template")
+def download_marks_template(
+    year: int = Query(...),
+    section: str = Query(...),
+    subject_id: int = Query(...),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "faculty":
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
+
+    print("Year:", year)
+    print("Section:", section)
+
+    # Get students in the class
+    students = (
+        db.query(Student, User)
+        .join(User, Student.student_id == User.user_id)
+        .filter(
+            Student.year == year,
+            Student.section == section
+        )
+        .all()
+    )
+
+    print("Students count:", len(students))
+
+    if not students:
+        return {"error": "No students found"}
+
+    # Create DataFrame
+    import pandas as pd
+    import io
+    data = []
+    for student, user in students:
+        data.append({
+            "Register Number": student.roll_no,
+            "Student Name": user.name,
+            "Assignment 1": "",
+            "Assignment 2": "",
+            "Assignment 3": "",
+            "Assignment 4": "",
+            "Assignment 5": "",
+            "Assignment Total (Scaled to 10)": "",
+            "Mid 1": "",
+            "Mid 1 (Scaled to 20)": "",
+            "Mid 2": "",
+            "Mid 2 (Scaled to 20)": "",
+            "Total (30)": "",
+            "Semester": "",
+            "SGPA": "",
+            "CGPA": ""
+        })
+
+    df = pd.DataFrame(data)
+
+    # Create Excel in memory
+    output = io.BytesIO()
+    df.to_excel(output, index=False, engine="openpyxl")
+    output.seek(0)
+
+    # Return as file response
+    from fastapi.responses import StreamingResponse
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=marks_template.xlsx"}
+    )
+
+
+# =========================
 # STUDENT – GET ALERTS
 # =========================
 @app.get("/student/alerts")
@@ -2886,15 +3171,24 @@ def get_my_marks(
     if current_user["role"] != "student":
         raise HTTPException(status_code=403, detail="Student only")
 
+    print(f"Fetching marks for student: {current_user['user_id']}")
+
     marks = db.query(Mark).filter(Mark.student_id == current_user["user_id"]).all()
+
+    print(f"Found {len(marks)} marks for student")
 
     result = []
     for m in marks:
-        subject = db.query(Subject).filter(Subject.subject_id == int(m.subject)).first()
         result.append({
-            "subject": subject.subject_name if subject else "Unknown",
-            "exam": m.exam_type,
-            "marks": m.marks
+            "subject": m.subject.subject_name if m.subject else "Unknown",
+            "exam": m.exam,
+            "assignment_total": float(m.assignment_total or 0),
+            "mid1": float(m.mid1 or 0),
+            "mid2": float(m.mid2 or 0),
+            "semester": float(m.semester or 0),
+            "total": float(m.total or 0),
+            "sgpa": float(m.sgpa or 0),
+            "cgpa": float(m.cgpa or 0)
         })
 
     return result
