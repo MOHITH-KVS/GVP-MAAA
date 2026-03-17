@@ -1,5 +1,6 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import api from "../../utils/axios";
+// import * as XLSX from 'xlsx';
 
 const API = "http://localhost:8000";
 
@@ -13,13 +14,21 @@ export default function Marks() {
   const [search, setSearch] = useState("");
 
   const [showUpload, setShowUpload] = useState(false);
-  const [showExcelUpload, setShowExcelUpload] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [showSuccess, setShowSuccess] = useState(false);
+  const [editMode, setEditMode] = useState(false);
 
-  const [excelFile, setExcelFile] = useState(null);
+  const [file, setFile] = useState(null);
+  const [uploadPreview, setUploadPreview] = useState(null);
+  const [successMessage, setSuccessMessage] = useState("");
+  const fileInputRef = useRef(null);
 
   const [students, setStudents] = useState([]);
   const [subjects, setSubjects] = useState([]);
+
+  // Dynamic assignment options
+  const assignmentOptions = Array.from({ length: 5 }, (_, i) => `Assignment-${i+1}`);
+  const examOptions = ["Mid-1", "Mid-2", "Semester", ...assignmentOptions];
 
   /* ================= FETCH SUBJECTS ================= */
 
@@ -71,10 +80,21 @@ export default function Marks() {
         }
       });
 
-      // Map to expected structure with marks as total
+      // Map to expected structure with all mark fields and store originals
       const studentsData = res.data.map(s => ({
         ...s,
-        marks: s.total || 0
+        marks: s.total || 0,
+        assignment_total: s.assignment_total || 0,
+        mid1: s.mid1 || 0,
+        mid2: s.mid2 || 0,
+        semester: s.semester || 0,
+        sgpa: s.sgpa || 0,
+        cgpa: s.cgpa || 0,
+        // Store original values for change detection
+        original_mid1: s.mid1 || 0,
+        original_mid2: s.mid2 || 0,
+        original_assignment_total: s.assignment_total || 0,
+        original_semester: s.semester || 0
       }));
 
       setStudents(studentsData);
@@ -167,121 +187,143 @@ export default function Marks() {
   const failCount =
     students.filter((s) => (s.marks || 0) < 40).length;
 
-  /* ================= UPDATE MARK ================= */
+  /* ================= UPDATE VALUE ================= */
 
-  const updateMark = (roll, value) => {
-
-    setStudents((prev) =>
-      prev.map((s) =>
-        s.roll_no === roll
-          ? { ...s, marks: Number(value) }
-          : s
+  const updateValue = (id, field, value) => {
+    setStudents(prev =>
+      prev.map(s =>
+        s.student_id === id ? { ...s, [field]: value } : s
       )
     );
-
   };
 
-  /* ================= MANUAL SUBMIT ================= */
+  /* ================= FILE HANDLING ================= */
 
-  const submitMarks = async () => {
+  const handleFileChange = async (e) => {
+    const selectedFile = e.target.files[0];
+    setFile(selectedFile);
 
-    try {
-
-      const subjectObj = subjects.find(
-        s => s.subject_name === subject
-      );
-
-      // Prepare marks array for bulk submission
-      const marksArray = students
-        .filter(student => student.marks !== null && student.marks !== undefined)
-        .map(student => ({
-          student_id: student.student_id,
-          assignment_total: 0,  // These can be extended later for detailed entry
-          mid1: 0,
-          mid2: 0,
-          semester: 0,
-          total: student.marks,
-          sgpa: 0,
-          cgpa: 0
-        }));
-
-      if (marksArray.length > 0) {
-        await api.post("/faculty/marks/manual-entry", {
-          marks: marksArray,
-          subject_id: subjectObj?.subject_id,
-          exam,
-          year: parseInt(year),
-          section
-        });
-      }
-
-      alert("Marks uploaded successfully");
-
-      setShowConfirm(false);
-      setShowUpload(false);
-
-      fetchStudents();  // Refresh the UI
-
-    } catch (err) {
-
-      alert("Failed to upload marks");
-
+    if (selectedFile) {
+      // Show basic file info for preview
+      setUploadPreview({
+        fileName: selectedFile.name,
+        fileSize: (selectedFile.size / 1024).toFixed(1) + ' KB',
+        lastModified: new Date(selectedFile.lastModified).toLocaleDateString(),
+        studentCount: 'To be determined after upload'
+      });
     }
-
   };
 
-  /* ================= EXCEL UPLOAD ================= */
+  const handleUploadConfirm = async () => {
+    if (!file) return;
 
-  const uploadExcel = async () => {
-
-    if (!excelFile) {
-      alert("Please select Excel file");
-      return;
-    }
-
-    const subjectObj = subjects.find(
-      (s) => s.subject_name === subject
-    );
-
+    const subjectObj = subjects.find(s => s.subject_name === subject);
     if (!subjectObj?.subject_id) {
-      console.warn("No matching subject selected; skipping student fetch.");
-      setStudents([]);
+      alert("Invalid subject selected");
       return;
     }
 
     const formData = new FormData();
-
-    formData.append("file", excelFile);
+    formData.append("file", file);
 
     try {
-
-      const response = await api.post(
-        "/faculty/marks/upload",
-        formData,
+      const res = await fetch(
+        `http://localhost:8000/faculty/marks/upload?year=${year}&section=${section}&subject_id=${subjectObj.subject_id}&exam=${exam}`,
         {
-          params: {
-            year,
-            section,
-            subject_id: subjectObj.subject_id,
-            exam
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${localStorage.getItem("token")}`
           },
-          headers: { "Content-Type": "multipart/form-data" }
+          body: formData
         }
       );
 
-      alert("Excel marks uploaded successfully");
+      const data = await res.json();
 
-      setShowExcelUpload(false);
+      if (!res.ok) {
+        alert(data.error || "Upload failed");
+        return;
+      }
 
-      fetchStudents();
+      setSuccessMessage(`✅ Upload successful: ${data.updated_count} records updated`);
+      setShowSuccess(true);
+      setUploadPreview(null);
+      setFile(null);
+
+      fetchStudents(); // refresh UI
 
     } catch (err) {
-
-      alert("Excel upload failed");
-
+      console.error(err);
+      alert("Upload error");
     }
-
   };
+
+  /* ================= MANUAL SUBMIT ================= */
+
+  const getChangedStudents = () => {
+    return students.filter(s => {
+      if (exam === "Mid-1") return s.mid1 !== s.original_mid1;
+      if (exam === "Mid-2") return s.mid2 !== s.original_mid2;
+      if (exam.startsWith("Assignment")) return s.assignment_total !== s.original_assignment_total;
+      if (exam === "Semester") return s.semester !== s.original_semester;
+      return false;
+    });
+  };
+
+  const handleSubmit = async () => {
+    const changedStudents = getChangedStudents();
+
+    const subjectObj = subjects.find(s => s.subject_name === subject);
+
+    const payload = {
+      marks: changedStudents.map(s => ({
+        student_id: s.student_id,
+        value:
+          exam === "Mid-1" ? s.mid1 :
+          exam === "Mid-2" ? s.mid2 :
+          exam.startsWith("Assignment") ? s.assignment_total :
+          s.semester
+      })),
+      subject_id: subjectObj?.subject_id,
+      exam,
+      year: parseInt(year),
+      section
+    };
+
+    try {
+      const res = await fetch("http://localhost:8000/faculty/marks/manual-entry", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${localStorage.getItem("token")}`
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        alert(data.error || "Update failed");
+        return;
+      }
+
+      setSuccessMessage(`✅ Successfully updated ${data.updated_count} students`);
+      setShowSuccess(true);
+      setShowConfirm(false);
+      setShowUpload(false);
+      setEditMode(false);
+
+      fetchStudents(); // refresh UI
+
+    } catch (err) {
+      console.error(err);
+      alert("Update failed");
+    }
+  };
+
+  /* ================= EXCEL UPLOAD ================= */
+
+  // Handled by handleUpload function above
 
   return (
 
@@ -327,7 +369,7 @@ export default function Marks() {
             label="Exam"
             value={exam}
             onChange={setExam}
-            options={["Mid-1","Mid-2","Assignment","Semester"]}
+            options={examOptions}
           />
 
           <div className="flex justify-center gap-4 w-full mt-3">
@@ -340,11 +382,20 @@ export default function Marks() {
             </button>
 
             <button
-              onClick={() => setShowExcelUpload(true)}
+              onClick={() => fileInputRef.current.click()}
               className="h-[44px] px-6 rounded-xl bg-indigo-600 text-white"
             >
               Upload Excel
             </button>
+
+            {/* Hidden file input */}
+            <input
+              type="file"
+              ref={fileInputRef}
+              style={{ display: "none" }}
+              onChange={handleFileChange}
+              accept=".xlsx,.xls"
+            />
 
             <button
               onClick={() => setShowUpload(true)}
@@ -365,9 +416,24 @@ export default function Marks() {
 
         <div className="glass rounded-2xl p-6 space-y-4">
 
-          <h3 className="text-lg font-semibold">
-            Manual Entry - {exam}
-          </h3>
+          <div className="flex justify-between items-center">
+
+            <h3 className="text-lg font-semibold">
+              Manual Entry - {exam}
+            </h3>
+
+            <button
+              onClick={() => setEditMode(!editMode)}
+              className={`px-4 py-2 rounded-xl text-sm ${
+                editMode
+                  ? "bg-blue-600 text-white"
+                  : "bg-gray-200 text-gray-700"
+              }`}
+            >
+              {editMode ? "Simple Mode" : "Edit Mode"}
+            </button>
+
+          </div>
 
           <div className="max-h-96 overflow-y-auto space-y-2">
 
@@ -375,34 +441,86 @@ export default function Marks() {
 
               <div
                 key={s.roll_no}
-                className="flex justify-between items-center p-3 bg-white rounded-xl"
+                className="p-3 bg-white rounded-xl space-y-2"
               >
 
-                <div>
+                <div className="flex justify-between items-center">
 
-                  <p className="font-medium">{s.name}</p>
+                  <div>
 
-                  <p className="text-xs text-gray-500">{s.roll_no}</p>
+                    <p className="font-medium">{s.name}</p>
+
+                    <p className="text-xs text-gray-500">{s.roll_no}</p>
+
+                  </div>
 
                 </div>
 
-                <input
-
-                  type="number"
-
-                  value={s.marks || ""}
-
-                  onChange={(e) => updateMark(s.roll_no, e.target.value)}
-
-                  placeholder="Enter marks"
-
-                  className="w-24 px-2 py-1 border rounded"
-
-                  min="0"
-
-                  max="100"
-
-                />
+                {editMode ? (
+                  // EDIT MODE: Only selected exam field
+                  <div className="flex items-center gap-2">
+                    <label className="text-sm text-gray-600">
+                      {exam === "Mid-1" ? "Mid 1 Marks:" :
+                       exam === "Mid-2" ? "Mid 2 Marks:" :
+                       exam.startsWith("Assignment") ? "Assignment Marks:" :
+                       "Semester Marks:"}
+                    </label>
+                    {exam === "Mid-1" && (
+                      <input
+                        type="number"
+                        value={s.mid1 || ""}
+                        onChange={(e) => updateValue(s.student_id, "mid1", e.target.value)}
+                        placeholder="0"
+                        className="w-24 px-2 py-1 border rounded"
+                        min="0"
+                        max="100"
+                      />
+                    )}
+                    {exam === "Mid-2" && (
+                      <input
+                        type="number"
+                        value={s.mid2 || ""}
+                        onChange={(e) => updateValue(s.student_id, "mid2", e.target.value)}
+                        placeholder="0"
+                        className="w-24 px-2 py-1 border rounded"
+                        min="0"
+                        max="100"
+                      />
+                    )}
+                    {exam.startsWith("Assignment") && (
+                      <input
+                        type="number"
+                        value={s.assignment_total || ""}
+                        onChange={(e) => updateValue(s.student_id, "assignment_total", e.target.value)}
+                        placeholder="0"
+                        className="w-24 px-2 py-1 border rounded"
+                        min="0"
+                        max="100"
+                      />
+                    )}
+                    {exam === "Semester" && (
+                      <input
+                        type="number"
+                        value={s.semester || ""}
+                        onChange={(e) => updateValue(s.student_id, "semester", e.target.value)}
+                        placeholder="0"
+                        className="w-24 px-2 py-1 border rounded"
+                        min="0"
+                        max="100"
+                      />
+                    )}
+                  </div>
+                ) : (
+                  // SIMPLE MODE: Display current value
+                  <div className="text-sm text-gray-600">
+                    Current: {
+                      exam === "Mid-1" ? (s.mid1 || 0) :
+                      exam === "Mid-2" ? (s.mid2 || 0) :
+                      exam.startsWith("Assignment") ? (s.assignment_total || 0) :
+                      (s.semester || 0)
+                    }
+                  </div>
+                )}
 
               </div>
 
@@ -444,52 +562,111 @@ export default function Marks() {
 
       {/* CONFIRMATION MODAL */}
 
-      {showConfirm && (
+      {showConfirm && (() => {
+        const changedCount = getChangedStudents().length;
+        return (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
 
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-2xl p-6 max-w-md w-full mx-4">
 
-          <div className="bg-white rounded-2xl p-6 max-w-md w-full mx-4">
+              <h3 className="text-lg font-semibold mb-4">Confirm Submission</h3>
 
-            <h3 className="text-lg font-semibold mb-4">Confirm Submission</h3>
+              <p className="text-gray-600 mb-6">
+                Are you sure you want to update {changedCount} out of {students.length} students?
+              </p>
 
-            <p className="text-gray-600 mb-6">
+              <div className="flex justify-end gap-3">
 
-              Are you sure you want to submit marks for {students.length} students?
+                <button
+                  onClick={() => setShowConfirm(false)}
+                  className="px-4 py-2 border rounded-xl"
+                >
+                  Cancel
+                </button>
 
-            </p>
+                <button
+                  onClick={handleSubmit}
+                  className="px-4 py-2 bg-green-600 text-white rounded-xl"
+                  disabled={changedCount === 0}
+                >
+                  Confirm
+                </button>
 
-            <div className="flex justify-end gap-3">
-
-              <button
-
-                onClick={() => setShowConfirm(false)}
-
-                className="px-4 py-2 border rounded-xl"
-
-              >
-
-                Cancel
-
-              </button>
-
-              <button
-
-                onClick={submitMarks}
-
-                className="px-4 py-2 bg-green-600 text-white rounded-xl"
-
-              >
-
-                Confirm
-
-              </button>
+              </div>
 
             </div>
 
           </div>
+        );
+      })()}
 
+      {/* SUCCESS MODAL */}
+
+      {showSuccess && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full mx-4">
+            <div className="text-center">
+              <div className="text-4xl mb-4">✅</div>
+              <h3 className="text-lg font-semibold mb-2">Success!</h3>
+              <p className="text-gray-600 mb-6">{successMessage}</p>
+              <button
+                onClick={() => setShowSuccess(false)}
+                className="px-6 py-2 bg-green-600 text-white rounded-xl"
+              >
+                OK
+              </button>
+            </div>
+          </div>
         </div>
+      )}
 
+      {/* UPLOAD PREVIEW MODAL */}
+
+      {uploadPreview && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl p-6 max-w-lg w-full mx-4">
+            <h3 className="text-lg font-semibold mb-4">Upload Preview</h3>
+
+            <div className="mb-4">
+              <p className="text-sm text-gray-600">
+                <strong>File:</strong> {uploadPreview.fileName}
+              </p>
+              <p className="text-sm text-gray-600">
+                <strong>Size:</strong> {uploadPreview.fileSize}
+              </p>
+              <p className="text-sm text-gray-600">
+                <strong>Last Modified:</strong> {uploadPreview.lastModified}
+              </p>
+              <p className="text-sm text-gray-600">
+                <strong>Students:</strong> {uploadPreview.studentCount}
+              </p>
+            </div>
+
+            <div className="mb-6">
+              <p className="text-sm text-gray-700">
+                Click "Upload" to process the Excel file and update student marks.
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  setUploadPreview(null);
+                  setFile(null);
+                }}
+                className="px-4 py-2 border rounded-xl"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleUploadConfirm}
+                className="px-4 py-2 bg-blue-600 text-white rounded-xl"
+              >
+                Upload
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* KPI CARDS */}

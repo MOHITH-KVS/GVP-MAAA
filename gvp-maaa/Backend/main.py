@@ -2917,9 +2917,9 @@ def get_faculty_marks(
 # =========================
 # REUSABLE MARKS SAVE FUNCTION
 # =========================
-def save_or_update_marks(db, student_id, subject_id, exam, data):
+def save_or_update_marks(db, student_id, subject_id, exam, data, value=None):
     """Reusable function to save or update marks"""
-    print(f"Saving marks for student_id: {student_id}, subject_id: {subject_id}, exam: {exam}")
+    print(f"Saving marks for student_id: {student_id}, subject_id: {subject_id}, exam: {exam}, value: {value}")
 
     existing = db.query(Mark).filter(
         Mark.student_id == student_id,
@@ -2927,33 +2927,49 @@ def save_or_update_marks(db, student_id, subject_id, exam, data):
         Mark.exam == exam
     ).first()
 
+    # Determine which field to update based on exam
+    field_name = None
+    if exam == "Mid-1":
+        field_name = "mid1"
+    elif exam == "Mid-2":
+        field_name = "mid2"
+    elif exam.startswith("Assignment"):
+        field_name = "assignment_total"
+    elif exam == "Semester":
+        field_name = "semester"
+
     if existing:
-        print(f"Updating existing mark for student {student_id}")
-        existing.assignment_total = data.get("assignment_total", 0) or 0
-        existing.mid1 = data.get("mid1", 0) or 0
-        existing.mid2 = data.get("mid2", 0) or 0
-        existing.semester = data.get("semester", 0) or 0
-        existing.total = data.get("total", 0) or 0
-        existing.sgpa = data.get("sgpa", 0) or 0
-        existing.cgpa = data.get("cgpa", 0) or 0
+        # Check if value actually changed
+        current_value = getattr(existing, field_name, 0) or 0
+        if current_value != value:
+            print(f"Updating existing mark for student {student_id}: {field_name} from {current_value} to {value}")
+            setattr(existing, field_name, value)
+            return True  # Value changed
+        else:
+            print(f"No change needed for student {student_id}: {field_name} is already {value}")
+            return False  # No change
     else:
         print(f"Creating new mark for student {student_id}")
         new_mark = Mark(
             student_id=student_id,
             subject_id=subject_id,
             exam=exam,
-            assignment_total=data.get("assignment_total", 0) or 0,
-            mid1=data.get("mid1", 0) or 0,
-            mid2=data.get("mid2", 0) or 0,
-            semester=data.get("semester", 0) or 0,
-            total=data.get("total", 0) or 0,
-            sgpa=data.get("sgpa", 0) or 0,
-            cgpa=data.get("cgpa", 0) or 0,
+            assignment_total=0,
+            mid1=0,
+            mid2=0,
+            semester=0,
+            total=0,
+            sgpa=0,
+            cgpa=0,
             year=data["year"],
             section=data["section"],
             faculty_id=data.get("faculty_id")
         )
+        # Set the specific field for new record
+        if field_name:
+            setattr(new_mark, field_name, value)
         db.add(new_mark)
+        return True  # New record created
 @app.post("/faculty/marks/upload")
 async def upload_marks_excel(
     file: UploadFile = File(...),
@@ -2974,29 +2990,30 @@ async def upload_marks_excel(
 
     try:
         df = pd.read_excel(file.file)
-        df.fillna(0, inplace=True)  # Fill NaN values with 0
+        df.fillna(0, inplace=True)
+        # Normalize column names
+        df.columns = [col.strip() for col in df.columns]
     except Exception as e:
         return {"error": f"Excel read failed: {str(e)}"}
 
-    print("Excel columns:", list(df.columns))
-    print("Excel rows:", len(df))
+    print("UPLOAD columns:", list(df.columns))
+    print("UPLOAD rows:", len(df))
 
     required_columns = ["Register Number", "Student Name"]
     for col in required_columns:
         if col not in df.columns:
             return {"error": f"Required column '{col}' missing in Excel"}
 
-    processed_count = 0
+    updated_count = 0
     for _, row in df.iterrows():
         reg_no = str(row["Register Number"]).strip()
 
-        # Find student by roll_no
+        # Find student by roll_no (register_number)
         student = db.query(Student).filter(Student.roll_no == reg_no).first()
         if not student:
             print(f"Student with roll_no {reg_no} not found, skipping")
             continue
 
-        # Extract marks safely
         mark_data = {
             "assignment_total": row.get("Assignment Total (Scaled to 10)", 0) or 0,
             "mid1": row.get("Mid 1 (Scaled to 20)", 0) or 0,
@@ -3011,11 +3028,14 @@ async def upload_marks_excel(
         }
 
         save_or_update_marks(db, student.student_id, subject_id, exam, mark_data)
-        processed_count += 1
+        updated_count += 1
 
     db.commit()
-    print(f"Successfully processed {processed_count} marks from Excel")
-    return {"message": f"Marks uploaded successfully. Processed {processed_count} records."}
+    print(f"UPLOAD Updated: {updated_count} students")
+    return {
+        "message": "Upload successful",
+        "updated_count": updated_count
+    }
 
 
 # =========================
@@ -3038,18 +3058,24 @@ def manual_entry_marks(
 
     print(f"Manual entry: {len(marks_list)} marks for subject {subject_id}, exam {exam}")
 
+    updated_count = 0
     for m in marks_list:
         student_id = m["student_id"]
+        value = m.get("value", 0)
         mark_data = {
-            **m,
             "year": year,
             "section": section,
             "faculty_id": current_user["user_id"]
         }
-        save_or_update_marks(db, student_id, subject_id, exam, mark_data)
+        if save_or_update_marks(db, student_id, subject_id, exam, mark_data, value):
+            updated_count += 1
 
     db.commit()
-    return {"message": "Marks updated successfully"}
+    print(f"Manual entry updated: {updated_count} students")
+    return {
+        "message": "Update successful",
+        "updated_count": updated_count
+    }
 
 
 # =========================
