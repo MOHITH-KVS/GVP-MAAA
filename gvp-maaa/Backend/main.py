@@ -2970,13 +2970,18 @@ def save_or_update_marks(db, student_id, subject_id, exam, data, value=None):
             setattr(new_mark, field_name, value)
         db.add(new_mark)
         return True  # New record created
-@app.post("/faculty/marks/upload")
-async def upload_marks_excel(
+
+# =========================
+# FACULTY – PREVIEW MARKS EXCEL
+# =========================
+@app.post("/faculty/marks/preview")
+async def preview_marks_excel(
     file: UploadFile = File(...),
     year: int = Query(...),
     section: str = Query(...),
     subject_id: int = Query(...),
     exam: str = Query(...),
+    overwrite: str = Form("false"),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -2985,97 +2990,272 @@ async def upload_marks_excel(
 
     try:
         import pandas as pd
+        from io import BytesIO
     except ImportError:
         return {"error": "pandas not installed"}
 
     try:
-        df = pd.read_excel(file.file)
-        df.fillna(0, inplace=True)
-        # Normalize column names
-        df.columns = [col.strip() for col in df.columns]
+        contents = await file.read()
+        df = pd.read_excel(BytesIO(contents))
+        df.columns = df.columns.str.strip()
+        df.columns = df.columns.str.replace("  ", " ")
+        print("Exam:", exam)
+        # Map exam to column
+        if exam == "Mid-1":
+            column_name = "Mid 1"
+        elif exam == "Mid-2":
+            column_name = "Mid 2"
+        elif exam == "Semester":
+            column_name = "Semester"
+        elif "Assignment" in exam:
+            try:
+                num = exam.split("-")[1]
+                column_name = f"Assignment {num}"
+            except:
+                return {"error": "Invalid assignment format"}
+        else:
+            return {"error": "Invalid exam type"}
+        print("Column:", column_name)
+        print("Excel Columns:", df.columns.tolist())
     except Exception as e:
         return {"error": f"Excel read failed: {str(e)}"}
 
-    print("UPLOAD columns:", list(df.columns))
-    print("UPLOAD rows:", len(df))
-
-    required_columns = ["Register Number", "Student Name"]
-    for col in required_columns:
+    required = ["Register Number", "Student Name"]
+    for col in required:
         if col not in df.columns:
-            return {"error": f"Required column '{col}' missing in Excel"}
+            return {"error": f"Missing column: {col}"}
+    if column_name not in df.columns:
+        return {"error": f"{column_name} column not found in Excel"}
+    if df.empty:
+        return {"error": "Excel file is empty"}
 
-    updated_count = 0
-    for _, row in df.iterrows():
-        reg_no = str(row["Register Number"]).strip()
+    students = db.query(Student).filter(
+        Student.year == year,
+        Student.section == section
+    ).all()
 
-        # Find student by roll_no (register_number)
-        student = db.query(Student).filter(Student.roll_no == reg_no).first()
-        if not student:
-            print(f"Student with roll_no {reg_no} not found, skipping")
-            continue
+    def normalize_reg(val):
+        if pd.isna(val):
+            return None
+        val = str(val).strip()
+        if val.endswith(".0"):
+            val = val[:-2]
+        return val
 
-        mark_data = {
-            "assignment_total": row.get("Assignment Total (Scaled to 10)", 0) or 0,
-            "mid1": row.get("Mid 1 (Scaled to 20)", 0) or 0,
-            "mid2": row.get("Mid 2 (Scaled to 20)", 0) or 0,
-            "semester": row.get("Semester", 0) or 0,
-            "total": row.get("Total (30)", 0) or 0,
-            "sgpa": row.get("SGPA", 0) or 0,
-            "cgpa": row.get("CGPA", 0) or 0,
-            "year": year,
-            "section": section,
-            "faculty_id": current_user["user_id"]
+    valid_regs = set(
+        normalize_reg(s.roll_no)
+        for s in students if s.roll_no
+    )
+
+    excel_regs = df["Register Number"].apply(normalize_reg)
+    invalid_rows = df[~excel_regs.isin(valid_regs)]
+    if not invalid_rows.empty:
+        return {
+            "error": "File contains students not matching selected Year/Section"
         }
 
-        save_or_update_marks(db, student.student_id, subject_id, exam, mark_data)
-        updated_count += 1
+    preview = []
+    for idx, row in df.iterrows():
+        reg = normalize_reg(row["Register Number"])
+        value = row.get(column_name)
+        
+        student = db.query(Student).filter(
+            Student.roll_no == reg,
+            Student.year == year,
+            Student.section == section
+        ).first()
+        
+        if not student:
+            preview.append({
+                "register_number": row["Register Number"],
+                "name": row["Student Name"],
+                "marks": "" if pd.isna(value) else value,
+                "status": "invalid"
+            })
+            continue
+        
+        record = db.query(Mark).filter_by(
+            student_id=student.student_id,
+            subject_id=subject_id
+        ).first()
+        
+        existing = False
+        if record:
+            if exam == "Mid-1" and record.mid1 is not None and record.mid1 != 0:
+                existing = True
+            elif exam == "Mid-2" and record.mid2 is not None and record.mid2 != 0:
+                existing = True
+            elif "Assignment" in exam and record.assignment_total is not None and record.assignment_total != 0:
+                existing = True
+            elif exam == "Semester" and record.semester is not None and record.semester != 0:
+                existing = True
+        
+        preview.append({
+            "register_number": row["Register Number"],
+            "name": row["Student Name"],
+            "marks": "" if pd.isna(value) else value,
+            "status": "exists" if existing else "new"
+        })
 
-    db.commit()
-    print(f"UPLOAD Updated: {updated_count} students")
-    return {
-        "message": "Upload successful",
-        "updated_count": updated_count
-    }
+    return {"preview": preview}
 
-
-# =========================
-# FACULTY – MANUAL ENTRY MARKS
-# =========================
-@app.post("/faculty/marks/manual-entry")
-def manual_entry_marks(
-    data: dict,
+@app.post("/faculty/marks/upload")
+async def upload_marks_excel(
+    file: UploadFile = File(...),
+    year: int = Query(...),
+    section: str = Query(...),
+    subject_id: int = Query(...),
+    exam: str = Query(...),
+    overwrite: str = Form("false"),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     if current_user["role"] != "faculty":
         raise HTTPException(status_code=403, detail="Faculty only")
 
-    marks_list = data.get("marks", [])
-    subject_id = data["subject_id"]
-    exam = data["exam"]
-    year = data["year"]
-    section = data["section"]
+    try:
+        import pandas as pd
+        from io import BytesIO
+    except ImportError:
+        return {"error": "pandas not installed"}
 
-    print(f"Manual entry: {len(marks_list)} marks for subject {subject_id}, exam {exam}")
+    try:
+        contents = await file.read()
+        df = pd.read_excel(BytesIO(contents))
+        df.columns = df.columns.str.strip()
+        df.columns = df.columns.str.replace("  ", " ")
+        # Map exam to column
+        if exam == "Mid-1":
+            column_name = "Mid 1"
+        elif exam == "Mid-2":
+            column_name = "Mid 2"
+        elif exam == "Semester":
+            column_name = "Semester"
+        elif "Assignment" in exam:
+            try:
+                num = exam.split("-")[1]
+                column_name = f"Assignment {num}"
+            except:
+                return {"error": "Invalid assignment format"}
+        else:
+            return {"error": "Invalid exam type"}
+    except Exception as e:
+        return {"error": f"Excel read failed: {str(e)}"}
 
-    updated_count = 0
-    for m in marks_list:
-        student_id = m["student_id"]
-        value = m.get("value", 0)
-        mark_data = {
-            "year": year,
-            "section": section,
-            "faculty_id": current_user["user_id"]
-        }
-        if save_or_update_marks(db, student_id, subject_id, exam, mark_data, value):
-            updated_count += 1
+    required = ["Register Number", "Student Name"]
+    for col in required:
+        if col not in df.columns:
+            return {"error": f"Missing column: {col}"}
+    if column_name not in df.columns:
+        return {"error": f"{column_name} column not found in Excel"}
+    if df.empty:
+        return {"error": "Excel file is empty"}
+
+    students = db.query(Student).filter(
+        Student.year == year,
+        Student.section == section
+    ).all()
+
+    def normalize_reg(val):
+        if pd.isna(val):
+            return None
+        val = str(val).strip()
+        if val.endswith(".0"):
+            val = val[:-2]
+        return val
+
+    valid_regs = set(
+        normalize_reg(s.roll_no)
+        for s in students if s.roll_no
+    )
+
+    print("DB regs sample:", list(valid_regs)[:5])
+    print("Excel regs sample:", [normalize_reg(r) for r in df["Register Number"].head()])
+
+    overwrite = overwrite == "true"
+
+    updated = 0
+    skipped = 0
+    already_exists = 0
+
+    for _, row in df.iterrows():
+        reg = normalize_reg(row["Register Number"])
+        value = row.get(column_name)
+        
+        if pd.isna(value):
+            continue
+        
+        student = db.query(Student).filter(
+            Student.roll_no == reg,
+            Student.year == year,
+            Student.section == section
+        ).first()
+        
+        if not student:
+            skipped += 1
+            continue
+        
+        record = db.query(Mark).filter_by(
+            student_id=student.student_id,
+            subject_id=subject_id
+        ).first()
+        
+        if not record:
+            record = Mark(
+                student_id=student.student_id,
+                subject_id=subject_id,
+                exam=exam,
+                year=year,
+                section=section,
+                faculty_id=current_user["user_id"],
+                assignment_total=0,
+                mid1=0,
+                mid2=0,
+                semester=0,
+                total=0,
+                sgpa=0,
+                cgpa=0
+            )
+            db.add(record)
+        
+        exists = False
+        if exam == "Mid-1" and record.mid1 is not None and record.mid1 != 0:
+            exists = True
+        elif exam == "Mid-2" and record.mid2 is not None and record.mid2 != 0:
+            exists = True
+        elif "Assignment" in exam and record.assignment_total is not None and record.assignment_total != 0:
+            exists = True
+        elif exam == "Semester" and record.semester is not None and record.semester != 0:
+            exists = True
+        
+        if exists and not overwrite:
+            already_exists += 1
+            continue
+        
+        if exam == "Mid-1":
+            record.mid1 = value
+        elif exam == "Mid-2":
+            record.mid2 = value
+        elif "Assignment" in exam:
+            record.assignment_total = value
+        elif exam == "Semester":
+            record.semester = value
+        
+        updated += 1
 
     db.commit()
-    print(f"Manual entry updated: {updated_count} students")
+
     return {
-        "message": "Update successful",
-        "updated_count": updated_count
+        "updated": updated,
+        "skipped": skipped,
+        "already_exists": already_exists,
+        "message": f"{updated} updated • {skipped} skipped • {already_exists} already existed"
     }
+
+
+# =========================
+# MANUAL ENTRY REMOVED - Now using Excel upload only
+# =========================
 
 
 # =========================
@@ -3112,7 +3292,7 @@ def download_marks_template(
     if not students:
         return {"error": "No students found"}
 
-    # Create DataFrame
+    # Create DataFrame with simplified columns
     import pandas as pd
     import io
     data = []
@@ -3120,20 +3300,7 @@ def download_marks_template(
         data.append({
             "Register Number": student.roll_no,
             "Student Name": user.name,
-            "Assignment 1": "",
-            "Assignment 2": "",
-            "Assignment 3": "",
-            "Assignment 4": "",
-            "Assignment 5": "",
-            "Assignment Total (Scaled to 10)": "",
-            "Mid 1": "",
-            "Mid 1 (Scaled to 20)": "",
-            "Mid 2": "",
-            "Mid 2 (Scaled to 20)": "",
-            "Total (30)": "",
-            "Semester": "",
-            "SGPA": "",
-            "CGPA": ""
+            "Marks": ""  # Single marks column
         })
 
     df = pd.DataFrame(data)
