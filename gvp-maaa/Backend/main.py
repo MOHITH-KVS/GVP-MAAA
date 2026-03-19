@@ -2887,6 +2887,23 @@ def get_faculty_marks(
             "cgpa": float(mark.cgpa or 0)
         })
 
+    # Calculate stats properly
+    values = []
+    for mark, student, user in results:
+        if exam == "Mid-1" and mark.mid1 is not None:
+            values.append(mark.mid1)
+        elif exam == "Mid-2" and mark.mid2 is not None:
+            values.append(mark.mid2)
+        elif "Assignment" in exam and mark.assignment_total is not None:
+            values.append(mark.assignment_total)
+        elif exam == "Semester" and mark.semester is not None:
+            values.append(mark.semester)
+
+    FAIL_THRESHOLD = 10  # change if needed
+    fail_count = len([v for v in values if v < FAIL_THRESHOLD])
+    avg = round(sum(values) / len(values), 2) if values else 0
+    highest = max(values) if values else 0
+
     # If no marks found, return students with zero marks
     if len(result) == 0:
         print("No marks found, returning students with zero marks")
@@ -2911,7 +2928,15 @@ def get_faculty_marks(
                 "cgpa": 0
             })
 
-    return result
+    return {
+        "students": result,
+        "stats": {
+            "average": avg,
+            "highest": highest,
+            "fail_count": fail_count,
+            "total_students": len(result)
+        }
+    }
 
 
 # =========================

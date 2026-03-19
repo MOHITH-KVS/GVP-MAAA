@@ -14,8 +14,9 @@ export default function Marks() {
 
   const [search, setSearch] = useState("");
 
-  const [showSuccess, setShowSuccess] = useState(false);
-  const [successMessage, setSuccessMessage] = useState("");
+  // Toast state
+  const [message, setMessage] = useState("");
+  const [messageType, setMessageType] = useState(""); // success | error
 
   const [file, setFile] = useState(null);
   const [previewData, setPreviewData] = useState([]);
@@ -23,20 +24,33 @@ export default function Marks() {
   const [loading, setLoading] = useState(false);
   const fileInputRef = useRef(null);
 
+  const [filename, setFilename] = useState("");
+
   const [overwrite, setOverwrite] = useState(false);
 
   const [students, setStudents] = useState([]);
   const [subjects, setSubjects] = useState([]);
 
+  // Stats from backend
+  const [classAvg, setClassAvg] = useState(0);
+  const [highestScore, setHighestScore] = useState(0);
+  const [failCount, setFailCount] = useState(0);
+  const [totalStudents, setTotalStudents] = useState(0);
+
   // Dynamic assignment options
   const assignmentOptions = Array.from({ length: 5 }, (_, i) => `Assignment-${i+1}`);
   const examOptions = ["Mid-1", "Mid-2", "Semester", ...assignmentOptions];
 
-  /* ================= FETCH SUBJECTS ================= */
-
+  // Auto clear message after 3 seconds
   useEffect(() => {
-    fetchSubjects();
-  }, []);
+    if (message) {
+      const timer = setTimeout(() => {
+        setMessage("");
+        setMessageType("");
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [message]);
 
   const fetchSubjects = async () => {
 
@@ -83,7 +97,8 @@ export default function Marks() {
       });
 
       // Map to expected structure with marks field based on selected exam
-      const studentsData = res.data.map(s => ({
+      const data = res.data;
+      const studentsData = data.students.map(s => ({
         ...s,
         marks:
           exam === "Mid-1" ? s.mid1 || 0 :
@@ -94,6 +109,10 @@ export default function Marks() {
       }));
 
       setStudents(studentsData);
+      setClassAvg(data.stats.average);
+      setHighestScore(data.stats.highest);
+      setFailCount(data.stats.fail_count);
+      setTotalStudents(data.stats.total_students);
     } catch (err) {
       console.error("Failed to load students/marks");
       setStudents([]);
@@ -104,7 +123,8 @@ export default function Marks() {
 
   const downloadTemplate = async () => {
     if (!year || !section || !subject) {
-      alert("Please select year, section and subject");
+      setMessage("Please select year, section and subject");
+      setMessageType("error");
       return;
     }
 
@@ -113,7 +133,8 @@ export default function Marks() {
     );
 
     if (!subjectObj?.subject_id) {
-      alert("Invalid subject selected");
+      setMessage("Invalid subject selected");
+      setMessageType("error");
       return;
     }
 
@@ -129,7 +150,8 @@ export default function Marks() {
 
       if (!response.ok) {
         const err = await response.json();
-        alert(err.detail || err.error || "Download failed");
+        setMessage(err.detail || err.error || "Download failed");
+        setMessageType("error");
         return;
       }
 
@@ -142,7 +164,8 @@ export default function Marks() {
 
     } catch (err) {
       console.error("Download error:", err);
-      alert("Download failed: " + err.message);
+      setMessage("Download failed: " + err.message);
+      setMessageType("error");
     }
   };
 
@@ -160,41 +183,19 @@ export default function Marks() {
 
   }, [students, search]);
 
-  /* ================= METRICS ================= */
-
-  const total = students.length;
-
-  const avg =
-    students.filter(s => s.marks !== null).length > 0
-      ? Math.round(
-          students
-            .filter(s => s.marks !== null)
-            .reduce((s, x) => s + x.marks, 0)
-            /
-          students.filter(s => s.marks !== null).length
-        )
-      : 0;
-
-  const highest =
-    students.length > 0
-      ? Math.max(...students.map((s) => s.marks || 0))
-      : 0;
-
-  const failCount =
-    students.filter((s) => (s.marks || 0) < 40).length;
-
-  /* ================= UPDATE VALUE ================= */
-
-  // Removed manual entry functionality
-
   /* ================= FILE HANDLING ================= */
 
   const handleFileChange = async (e) => {
     const selectedFile = e.target.files[0];
 
-    if (!selectedFile) return;
+    if (!selectedFile) {
+      setFile(null);
+      setFilename("");
+      return;
+    }
 
     setFile(selectedFile);
+    setFilename(selectedFile.name);
     setLoading(true);
 
     try {
@@ -204,7 +205,8 @@ export default function Marks() {
 
       const subjectObj = subjects.find(s => s.subject_name === subject);
       if (!subjectObj?.subject_id) {
-        alert("Invalid subject selected");
+        setMessage("Invalid subject selected");
+        setMessageType("error");
         setLoading(false);
         return;
       }
@@ -223,7 +225,8 @@ export default function Marks() {
       const data = await res.json();
 
       if (!res.ok) {
-        alert(data.error || "Preview failed");
+        setMessage(data.error || "Preview failed");
+        setMessageType("error");
         setPreviewData([]);
         setLoading(false);
         return;
@@ -231,12 +234,16 @@ export default function Marks() {
 
       // CORRECTED ERROR HANDLING
       if (data.error) {
-        alert(data.error);
+        setMessage(data.error);
+        setMessageType("error");
+        setLoading(false);
         return;
       }
 
       if (!data.preview || data.preview.length === 0) {
-        alert("No valid data found for selected exam column");
+        setMessage("No valid data found for selected exam column");
+        setMessageType("error");
+        setLoading(false);
         return;
       }
 
@@ -246,7 +253,8 @@ export default function Marks() {
 
     } catch (err) {
       console.error("Preview error:", err);
-      alert("Failed to process Excel file");
+      setMessage("Failed to process Excel file");
+      setMessageType("error");
       setPreviewData([]);
       setLoading(false);
     }
@@ -255,9 +263,19 @@ export default function Marks() {
   const handleConfirmUpload = async () => {
     if (!file) return;
     setLoading(true);
+
+    // Check if overwrite is OFF and some data already exists
+    if (!overwrite && previewData.some(student => student.status === "exists")) {
+      setMessage("Some marks already exist. Enable overwrite to replace.");
+      setMessageType("error");
+      setLoading(false);
+      return;
+    }
+
     const subjectObj = subjects.find(s => s.subject_name === subject);
     if (!subjectObj?.subject_id) {
-      alert("Invalid subject selected");
+      setMessage("Invalid subject selected");
+      setMessageType("error");
       setLoading(false);
       return;
     }
@@ -277,19 +295,22 @@ export default function Marks() {
       );
       const data = await res.json();
       if (data.error) {
-        alert(data.error);
+        setMessage(data.error);
+        setMessageType("error");
         setLoading(false);
         return;
       }
-      setSuccessMessage(data.message);
-      setShowSuccess(true);
+      setMessage(data.message);
+      setMessageType("success");
       setShowPreview(false);
       setFile(null);
+      setFilename("");
       setPreviewData([]);
       await fetchStudents(); // refresh UI
     } catch (err) {
       console.error("Upload error:", err);
-      alert("Upload error");
+      setMessage("Upload error");
+      setMessageType("error");
     } finally {
       setLoading(false); // ALWAYS RESET
     }
@@ -302,6 +323,13 @@ export default function Marks() {
   return (
 
     <div className="space-y-10">
+
+      {/* TOAST NOTIFICATION */}
+      {message && (
+        <div className={`toast ${messageType}`}>
+          {message}
+        </div>
+      )}
 
       {/* HEADER */}
 
@@ -356,23 +384,32 @@ export default function Marks() {
             </button>
 
             <div className="flex flex-col items-center gap-2">
-              <label className="flex items-center gap-2 text-sm">
+              {filename && (
+                <div className="text-sm text-gray-600">
+                  Selected: {filename}
+                </div>
+              )}
+              <button
+                onClick={() => fileInputRef.current.click()}
+                className="h-[44px] px-6 rounded-xl bg-indigo-600 text-white flex items-center gap-2"
+                disabled={loading || !year || !section || !subject}
+              >
+                {loading && <div className="loader"></div>}
+                {loading ? "Processing..." : "Upload Excel"}
+              </button>
+
+              <label
+                className="flex items-center gap-2 text-sm"
+                title="If enabled, existing marks will be replaced"
+              >
                 <input
                   type="checkbox"
                   checked={overwrite}
                   onChange={() => setOverwrite(!overwrite)}
                   className="rounded"
                 />
-                Overwrite existing marks
+                Replace existing marks (advanced)
               </label>
-
-              <button
-                onClick={() => fileInputRef.current.click()}
-                className="h-[44px] px-6 rounded-xl bg-indigo-600 text-white"
-                disabled={loading}
-              >
-                {loading ? "Processing..." : "Upload Excel"}
-              </button>
             </div>
 
             {/* Hidden file input */}
@@ -466,35 +503,15 @@ export default function Marks() {
         </div>
       )}
 
-      {/* SUCCESS MODAL */}
-
-      {showSuccess && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-2xl p-6 max-w-md w-full mx-4">
-            <div className="text-center">
-              <div className="text-4xl mb-4">✅</div>
-              <h3 className="text-lg font-semibold mb-2">Success!</h3>
-              <p className="text-gray-600 mb-6">{successMessage}</p>
-              <button
-                onClick={() => setShowSuccess(false)}
-                className="px-6 py-2 bg-green-600 text-white rounded-xl"
-              >
-                OK
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* KPI CARDS */}
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
 
-        <Kpi title="Class Average" value={`${avg}%`} />
+        <Kpi title="Class Average" value={`${classAvg}%`} />
 
-        <Kpi title="Highest Score" value={highest} />
+        <Kpi title="Highest Score" value={highestScore} />
 
-        <Kpi title="Total Students" value={total} />
+        <Kpi title="Total Students" value={totalStudents} />
 
         <Kpi title="Fail Count" value={failCount} danger />
 
