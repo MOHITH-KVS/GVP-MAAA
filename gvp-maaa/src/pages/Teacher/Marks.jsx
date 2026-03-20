@@ -72,6 +72,10 @@ export default function Marks() {
   }
 
  };
+  // Fetch subjects on component mount
+  useEffect(() => {
+    fetchSubjects();
+  }, []);
   /* ================= FETCH STUDENTS ================= */
 
   useEffect(() => {

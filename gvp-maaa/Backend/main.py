@@ -2884,7 +2884,12 @@ def get_faculty_marks(
             "semester": float(mark.semester or 0),
             "total": float(mark.total or 0),
             "sgpa": float(mark.sgpa or 0),
-            "cgpa": float(mark.cgpa or 0)
+            "cgpa": float(mark.cgpa or 0),
+            "a1": float(mark.a1 or 0),
+            "a2": float(mark.a2 or 0),
+            "a3": float(mark.a3 or 0),
+            "a4": float(mark.a4 or 0),
+            "a5": float(mark.a5 or 0)
         })
 
     # Calculate stats properly
@@ -2935,7 +2940,8 @@ def get_faculty_marks(
             "highest": highest,
             "fail_count": fail_count,
             "total_students": len(result)
-        }
+        },
+        "available_columns": ["Assignment 1", "Assignment 2", "Assignment 3", "Assignment 4", "Assignment 5", "Mid 1", "Mid 2", "Total"]
     }
 
 
@@ -3149,21 +3155,39 @@ async def upload_marks_excel(
         df = pd.read_excel(BytesIO(contents))
         df.columns = df.columns.str.strip()
         df.columns = df.columns.str.replace("  ", " ")
-        # Map exam to column
-        if exam == "Mid-1":
-            column_name = "Mid 1"
-        elif exam == "Mid-2":
-            column_name = "Mid 2"
-        elif exam == "Semester":
-            column_name = "Semester"
-        elif "Assignment" in exam:
-            try:
-                num = exam.split("-")[1]
-                column_name = f"Assignment {num}"
-            except:
-                return {"error": "Invalid assignment format"}
-        else:
-            return {"error": "Invalid exam type"}
+
+        # Get available columns
+        columns = df.columns.tolist()
+        print("Available columns:", columns)
+
+        # Column mapping for dynamic detection
+        column_map = {
+            "assignment1": ["Assignment 1", "A1", "Assignment-1"],
+            "assignment2": ["Assignment 2", "A2", "Assignment-2"],
+            "assignment3": ["Assignment 3", "A3", "Assignment-3"],
+            "assignment4": ["Assignment 4", "A4", "Assignment-4"],
+            "assignment5": ["Assignment 5", "A5", "Assignment-5"],
+            "mid1": ["Mid 1", "Mid-1", "Mid1"],
+            "mid2": ["Mid 2", "Mid-2", "Mid2"]
+        }
+
+        def get_col(possible_names):
+            for name in possible_names:
+                if name in columns:
+                    return name
+            return None
+
+        # Detect available columns
+        a1_col = get_col(column_map["assignment1"])
+        a2_col = get_col(column_map["assignment2"])
+        a3_col = get_col(column_map["assignment3"])
+        a4_col = get_col(column_map["assignment4"])
+        a5_col = get_col(column_map["assignment5"])
+        mid1_col = get_col(column_map["mid1"])
+        mid2_col = get_col(column_map["mid2"])
+
+        print(f"Detected columns - A1:{a1_col}, A2:{a2_col}, A3:{a3_col}, A4:{a4_col}, A5:{a5_col}, Mid1:{mid1_col}, Mid2:{mid2_col}")
+
     except Exception as e:
         return {"error": f"Excel read failed: {str(e)}"}
 
@@ -3171,8 +3195,6 @@ async def upload_marks_excel(
     for col in required:
         if col not in df.columns:
             return {"error": f"Missing column: {col}"}
-    if column_name not in df.columns:
-        return {"error": f"{column_name} column not found in Excel"}
     if df.empty:
         return {"error": "Excel file is empty"}
 
@@ -3194,37 +3216,41 @@ async def upload_marks_excel(
         for s in students if s.roll_no
     )
 
-    print("DB regs sample:", list(valid_regs)[:5])
-    print("Excel regs sample:", [normalize_reg(r) for r in df["Register Number"].head()])
+    def safe_get(row, col):
+        return row[col] if col and col in row and not pd.isna(row[col]) else 0
+
+    def scale(value, max_marks, weight):
+        """Scale marks to weight percentage"""
+        if value == 0:
+            return 0
+        return round((value / max_marks) * weight, 2)
 
     overwrite = overwrite == "true"
-
     updated = 0
     skipped = 0
     already_exists = 0
 
     for _, row in df.iterrows():
         reg = normalize_reg(row["Register Number"])
-        value = row.get(column_name)
-        
-        if pd.isna(value):
+        if not reg or reg not in valid_regs:
+            skipped += 1
             continue
-        
+
         student = db.query(Student).filter(
             Student.roll_no == reg,
             Student.year == year,
             Student.section == section
         ).first()
-        
+
         if not student:
             skipped += 1
             continue
-        
+
         record = db.query(Mark).filter_by(
             student_id=student.student_id,
             subject_id=subject_id
         ).first()
-        
+
         if not record:
             record = Mark(
                 student_id=student.student_id,
@@ -3242,39 +3268,100 @@ async def upload_marks_excel(
                 cgpa=0
             )
             db.add(record)
-        
-        exists = False
-        if exam == "Mid-1" and record.mid1 is not None and record.mid1 != 0:
-            exists = True
-        elif exam == "Mid-2" and record.mid2 is not None and record.mid2 != 0:
-            exists = True
-        elif "Assignment" in exam and record.assignment_total is not None and record.assignment_total != 0:
-            exists = True
-        elif exam == "Semester" and record.semester is not None and record.semester != 0:
-            exists = True
-        
-        if exists and not overwrite:
-            already_exists += 1
-            continue
-        
-        if exam == "Mid-1":
-            record.mid1 = value
-        elif exam == "Mid-2":
-            record.mid2 = value
-        elif "Assignment" in exam:
-            record.assignment_total = value
-        elif exam == "Semester":
-            record.semester = value
-        
+
+        # Check for existing data if not overwriting
+        if not overwrite:
+            has_existing = False
+            if mid1_col and record.mid1 and record.mid1 != 0:
+                has_existing = True
+            if mid2_col and record.mid2 and record.mid2 != 0:
+                has_existing = True
+            if (a1_col or a2_col or a3_col or a4_col or a5_col) and record.assignment_total and record.assignment_total != 0:
+                has_existing = True
+            if has_existing:
+                already_exists += 1
+                continue
+
+        # Extract raw values
+        a1_raw = safe_get(row, a1_col)
+        a2_raw = safe_get(row, a2_col)
+        a3_raw = safe_get(row, a3_col)
+        a4_raw = safe_get(row, a4_col)
+        a5_raw = safe_get(row, a5_col)
+        mid1_raw = safe_get(row, mid1_col)
+        mid2_raw = safe_get(row, mid2_col)
+
+        # Auto scaling pipeline
+        # Assignments: sum of all available assignments, scaled to 50% weight (assuming max 10 per assignment)
+        assignment_raw = a1_raw + a2_raw + a3_raw + a4_raw + a5_raw
+        assignment_scaled = scale(assignment_raw, 50, 50)  # 50 marks total for assignments
+
+        # Mid scaling: each mid scaled to 30 marks, then combined to 40% weight
+        mid1_scaled = scale(mid1_raw, 30, 30)
+        mid2_scaled = scale(mid2_raw, 30, 30)
+        mid_combined = scale(mid1_scaled + mid2_scaled, 40, 40)  # Combined mids worth 40%
+
+        # Final total
+        total = round(assignment_scaled + mid_combined, 2)
+
+        # Save only available fields
+        if a1_col is not None:
+            record.a1 = a1_raw
+        if a2_col is not None:
+            record.a2 = a2_raw
+        if a3_col is not None:
+            record.a3 = a3_raw
+        if a4_col is not None:
+            record.a4 = a4_raw
+        if a5_col is not None:
+            record.a5 = a5_raw
+        if mid1_col is not None:
+            record.mid1 = mid1_scaled
+        if mid2_col is not None:
+            record.mid2 = mid2_scaled
+
+        record.assignment_total = assignment_scaled
+        record.mid_combined = mid_combined
+        record.total = total
+
         updated += 1
 
     db.commit()
+
+    # Calculate stats
+    marks_list = db.query(Mark).filter(
+        Mark.subject_id == subject_id,
+        Mark.year == year,
+        Mark.section == section
+    ).all()
+
+    values = []
+    for m in marks_list:
+        if m.total and m.total > 0:
+            values.append(m.total)
+
+    avg = round(sum(values) / len(values), 2) if values else 0
+    highest = max(values) if values else 0
+
+    # Determine available columns for frontend
+    available_columns = []
+    if a1_col: available_columns.append("Assignment 1")
+    if a2_col: available_columns.append("Assignment 2")
+    if a3_col: available_columns.append("Assignment 3")
+    if a4_col: available_columns.append("Assignment 4")
+    if a5_col: available_columns.append("Assignment 5")
+    if mid1_col: available_columns.append("Mid 1")
+    if mid2_col: available_columns.append("Mid 2")
+    available_columns.append("Total")  # Always show total
 
     return {
         "updated": updated,
         "skipped": skipped,
         "already_exists": already_exists,
-        "message": f"{updated} updated • {skipped} skipped • {already_exists} already existed"
+        "message": f"{updated} students updated • {skipped} skipped • {already_exists} already existed",
+        "available_columns": available_columns,
+        "average": avg,
+        "highest": highest
     }
 
 
