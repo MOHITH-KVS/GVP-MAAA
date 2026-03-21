@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Numeric, ForeignKey, Text, Boolean, DateTime, Date, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Numeric, ForeignKey, Text, Boolean, DateTime, Date, UniqueConstraint, JSON
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 
@@ -444,6 +444,8 @@ class Mark(Base):
     student_id = Column(Integer, ForeignKey("students.student_id"))
     subject_id = Column(Integer, ForeignKey("subjects.subject_id"))
     exam = Column(String)  # Mid-1, Mid-2, Assignment, Semester
+    marks = Column(Numeric(5,2), nullable=True)
+    extra_data = Column(JSON, default={})
     assignment_total = Column(Numeric(5,2), default=0.00)
     mid1 = Column(Numeric(5,2), default=0.00)
     mid2 = Column(Numeric(5,2), default=0.00)
@@ -460,3 +462,40 @@ class Mark(Base):
     student = relationship("Student")
     subject = relationship("Subject")
     faculty = relationship("Faculty")
+
+
+# -------------------------
+# SCALING SYSTEM
+# -------------------------
+class ScaledMark(Base):
+    __tablename__ = "scaled_marks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    student_id = Column(Integer, ForeignKey("students.student_id"))
+    subject_id = Column(Integer, ForeignKey("subjects.subject_id"))
+    year = Column(Integer)
+    section = Column(String)
+    assignment_scaled = Column(Numeric(5,2))
+    mid1_scaled = Column(Numeric(5,2))
+    mid2_scaled = Column(Numeric(5,2))
+    mid_combined = Column(Numeric(5,2))
+    internal_total = Column(Numeric(5,2))
+    semester_marks = Column(Numeric(5,2))
+    final_total = Column(Numeric(5,2))
+
+    student = relationship("Student")
+    subject = relationship("Subject")
+
+
+class ScalingLog(Base):
+    __tablename__ = "scaling_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    faculty_id = Column(Integer, ForeignKey("faculty.faculty_id"))
+    action_type = Column(String) # "apply" | "recalculate" | "undo"
+    year = Column(Integer)
+    section = Column(String)
+    subject_id = Column(Integer, ForeignKey("subjects.subject_id"))
+    timestamp = Column(DateTime, default=datetime.utcnow)
+    snapshot_data = Column(JSON, default=[]) # Stores previous state for undo
+

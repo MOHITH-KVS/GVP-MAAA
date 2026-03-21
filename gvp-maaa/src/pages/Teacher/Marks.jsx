@@ -28,6 +28,11 @@ export default function Marks() {
 
   const [overwrite, setOverwrite] = useState(false);
 
+  // SCALING & HISTORY STATES
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [historyLogs, setHistoryLogs] = useState([]);
+  const [uploadStep, setUploadStep] = useState(0); // 0=none, 1=Reading rows..., 2=Validating data..., 3=Uploading...
+
   const [students, setStudents] = useState([]);
   const [subjects, setSubjects] = useState([]);
 
@@ -39,7 +44,7 @@ export default function Marks() {
 
   // Dynamic assignment options
   const assignmentOptions = Array.from({ length: 5 }, (_, i) => `Assignment-${i+1}`);
-  const examOptions = ["Mid-1", "Mid-2", "Semester", ...assignmentOptions];
+  const examOptions = ["Total", "Mid-1", "Mid-2", "Semester", ...assignmentOptions];
 
   // Auto clear message after 3 seconds
   useEffect(() => {
@@ -102,15 +107,7 @@ export default function Marks() {
 
       // Map to expected structure with marks field based on selected exam
       const data = res.data;
-      const studentsData = data.students.map(s => ({
-        ...s,
-        marks:
-          exam === "Mid-1" ? s.mid1 || 0 :
-          exam === "Mid-2" ? s.mid2 || 0 :
-          exam.startsWith("Assignment") ? s.assignment_total || 0 :
-          exam === "Semester" ? s.semester || 0 :
-          0
-      }));
+      const studentsData = data.students;
 
       setStudents(studentsData);
       setClassAvg(data.stats.average);
@@ -183,7 +180,11 @@ export default function Marks() {
           s.name.toLowerCase().includes(search.toLowerCase()) ||
           s.roll_no.toLowerCase().includes(search.toLowerCase())
       )
-      .sort((a, b) => (b.marks || 0) - (a.marks || 0));
+      .sort((a, b) => {
+        const valA = a.marks ?? -1;
+        const valB = b.marks ?? -1;
+        return valB - valA;
+      });
 
   }, [students, search]);
 
@@ -286,6 +287,15 @@ export default function Marks() {
     const formData = new FormData();
     formData.append("file", file);
     formData.append("overwrite", overwrite.toString());
+    
+    // 3-step animation flow BEFORE sending
+    setUploadStep(1); // Reading
+    await new Promise(r => setTimeout(r, 500));
+    setUploadStep(2); // Validating
+    await new Promise(r => setTimeout(r, 500));
+    setUploadStep(3); // Uploading
+    await new Promise(r => setTimeout(r, 400));
+    
     try {
       const res = await fetch(
         `http://localhost:8000/faculty/marks/upload?year=${year}&section=${section}&subject_id=${subjectObj.subject_id}&exam=${exam}`,
@@ -302,21 +312,77 @@ export default function Marks() {
         setMessage(data.error);
         setMessageType("error");
         setLoading(false);
+        setUploadStep(0);
         return;
       }
-      setMessage(data.message);
+      setMessage("Upload Successful ✅");
       setMessageType("success");
       setShowPreview(false);
       setFile(null);
       setFilename("");
       setPreviewData([]);
+      setUploadStep(0);
       await fetchStudents(); // refresh UI
     } catch (err) {
       console.error("Upload error:", err);
       setMessage("Upload error");
       setMessageType("error");
+      setUploadStep(0);
     } finally {
       setLoading(false); // ALWAYS RESET
+    }
+  };
+
+  /* ================= SCALING ENGINE & HISTORY ================= */
+
+  const handleScaleAction = async (actionType) => {
+    if (!year || !section || !subject) return;
+    
+    if (actionType === "undo") {
+      const confirmed = window.confirm("Are you sure you want to undo last scaling?");
+      if (!confirmed) return;
+    }
+
+    const subjectObj = subjects.find(s => s.subject_name === subject);
+    if (!subjectObj?.subject_id) return;
+    
+    setLoading(true);
+    try {
+      const res = await api.post(`/faculty/${actionType}-scaling`, {
+        year: parseInt(year),
+        section,
+        subject_id: subjectObj.subject_id
+      });
+      setMessage(res.data.message || `${actionType} successful!`);
+      setMessageType("success");
+      await fetchStudents();
+      if (actionType === "undo") fetchHistoryLogs(); // refresh logs if undone
+    } catch (err) {
+      setMessage(err.response?.data?.error || `Failed to ${actionType} scaling`);
+      setMessageType("error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchHistoryLogs = async () => {
+    if (!year || !section || !subject) {
+        setMessage("Select Year, Section, Subject to view history.");
+        setMessageType("error");
+        return;
+    }
+    const subjectObj = subjects.find(s => s.subject_name === subject);
+    if (!subjectObj?.subject_id) return;
+
+    try {
+      const res = await api.get("/faculty/scaling-logs", {
+        params: { year, section, subject_id: subjectObj.subject_id }
+      });
+      setHistoryLogs(res.data);
+      setShowHistoryModal(true);
+    } catch (err) {
+      setMessage("Failed to load scaling history");
+      setMessageType("error");
     }
   };
 
@@ -378,30 +444,30 @@ export default function Marks() {
             options={examOptions}
           />
 
-          <div className="flex justify-center gap-4 w-full mt-3">
+          <div className="flex flex-wrap items-center gap-4 w-full mt-8 pt-4 border-t">
 
             <button
               onClick={downloadTemplate}
-              className="h-[44px] px-6 rounded-xl border bg-gray-100 hover:bg-gray-200"
+              className="h-[44px] px-6 rounded-xl border bg-gray-100 hover:bg-gray-200 whitespace-nowrap"
             >
               Download Template
             </button>
 
-            <div className="flex flex-col items-center gap-2">
-              {filename && (
-                <div className="text-sm text-gray-600">
-                  Selected: {filename}
-                </div>
-              )}
-              <button
-                onClick={() => fileInputRef.current.click()}
-                className="h-[44px] px-6 rounded-xl bg-indigo-600 text-white flex items-center gap-2"
-                disabled={loading || !year || !section || !subject}
-              >
-                {loading && <div className="loader"></div>}
-                {loading ? "Processing..." : "Upload Excel"}
-              </button>
-
+            <div className="flex flex-col items-start gap-2">
+              <div className="flex items-center gap-4">
+                <button
+                  onClick={() => fileInputRef.current.click()}
+                  className="h-[44px] px-6 rounded-xl bg-indigo-600 text-white flex items-center gap-2 whitespace-nowrap"
+                  disabled={loading || !year || !section || !subject}
+                >
+                  Upload Excel
+                </button>
+                {filename && (
+                  <span className="text-sm text-gray-600 truncate max-w-[150px]">
+                    {filename}
+                  </span>
+                )}
+              </div>
               <label
                 className="flex items-center gap-2 text-sm"
                 title="If enabled, existing marks will be replaced"
@@ -412,7 +478,7 @@ export default function Marks() {
                   onChange={() => setOverwrite(!overwrite)}
                   className="rounded"
                 />
-                Replace existing marks (advanced)
+                Overwrite existing marks
               </label>
             </div>
 
@@ -424,12 +490,82 @@ export default function Marks() {
               onChange={handleFileChange}
               accept=".xlsx,.xls"
             />
+            
+            <div className="flex-1"></div>
+
+            <div className="flex items-center gap-2">
+               <button 
+                  onClick={() => handleScaleAction("apply")} 
+                  className="h-[44px] px-6 rounded-xl bg-green-600 text-white hover:bg-green-700 whitespace-nowrap disabled:opacity-50"
+                  disabled={loading}
+               >
+                 Apply Scaling
+               </button>
+               <button 
+                  onClick={() => handleScaleAction("recalculate")} 
+                  className="h-[44px] px-6 rounded-xl bg-yellow-500 text-white hover:bg-yellow-600 whitespace-nowrap disabled:opacity-50"
+                  disabled={loading}
+               >
+                 Recalculate Scaling
+               </button>
+               <button 
+                  onClick={fetchHistoryLogs} 
+                  className="h-[44px] px-6 rounded-xl border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 whitespace-nowrap disabled:opacity-50"
+                  disabled={loading}
+               >
+                 View Scaling History
+               </button>
+            </div>
 
           </div>
 
         </div>
 
       </div>
+
+      {/* HISTORY MODAL */}
+      {showHistoryModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+            <h3 className="text-xl font-bold mb-4">Scaling Action History</h3>
+            
+            {historyLogs.length === 0 ? (
+                <div className="text-gray-500 text-center py-6">No historical scaling actions found for this subset.</div>
+            ) : (
+                <div className="space-y-3 mb-6">
+                   {historyLogs.map((log, idx) => (
+                      <div key={idx} className="p-4 rounded-xl border flex items-center justify-between">
+                         <div className="flex flex-col">
+                            <span className="font-semibold capitalize">{log.action_type} Scaling</span>
+                            <span className="text-sm text-gray-500">By Faculty: {log.faculty_name}</span>
+                         </div>
+                         <span className="text-sm text-gray-400">
+                            {new Date(log.timestamp).toLocaleString()}
+                         </span>
+                      </div>
+                   ))}
+                </div>
+            )}
+            
+            <div className="flex justify-between gap-3 mt-6 border-t pt-4">
+              <button
+                onClick={() => handleScaleAction("undo")}
+                className="px-4 py-2 bg-red-50 text-red-600 rounded-xl hover:bg-red-100 disabled:opacity-50 font-medium"
+                disabled={loading || historyLogs.length === 0}
+              >
+                Undo Last Scaling
+              </button>
+              <button
+                onClick={() => setShowHistoryModal(false)}
+                className="px-6 py-2 bg-indigo-600 text-white rounded-xl"
+                disabled={loading}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* PREVIEW MODAL */}
 
@@ -497,10 +633,10 @@ export default function Marks() {
               </button>
               <button
                 onClick={handleConfirmUpload}
-                className="px-4 py-2 bg-green-600 text-white rounded-xl"
+                className="px-6 py-2 bg-green-600 text-white rounded-xl flex items-center gap-2 min-w-[170px] justify-center"
                 disabled={loading}
               >
-                {loading ? "Uploading..." : "Confirm Upload"}
+                {uploadStep === 1 ? "Reading rows..." : uploadStep === 2 ? "Validating data..." : uploadStep === 3 ? "Uploading..." : "Confirm Upload"}
               </button>
             </div>
           </div>
@@ -548,15 +684,26 @@ export default function Marks() {
             sortedStudents.map((s) => (
               <div
                 key={s.roll_no}
-                className="flex justify-between items-center p-3 bg-white rounded-xl"
+                className="flex items-center p-3 bg-white rounded-xl"
               >
-                <div>
+                <div className="flex-1">
                   <p className="font-medium">{s.name}</p>
                   <p className="text-xs text-gray-500">{s.roll_no}</p>
                 </div>
-                <span className="font-medium">
-                  {s.marks === null || s.marks === undefined ? "-" : s.marks}
-                </span>
+                
+                {s.extra_data && Object.keys(s.extra_data).map(k => (
+                    <div key={k} className="flex flex-col items-end mr-6 w-24">
+                      <span className="text-xs text-gray-500 truncate w-full text-right">{k}</span>
+                      <span className="font-medium">{s.extra_data[k] === null || s.extra_data[k] === undefined ? "-" : s.extra_data[k]}</span>
+                    </div>
+                ))}
+                
+                <div className="flex flex-col items-end w-24">
+                  <span className="text-xs text-gray-500">{exam === "Total" ? "Total Score" : "Marks"}</span>
+                  <span className="font-medium text-lg">
+                    {s.marks === null || s.marks === undefined ? "-" : s.marks}
+                  </span>
+                </div>
               </div>
             ))
           )}

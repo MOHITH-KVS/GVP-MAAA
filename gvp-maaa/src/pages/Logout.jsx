@@ -9,9 +9,14 @@ export default function Logout({ onBack, role = "student" }) {
   // Animate IN
   useEffect(() => {
   // 🔐 CLEAR AUTH DATA
+  localStorage.removeItem("token");
+  localStorage.removeItem("role");
   localStorage.removeItem("access_token");
   localStorage.removeItem("user_role");
   localStorage.removeItem("user");
+
+  // Hard replace history to stop back-button
+  window.history.pushState(null, "", window.location.href);
 
   // animate IN
   setVisible(true);
@@ -30,9 +35,9 @@ export default function Logout({ onBack, role = "student" }) {
     setVisible(false);
     setTimeout(() => {
       if (roleSignInRoute[role]) {
-        navigate(roleSignInRoute[role]);
-      } else if (onBack) {
-        onBack(); // fallback (kept)
+        navigate(roleSignInRoute[role], { replace: true });
+      } else {
+        navigate("/", { replace: true });
       }
     }, 300);
   };
@@ -41,6 +46,7 @@ export default function Logout({ onBack, role = "student" }) {
   const handleExit = () => {
     setVisible(false);
     setTimeout(() => {
+      navigate("/", { replace: true });
       window.location.reload();
     }, 300);
   };
