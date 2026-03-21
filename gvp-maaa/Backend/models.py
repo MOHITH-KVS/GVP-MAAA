@@ -135,6 +135,23 @@ class Timetable(Base):
 
 
 # =========================
+# MARKS UPLOADS
+# =========================
+class MarksUpload(Base):
+    __tablename__ = "marks_uploads"
+
+    id = Column(Integer, primary_key=True, index=True)
+    faculty_id = Column(Integer, ForeignKey("users.user_id"), nullable=False)
+    subject_id = Column(Integer, ForeignKey("subjects.subject_id"), nullable=False)
+    year = Column(Integer, nullable=False)
+    section = Column(String(10), nullable=False)
+    exam = Column(String(50), nullable=False)
+    file_hash = Column(String(64), nullable=False)
+    uploaded_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+
+# =========================
 # ALERTS
 # =========================
 class Alert(Base):
@@ -496,6 +513,7 @@ class ScalingLog(Base):
     year = Column(Integer)
     section = Column(String)
     subject_id = Column(Integer, ForeignKey("subjects.subject_id"))
+    file_name = Column(String, nullable=True) # New column for excel scaling
     timestamp = Column(DateTime, default=datetime.utcnow)
-    snapshot_data = Column(JSON, default=[]) # Stores previous state for undo
+    snapshot_data = Column(JSON, nullable=True) # Stores previous state for undo
 

@@ -1,52 +1,55 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import api from "../../utils/axios";
-// import * as XLSX from 'xlsx';
-
-const API = "http://localhost:8000";
+import * as XLSX from "xlsx";
 
 export default function Marks() {
-
-
   const [year, setYear] = useState("3");
   const [section, setSection] = useState("A");
   const [subject, setSubject] = useState("");
   const [exam, setExam] = useState("Mid-1");
-
   const [search, setSearch] = useState("");
 
-  // Toast state
   const [message, setMessage] = useState("");
-  const [messageType, setMessageType] = useState(""); // success | error
+  const [messageType, setMessageType] = useState("");
 
   const [file, setFile] = useState(null);
-  const [previewData, setPreviewData] = useState([]);
-  const [showPreview, setShowPreview] = useState(false);
   const [loading, setLoading] = useState(false);
   const fileInputRef = useRef(null);
 
   const [filename, setFilename] = useState("");
-
   const [overwrite, setOverwrite] = useState(false);
 
   // SCALING & HISTORY STATES
-  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [showHistoryDrawer, setShowHistoryDrawer] = useState(false);
   const [historyLogs, setHistoryLogs] = useState([]);
-  const [uploadStep, setUploadStep] = useState(0); // 0=none, 1=Reading rows..., 2=Validating data..., 3=Uploading...
+
+  // SCALING PROGRESS MODALS
+  const [showScalingConfirm, setShowScalingConfirm] = useState(false);
+  const [showScalingProgress, setShowScalingProgress] = useState(false);
+  const [scalingStep, setScalingStep] = useState(0); 
+  const [showScalingSuccess, setShowScalingSuccess] = useState(false);
+  const [scaledFileUrl, setScaledFileUrl] = useState(null);
+  const [scaledFileName, setScaledFileName] = useState("");
+
+  // UPLOAD PREVIEW & HASH DETECTION MODALS
+  const [previewData, setPreviewData] = useState([]);
+  const [showPreviewModal, setShowPreviewModal] = useState(false);
+  const [showDuplicateWarning, setShowDuplicateWarning] = useState(false);
+  const [uploadStep, setUploadStep] = useState(0); 
+  const [showUploadProgress, setShowUploadProgress] = useState(false);
+  const [showUploadSuccess, setShowUploadSuccess] = useState(false);
 
   const [students, setStudents] = useState([]);
   const [subjects, setSubjects] = useState([]);
 
-  // Stats from backend
   const [classAvg, setClassAvg] = useState(0);
   const [highestScore, setHighestScore] = useState(0);
   const [failCount, setFailCount] = useState(0);
   const [totalStudents, setTotalStudents] = useState(0);
 
-  // Dynamic assignment options
   const assignmentOptions = Array.from({ length: 5 }, (_, i) => `Assignment-${i+1}`);
   const examOptions = ["Total", "Mid-1", "Mid-2", "Semester", ...assignmentOptions];
 
-  // Auto clear message after 3 seconds
   useEffect(() => {
     if (message) {
       const timer = setTimeout(() => {
@@ -58,30 +61,21 @@ export default function Marks() {
   }, [message]);
 
   const fetchSubjects = async () => {
-
-  try {
-
-    const res = await api.get("/faculty/my-subjects");
-
-    console.log("Subjects from backend:", res.data);
-
-    const data = Array.isArray(res.data) ? res.data : [];
-    setSubjects(data);
-
-    if (data.length > 0) {
-      setSubject(data[0].subject_name);
+    try {
+      const res = await api.get("/faculty/my-subjects");
+      const data = Array.isArray(res.data) ? res.data : [];
+      setSubjects(data);
+      if (data.length > 0) {
+        setSubject(data[0].subject_name);
+      }
+    } catch(err){
+      console.error("Failed to load subjects",err);
     }
+  };
 
-  } catch(err){
-    console.error("Failed to load subjects",err);
-  }
-
- };
-  // Fetch subjects on component mount
   useEffect(() => {
     fetchSubjects();
   }, []);
-  /* ================= FETCH STUDENTS ================= */
 
   useEffect(() => {
     if (subject) {
@@ -91,36 +85,20 @@ export default function Marks() {
 
   const fetchStudents = async () => {
     try {
-      // For flat subject structure
-      const subjectObj = subjects.find(
-        s => s.subject_name === subject
-      );
-
+      const subjectObj = subjects.find(s => s.subject_name === subject);
       const res = await api.get("/faculty/marks", {
-        params: {
-          year,
-          section,
-          subject_id: subjectObj?.subject_id,
-          exam
-        }
+        params: { year, section, subject_id: subjectObj?.subject_id, exam }
       });
-
-      // Map to expected structure with marks field based on selected exam
       const data = res.data;
-      const studentsData = data.students;
-
-      setStudents(studentsData);
+      setStudents(data.students);
       setClassAvg(data.stats.average);
       setHighestScore(data.stats.highest);
       setFailCount(data.stats.fail_count);
       setTotalStudents(data.stats.total_students);
     } catch (err) {
-      console.error("Failed to load students/marks");
       setStudents([]);
     }
   };
-
-  /* ================= DOWNLOAD TEMPLATE ================= */
 
   const downloadTemplate = async () => {
     if (!year || !section || !subject) {
@@ -128,216 +106,244 @@ export default function Marks() {
       setMessageType("error");
       return;
     }
-
-    const subjectObj = subjects.find(
-      s => s.subject_name === subject
-    );
-
-    if (!subjectObj?.subject_id) {
-      setMessage("Invalid subject selected");
-      setMessageType("error");
-      return;
-    }
+    const subjectObj = subjects.find(s => s.subject_name === subject);
+    if (!subjectObj?.subject_id) return;
 
     try {
       const response = await fetch(
         `http://localhost:8000/faculty/marks/template?year=${year}&section=${section}&subject_id=${subjectObj.subject_id}`,
-        {
-          headers: {
-            "Authorization": `Bearer ${localStorage.getItem("token")}`
-          }
-        }
+        { headers: { "Authorization": `Bearer ${localStorage.getItem("token")}` } }
       );
-
-      if (!response.ok) {
-        const err = await response.json();
-        setMessage(err.detail || err.error || "Download failed");
-        setMessageType("error");
-        return;
-      }
-
+      if (!response.ok) throw new Error("Download failed");
       const blob = await response.blob();
-
       const link = document.createElement("a");
       link.href = window.URL.createObjectURL(blob);
       link.download = "marks_template.xlsx";
       link.click();
-
     } catch (err) {
-      console.error("Download error:", err);
-      setMessage("Download failed: " + err.message);
+      setMessage("Download failed");
       setMessageType("error");
     }
   };
 
-  /* ================= SORTING ================= */
-
   const sortedStudents = useMemo(() => {
-
     return [...students]
-      .filter(
-        (s) =>
-          s.name.toLowerCase().includes(search.toLowerCase()) ||
-          s.roll_no.toLowerCase().includes(search.toLowerCase())
-      )
+      .filter((s) => s.name.toLowerCase().includes(search.toLowerCase()) || s.roll_no.toLowerCase().includes(search.toLowerCase()))
       .sort((a, b) => {
         const valA = a.marks ?? -1;
         const valB = b.marks ?? -1;
         return valB - valA;
       });
-
   }, [students, search]);
 
-  /* ================= FILE HANDLING ================= */
-
+  /* ====================== UPLOAD EXCEL FILE PARSING ====================== */
   const handleFileChange = async (e) => {
     const selectedFile = e.target.files[0];
-
     if (!selectedFile) {
-      setFile(null);
-      setFilename("");
-      return;
+        setFile(null);
+        setFilename("");
+        return;
+    }
+
+    if (!year || !section || !subject) {
+        setMessage("Please select year, section and subject before uploading.");
+        setMessageType("error");
+        e.target.value = "";
+        return;
     }
 
     setFile(selectedFile);
     setFilename(selectedFile.name);
-    setLoading(true);
-
-    try {
-      const formData = new FormData();
-      formData.append("file", selectedFile);
-      formData.append("overwrite", overwrite.toString());
-
-      const subjectObj = subjects.find(s => s.subject_name === subject);
-      if (!subjectObj?.subject_id) {
-        setMessage("Invalid subject selected");
-        setMessageType("error");
-        setLoading(false);
-        return;
-      }
-
-      const res = await fetch(
-        `http://localhost:8000/faculty/marks/preview?year=${year}&section=${section}&subject_id=${subjectObj.subject_id}&exam=${exam}`,
-        {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${localStorage.getItem("token")}`
-          },
-          body: formData
-        }
-      );
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        setMessage(data.error || "Preview failed");
-        setMessageType("error");
-        setPreviewData([]);
-        setLoading(false);
-        return;
-      }
-
-      // CORRECTED ERROR HANDLING
-      if (data.error) {
-        setMessage(data.error);
-        setMessageType("error");
-        setLoading(false);
-        return;
-      }
-
-      if (!data.preview || data.preview.length === 0) {
-        setMessage("No valid data found for selected exam column");
-        setMessageType("error");
-        setLoading(false);
-        return;
-      }
-
-      setPreviewData(data.preview);
-      setShowPreview(true);
-      setLoading(false);
-
-    } catch (err) {
-      console.error("Preview error:", err);
-      setMessage("Failed to process Excel file");
-      setMessageType("error");
-      setPreviewData([]);
-      setLoading(false);
-    }
-  };
-
-  const handleConfirmUpload = async () => {
-    if (!file) return;
-    setLoading(true);
-
-    // Check if overwrite is OFF and some data already exists
-    if (!overwrite && previewData.some(student => student.status === "exists")) {
-      setMessage("Some marks already exist. Enable overwrite to replace.");
-      setMessageType("error");
-      setLoading(false);
-      return;
-    }
 
     const subjectObj = subjects.find(s => s.subject_name === subject);
-    if (!subjectObj?.subject_id) {
-      setMessage("Invalid subject selected");
-      setMessageType("error");
-      setLoading(false);
-      return;
-    }
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("overwrite", overwrite.toString());
+
+    // Parse the file via FileReader and xlsx
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        const data = new Uint8Array(evt.target.result);
+        const workbook = XLSX.read(data, { type: "array" });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const json = XLSX.utils.sheet_to_json(sheet);
+        
+        const regNumbers = json.map(row => row["Register Number"] || row["register_number"] || row["Roll No"] || row["Register No"]).filter(Boolean);
+        if (regNumbers.length === 0) {
+           setMessage("No register numbers found in the file.");
+           setMessageType("error");
+           return;
+        }
+
+        const valRes = await api.post("/faculty/marks/validate-students", {
+            register_numbers: regNumbers,
+            year: parseInt(year),
+            section: section
+        });
+
+        if (!valRes.data.success || !valRes.data.valid) {
+            setMessage(valRes.data.message || valRes.data.error || "Student data mismatch with selected Year/Section");
+            setMessageType("error");
+            return;
+        }
+
+        const anRes = await api.post("/faculty/marks/analyze-upload", {
+            register_numbers: regNumbers,
+            subject_id: subjectObj.subject_id,
+            exam: exam
+        });
+
+        if (!anRes.data.success) {
+            setMessage(anRes.data.error || "Failed to analyze upload");
+            setMessageType("error");
+            return;
+        }
+
+        const statusMap = {};
+        anRes.data.data.forEach(item => {
+            statusMap[item.register_number] = item.status;
+        });
+
+        const enrichedData = json.map(row => {
+            const reg = row["Register Number"] || row["register_number"] || row["Roll No"] || row["Register No"];
+            const isNew = statusMap[reg] !== "existing";
+            return {
+                ...row,
+                "Status": isNew ? "🟢 New" : "🔴 Exists"
+            };
+        });
+
+        setPreviewData(enrichedData);
+        setShowPreviewModal(true);
+      } catch (err) {
+        console.error(err);
+        setMessage("Error parsing or validating file");
+        setMessageType("error");
+      }
+    };
+    reader.readAsArrayBuffer(selectedFile);
     
-    // 3-step animation flow BEFORE sending
-    setUploadStep(1); // Reading
-    await new Promise(r => setTimeout(r, 500));
-    setUploadStep(2); // Validating
-    await new Promise(r => setTimeout(r, 500));
-    setUploadStep(3); // Uploading
+    // Clear input so same file can be triggered again
+    e.target.value = ""; 
+  };
+
+  /* ====================== PROCEED UPLOAD LOGIC ====================== */
+  const proceedUpload = async (overrideFlag = overwrite) => {
+    setShowPreviewModal(false);
+    setShowDuplicateWarning(false);
+    setShowUploadProgress(true);
+    
+    setUploadStep(1); // Reading...
     await new Promise(r => setTimeout(r, 400));
+    setUploadStep(2); // Validating...
+    await new Promise(r => setTimeout(r, 500));
+    setUploadStep(3); // Uploading...
+
+    const subjectObj = subjects.find(s => s.subject_name === subject);
     
     try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("overwrite", overrideFlag.toString());
+
       const res = await fetch(
         `http://localhost:8000/faculty/marks/upload?year=${year}&section=${section}&subject_id=${subjectObj.subject_id}&exam=${exam}`,
         {
           method: "POST",
-          headers: {
-            "Authorization": `Bearer ${localStorage.getItem("token")}`
-          },
+          headers: { "Authorization": `Bearer ${localStorage.getItem("token")}` },
           body: formData
         }
       );
+
       const data = await res.json();
-      if (data.error) {
-        setMessage(data.error);
-        setMessageType("error");
-        setLoading(false);
-        setUploadStep(0);
-        return;
+      
+      // Handle the strict duplicate rule
+      if (data.duplicate && !overrideFlag) {
+         setShowUploadProgress(false);
+         setShowDuplicateWarning(true);
+         return;
       }
-      setMessage("Upload Successful ✅");
-      setMessageType("success");
-      setShowPreview(false);
-      setFile(null);
-      setFilename("");
-      setPreviewData([]);
-      setUploadStep(0);
-      await fetchStudents(); // refresh UI
+      
+      if (!res.ok || !data.success) {
+        setMessage(data.error || "Upload failed");
+        setMessageType("error");
+        setShowUploadProgress(false);
+      } else {
+        setMessage(data.message || "Upload Successful ✅");
+        setMessageType("success");
+        setShowUploadProgress(false);
+        setShowUploadSuccess(true);
+        // Auto close after 1.5s
+        setTimeout(() => setShowUploadSuccess(false), 1500);
+        await fetchStudents(); 
+      }
     } catch (err) {
-      console.error("Upload error:", err);
       setMessage("Upload error");
       setMessageType("error");
-      setUploadStep(0);
-    } finally {
-      setLoading(false); // ALWAYS RESET
+      setShowUploadProgress(false);
     }
   };
 
-  /* ================= SCALING ENGINE & HISTORY ================= */
+  /* ====================== SCALING LOGIC ====================== */
+  const handleScaleClick = () => {
+    if (!file) {
+      setMessage("Please upload an Excel file first");
+      setMessageType("error");
+      return;
+    }
+    setShowScalingConfirm(true);
+  };
+
+  const processScaling = async () => {
+    setShowScalingConfirm(false);
+    setShowScalingProgress(true);
+    setScalingStep(1); 
+    await new Promise(r => setTimeout(r, 500));
+    setScalingStep(2); 
+    await new Promise(r => setTimeout(r, 600));
+    setScalingStep(3); 
+
+    const subjectObj = subjects.find(s => s.subject_name === subject);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("year", year);
+      formData.append("section", section);
+      formData.append("subject_id", subjectObj.subject_id);
+
+      const res = await fetch(`http://localhost:8000/faculty/apply-scaling`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${localStorage.getItem("token")}` },
+        body: formData
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.error || "Failed to process scaling");
+      }
+
+      setScalingStep(4);
+      await new Promise(r => setTimeout(r, 500));
+
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const disposition = res.headers.get("content-disposition");
+      let dlFilename = `scaled_marks_${Date.now()}.xlsx`;
+      if (disposition && disposition.includes("filename=")) {
+         dlFilename = disposition.split("filename=")[1].replace(/"/g, "");
+      }
+
+      setScaledFileUrl(url);
+      setScaledFileName(dlFilename);
+      
+      setShowScalingProgress(false);
+      setShowScalingSuccess(true);
+    } catch (err) {
+      setMessage(err.message || "Error processing file");
+      setMessageType("error");
+      setShowScalingProgress(false);
+    }
+  };
 
   const handleScaleAction = async (actionType) => {
-    if (!year || !section || !subject) return;
-    
     if (actionType === "undo") {
       const confirmed = window.confirm("Are you sure you want to undo last scaling?");
       if (!confirmed) return;
@@ -348,17 +354,17 @@ export default function Marks() {
     
     setLoading(true);
     try {
-      const res = await api.post(`/faculty/${actionType}-scaling`, {
+      const res = await api.post(`/faculty/undo-scaling`, {
         year: parseInt(year),
         section,
         subject_id: subjectObj.subject_id
       });
-      setMessage(res.data.message || `${actionType} successful!`);
+      setMessage(res.data.message || `Undo successful!`);
       setMessageType("success");
       await fetchStudents();
-      if (actionType === "undo") fetchHistoryLogs(); // refresh logs if undone
+      fetchHistoryLogs(); 
     } catch (err) {
-      setMessage(err.response?.data?.error || `Failed to ${actionType} scaling`);
+      setMessage(`Failed to undo scaling`);
       setMessageType("error");
     } finally {
       setLoading(false);
@@ -378,30 +384,24 @@ export default function Marks() {
       const res = await api.get("/faculty/scaling-logs", {
         params: { year, section, subject_id: subjectObj.subject_id }
       });
-      setHistoryLogs(res.data);
-      setShowHistoryModal(true);
+      if (!res.data.success) {
+          throw new Error(res.data.error || "Failed to load");
+      }
+      setHistoryLogs(res.data.logs);
+      setShowHistoryDrawer(true);
     } catch (err) {
       setMessage("Failed to load scaling history");
       setMessageType("error");
     }
   };
 
-  /* ================= EXCEL UPLOAD ================= */
-
-  // Handled by handleConfirmUpload function above
-
   return (
-
     <div className="space-y-10">
-
-      {/* TOAST NOTIFICATION */}
       {message && (
         <div className={`toast ${messageType}`}>
           {message}
         </div>
       )}
-
-      {/* HEADER */}
 
       <div>
         <h1 className="text-2xl font-semibold">Marks & Performance</h1>
@@ -410,42 +410,14 @@ export default function Marks() {
         </p>
       </div>
 
-      {/* FILTER BAR */}
-
       <div className="glass rounded-2xl px-6 py-4">
-
         <div className="flex flex-wrap items-center gap-6">
-
-          <FilterSelect
-            label="Year"
-            value={year}
-            onChange={setYear}
-            options={["1","2","3","4"]}
-          />
-
-          <FilterSelect
-            label="Section"
-            value={section}
-            onChange={setSection}
-            options={["A","B","C","D"]}
-          />
-
-          <FilterSelect
-            label="Subject"
-            value={subject}
-            onChange={setSubject}
-            options={subjects.map((s) => s.subject_name).filter(Boolean)}
-          />
-
-          <FilterSelect
-            label="Exam"
-            value={exam}
-            onChange={setExam}
-            options={examOptions}
-          />
+          <FilterSelect label="Year" value={year} onChange={setYear} options={["1","2","3","4"]} />
+          <FilterSelect label="Section" value={section} onChange={setSection} options={["A","B","C","D"]} />
+          <FilterSelect label="Subject" value={subject} onChange={setSubject} options={subjects.map((s) => s.subject_name).filter(Boolean)} />
+          <FilterSelect label="Exam" value={exam} onChange={setExam} options={examOptions} />
 
           <div className="flex flex-wrap items-center gap-4 w-full mt-8 pt-4 border-t">
-
             <button
               onClick={downloadTemplate}
               className="h-[44px] px-6 rounded-xl border bg-gray-100 hover:bg-gray-200 whitespace-nowrap"
@@ -457,8 +429,8 @@ export default function Marks() {
               <div className="flex items-center gap-4">
                 <button
                   onClick={() => fileInputRef.current.click()}
-                  className="h-[44px] px-6 rounded-xl bg-indigo-600 text-white flex items-center gap-2 whitespace-nowrap"
-                  disabled={loading || !year || !section || !subject}
+                  className="h-[44px] px-6 rounded-xl bg-indigo-600 text-white flex items-center gap-2 whitespace-nowrap shadow-md shadow-indigo-100 font-medium"
+                  disabled={!year || !section || !subject}
                 >
                   Upload Excel
                 </button>
@@ -468,21 +440,12 @@ export default function Marks() {
                   </span>
                 )}
               </div>
-              <label
-                className="flex items-center gap-2 text-sm"
-                title="If enabled, existing marks will be replaced"
-              >
-                <input
-                  type="checkbox"
-                  checked={overwrite}
-                  onChange={() => setOverwrite(!overwrite)}
-                  className="rounded"
-                />
+              <label className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-800 transition-colors">
+                <input type="checkbox" checked={overwrite} onChange={() => setOverwrite(!overwrite)} className="rounded" />
                 Overwrite existing marks
               </label>
             </div>
 
-            {/* Hidden file input */}
             <input
               type="file"
               ref={fileInputRef}
@@ -495,70 +458,242 @@ export default function Marks() {
 
             <div className="flex items-center gap-2">
                <button 
-                  onClick={() => handleScaleAction("apply")} 
-                  className="h-[44px] px-6 rounded-xl bg-green-600 text-white hover:bg-green-700 whitespace-nowrap disabled:opacity-50"
+                  onClick={handleScaleClick} 
+                  className="h-[44px] px-6 rounded-xl bg-green-600 text-white hover:bg-green-700 whitespace-nowrap font-medium shadow-md shadow-green-100 transition-colors disabled:opacity-50"
                   disabled={loading}
                >
-                 Apply Scaling
-               </button>
-               <button 
-                  onClick={() => handleScaleAction("recalculate")} 
-                  className="h-[44px] px-6 rounded-xl bg-yellow-500 text-white hover:bg-yellow-600 whitespace-nowrap disabled:opacity-50"
-                  disabled={loading}
-               >
-                 Recalculate Scaling
+                 Apply Scaling (Generate Excel)
                </button>
                <button 
                   onClick={fetchHistoryLogs} 
-                  className="h-[44px] px-6 rounded-xl border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 whitespace-nowrap disabled:opacity-50"
+                  className="h-[44px] px-6 rounded-xl border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 whitespace-nowrap font-medium disabled:opacity-50 transition-colors"
                   disabled={loading}
                >
-                 View Scaling History
+                 View History
                </button>
             </div>
-
           </div>
-
         </div>
-
       </div>
 
-      {/* HISTORY MODAL */}
-      {showHistoryModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-2xl p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
-            <h3 className="text-xl font-bold mb-4">Scaling Action History</h3>
-            
-            {historyLogs.length === 0 ? (
-                <div className="text-gray-500 text-center py-6">No historical scaling actions found for this subset.</div>
-            ) : (
-                <div className="space-y-3 mb-6">
-                   {historyLogs.map((log, idx) => (
-                      <div key={idx} className="p-4 rounded-xl border flex items-center justify-between">
-                         <div className="flex flex-col">
-                            <span className="font-semibold capitalize">{log.action_type} Scaling</span>
-                            <span className="text-sm text-gray-500">By Faculty: {log.faculty_name}</span>
-                         </div>
-                         <span className="text-sm text-gray-400">
-                            {new Date(log.timestamp).toLocaleString()}
-                         </span>
-                      </div>
-                   ))}
-                </div>
-            )}
-            
-            <div className="flex justify-between gap-3 mt-6 border-t pt-4">
+      {/* ======================= EXCEL UPLOAD MODALS ======================= */}
+      
+      {/* 1. PREVIEW MODAL */}
+      {showPreviewModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 px-4 transition-opacity">
+          <div className="bg-white rounded-[1.25rem] p-6 w-full max-w-[600px] shadow-2xl animate-in fade-in zoom-in duration-200">
+            <h2 className="text-xl font-bold mb-4 text-gray-800 border-b pb-3">Preview Excel Data</h2>
+            <div className="max-h-80 overflow-y-auto border border-gray-200 rounded-xl bg-white shadow-inner custom-scrollbar">
+               {previewData.length === 0 ? (
+                  <div className="p-8 text-center text-gray-400">No recognizable row data found in the spreadsheet.</div>
+               ) : (
+                  <div className="w-full overflow-x-auto min-w-[500px]">
+                    <table className="w-full text-left border-collapse">
+                      <thead className="bg-gray-50 border-b border-gray-200">
+                        <tr>
+                          {Object.keys(previewData[0]).map((col, i) => (
+                            <th key={i} className="p-3 text-xs font-bold text-gray-500 uppercase tracking-wider whitespace-nowrap">{col}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {previewData.map((row, idx) => (
+                          <tr key={idx} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
+                            {Object.values(row).map((val, i) => (
+                              <td key={i} className="p-3 text-sm text-gray-700 whitespace-nowrap font-medium">
+                                {val !== undefined && val !== null && val !== "" ? String(val) : "-"}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+               )}
+            </div>
+            <div className="flex justify-end gap-3 mt-5">
+              <button 
+                onClick={() => setShowPreviewModal(false)} 
+                className="px-5 py-2.5 text-gray-600 font-bold bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={() => proceedUpload(overwrite)} 
+                className="px-6 py-2.5 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 shadow-md shadow-indigo-100 transition-colors"
+              >
+                Proceed Upload
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 2. DUPLICATE WARNING MODAL */}
+      {showDuplicateWarning && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 px-4 transition-opacity">
+          <div className="bg-white rounded-3xl p-8 max-w-sm w-full shadow-2xl flex flex-col items-center transform scale-100">
+            <div className="w-20 h-20 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mb-5 text-4xl shadow-inner">⚠️</div>
+            <h3 className="text-2xl font-black text-gray-900 mb-2">Duplicate File</h3>
+            <p className="text-gray-500 text-center mb-8 font-medium">This exact file was already successfully uploaded for this module. Are you sure you want to proceed?</p>
+            <div className="flex gap-4 w-full justify-between">
+              <button onClick={() => setShowDuplicateWarning(false)} className="flex-1 px-4 py-3 bg-gray-100 text-gray-700 font-bold rounded-xl hover:bg-gray-200 transition-colors">Cancel</button>
+              <button onClick={() => proceedUpload(true)} className="flex-1 px-4 py-3 bg-amber-500 text-white font-bold rounded-xl hover:bg-amber-600 shadow-md transition-colors">Upload Anyway</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 3. UPLOAD PROGRESS MICRO INTERACTION */}
+      {showUploadProgress && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-white rounded-3xl p-8 max-w-sm w-full shadow-2xl flex flex-col items-center">
+            <div className="w-20 h-20 mb-6 relative flex items-center justify-center">
+               <span className="text-4xl animate-pulse">
+                 {uploadStep === 1 ? '📄' : uploadStep === 2 ? '🔍' : '☁️'}
+               </span>
+               <div className="absolute inset-0 border-[5px] border-indigo-100 border-t-indigo-600 rounded-full animate-spin"></div>
+            </div>
+            <h3 className="text-xl font-bold text-gray-800 mb-5 text-center">
+              {uploadStep === 1 ? "Reading Excel..." : 
+               uploadStep === 2 ? "Validating data..." : 
+               "Uploading data safely..."}
+            </h3>
+            <div className="w-full bg-gray-100 h-2.5 rounded-full overflow-hidden shadow-inner flex">
+               <div 
+                 className="h-full bg-indigo-600 rounded-full transition-all duration-300 ease-out"
+                 style={{ width: `${uploadStep * 33.33}%` }}
+               ></div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 4. UPLOAD SUCCESS UI */}
+      {showUploadSuccess && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 px-4">
+          <div className="bg-white rounded-3xl p-8 max-w-[320px] w-full shadow-2xl flex flex-col items-center transform transition-transform animate-in zoom-in duration-300">
+            <div className="w-24 h-24 bg-green-100 text-green-600 rounded-full flex items-center justify-center mb-5 animate-bounce shadow-inner">
+              <span className="text-5xl">✔</span>
+            </div>
+            <h3 className="text-2xl font-black text-gray-900 mb-2">Success</h3>
+            <p className="text-gray-500 font-medium mb-6">Upload Successful</p>
+            <button onClick={() => setShowUploadSuccess(false)} className="px-6 py-2.5 bg-gray-100 text-gray-700 font-bold rounded-xl hover:bg-gray-200 uppercase tracking-widest text-sm w-full transition-colors">Close</button>
+          </div>
+        </div>
+      )}
+
+
+      {/* ======================= SCALING & HISTORY MODALS ======================= */}
+
+      {/* RIGHT SIDE DRAWER FOR HISTORY */}
+      {showHistoryDrawer && (
+        <>
+          <div className="fixed inset-0 bg-black/30 z-40 transition-opacity" onClick={() => setShowHistoryDrawer(false)}></div>
+          <div className="fixed top-0 right-0 h-full w-[400px] bg-white shadow-2xl z-50 flex flex-col transform transition-transform duration-300">
+            <div className="p-6 border-b flex justify-between items-center">
+              <h3 className="text-xl font-bold">Scaling History</h3>
+              <button onClick={() => setShowHistoryDrawer(false)} className="text-gray-500 hover:text-black">✕</button>
+            </div>
+            <div className="flex-1 p-6 overflow-y-auto bg-gray-50">
+              {historyLogs.length === 0 ? (
+                  <div className="text-gray-500 text-center py-10">No scaling history yet</div>
+              ) : (
+                  <div className="space-y-4">
+                     {historyLogs.map((log, idx) => (
+                        <div key={idx} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 hover:border-indigo-300 transition-colors">
+                           <div className="flex justify-between items-start mb-2">
+                             <span className="font-semibold text-gray-800 capitalize">{log.action_type.replace('_', ' ')}</span>
+                             <span className="text-xs text-gray-400">
+                                {new Date(log.timestamp).toLocaleString([], {hour: '2-digit', minute:'2-digit', month: 'short', day: 'numeric'})}
+                             </span>
+                           </div>
+                           <p className="text-sm text-gray-600 mb-2">By Faculty: {log.faculty_name}</p>
+                           {log.file_name && (
+                             <p className="text-xs text-indigo-600 bg-indigo-50 inline-block px-2 py-1 rounded truncate max-w-full" title={log.file_name}>
+                               📄 {log.file_name}
+                             </p>
+                           )}
+                        </div>
+                     ))}
+                  </div>
+              )}
+            </div>
+            <div className="p-4 border-t bg-white">
               <button
                 onClick={() => handleScaleAction("undo")}
-                className="px-4 py-2 bg-red-50 text-red-600 rounded-xl hover:bg-red-100 disabled:opacity-50 font-medium"
+                className="w-full py-3 bg-red-50 text-red-600 rounded-xl hover:bg-red-100 font-medium transition-colors disabled:opacity-50"
                 disabled={loading || historyLogs.length === 0}
               >
-                Undo Last Scaling
+                Undo Last Action
               </button>
-              <button
-                onClick={() => setShowHistoryModal(false)}
-                className="px-6 py-2 bg-indigo-600 text-white rounded-xl"
-                disabled={loading}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* CONFIRMATION MODAL */}
+      {showScalingConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 px-4">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl">
+            <h3 className="text-xl font-bold text-gray-900 mb-2">Apply Scaling?</h3>
+            <p className="text-gray-600 mb-6 leading-relaxed">
+              This will scale marks and generate a downloadable file. Original data will not be modified.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button onClick={() => setShowScalingConfirm(false)} className="px-5 py-2.5 text-gray-600 font-medium hover:bg-gray-100 rounded-xl transition-colors">Cancel</button>
+              <button onClick={processScaling} className="px-5 py-2.5 bg-indigo-600 text-white font-medium rounded-xl hover:bg-indigo-700 shadow-md shadow-indigo-200 transition-colors">Apply Scaling</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PROGRESS MODAL */}
+      {showScalingProgress && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl flex flex-col items-center">
+            <div className="w-20 h-20 mb-6 relative flex items-center justify-center">
+               <span className="text-5xl animate-pulse">
+                 {scalingStep === 1 ? '📄' : scalingStep === 2 ? '🔍' : scalingStep === 3 ? '⚙️' : '📊'}
+               </span>
+               <div className="absolute inset-0 border-[5px] border-indigo-100 border-t-indigo-600 rounded-full animate-spin"></div>
+            </div>
+            <h3 className="text-xl font-bold text-gray-900 mb-2 text-center">
+              {scalingStep === 1 ? "Reading Excel file..." : 
+               scalingStep === 2 ? "Validating data..." : 
+               scalingStep === 3 ? "Applying scaling..." : "Finalizing file..."}
+            </h3>
+            <div className="w-full bg-gray-100 h-2.5 rounded-full overflow-hidden mt-6">
+               <div 
+                 className="h-full bg-indigo-600 rounded-full transition-all duration-500 ease-out"
+                 style={{ width: `${scalingStep === 1 ? 20 : scalingStep === 2 ? 40 : scalingStep === 3 ? 70 : 100}%` }}
+               ></div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SUCCESS MODAL */}
+      {showScalingSuccess && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 px-4">
+          <div className="bg-white rounded-3xl p-8 max-w-sm w-full shadow-2xl flex flex-col items-center">
+            <div className="w-20 h-20 bg-green-100 text-green-600 rounded-full flex items-center justify-center mb-5 animate-bounce shadow-inner">
+              <span className="text-4xl">✔</span>
+            </div>
+            <h3 className="text-2xl font-bold text-gray-900 mb-2 text-center">Scaling Completed Successfully ✅</h3>
+            <p className="text-gray-500 text-center mb-8 font-medium">Your file is ready to download</p>
+            
+            <div className="flex flex-col gap-3 w-full">
+              <a 
+                href={scaledFileUrl} 
+                download={scaledFileName}
+                className="w-full py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 shadow-md flex justify-center items-center transition-colors shadow-indigo-100"
+              >
+                Download Scaled File
+              </a>
+              <button 
+                onClick={() => setShowScalingSuccess(false)} 
+                className="w-full py-3 text-gray-600 font-bold hover:bg-gray-100 rounded-xl transition-colors bg-gray-50 border border-gray-100"
               >
                 Close
               </button>
@@ -567,117 +702,27 @@ export default function Marks() {
         </div>
       )}
 
-      {/* PREVIEW MODAL */}
-
-      {showPreview && Array.isArray(previewData) && previewData.length > 0 && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-2xl p-6 max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
-            <h3 className="text-lg font-semibold mb-4">Preview Excel Data - {exam}</h3>
-
-            <div className="mb-4">
-              <p className="text-sm text-gray-600">
-                Total students parsed: <strong>{previewData.length}</strong>
-              </p>
-            </div>
-
-            <div className="mb-6">
-              <div className="border rounded-xl overflow-hidden">
-                <table className="w-full">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Register Number</th>
-                      <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Name</th>
-                      <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Marks</th>
-                      <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {previewData.map((student, index) => {
-                      let rowClass = "";
-                      let statusText = "";
-                      if (student.status === "invalid") {
-                        rowClass = "bg-red-50";
-                        statusText = "Invalid";
-                      } else if (student.status === "exists") {
-                        rowClass = "bg-yellow-50";
-                        statusText = "Already Filled";
-                      } else if (student.status === "new") {
-                        rowClass = "bg-green-50";
-                        statusText = "New";
-                      }
-                      return (
-                        <tr key={index} className={`border-t ${rowClass}`}>
-                          <td className="px-4 py-2 text-sm">{student.register_number || ""}</td>
-                          <td className="px-4 py-2 text-sm">{student.name || ""}</td>
-                          <td className="px-4 py-2 text-sm font-medium">{student.marks !== undefined ? student.marks : ""}</td>
-                          <td className="px-4 py-2 text-sm">{statusText}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-3">
-              <button
-                onClick={() => {
-                  setShowPreview(false);
-                  setPreviewData([]);
-                  setFile(null);
-                }}
-                className="px-4 py-2 border rounded-xl"
-                disabled={loading}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleConfirmUpload}
-                className="px-6 py-2 bg-green-600 text-white rounded-xl flex items-center gap-2 min-w-[170px] justify-center"
-                disabled={loading}
-              >
-                {uploadStep === 1 ? "Reading rows..." : uploadStep === 2 ? "Validating data..." : uploadStep === 3 ? "Uploading..." : "Confirm Upload"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* KPI CARDS */}
+      {/* ======================= METRICS AND TABLE GRIDS ======================= */}
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-
         <Kpi title="Class Average" value={`${classAvg}%`} />
-
         <Kpi title="Highest Score" value={highestScore} />
-
         <Kpi title="Total Students" value={totalStudents} />
-
         <Kpi title="Fail Count" value={failCount} danger />
-
       </div>
 
-      {/* STUDENT LIST */}
-
       <div className="glass rounded-2xl p-6 space-y-4">
-
         <div className="flex items-center gap-4">
-
-          <h3 className="text-lg font-semibold">
-            Student Marks ({exam})
-          </h3>
-
+          <h3 className="text-lg font-semibold">Student Marks ({exam})</h3>
           <input
             value={search}
             onChange={(e)=>setSearch(e.target.value)}
             placeholder="Search student"
             className="ml-auto w-72 px-4 py-2 border rounded-xl"
           />
-
         </div>
 
         <div className="space-y-2">
-
           {sortedStudents.length === 0 ? (
             <div className="text-center text-gray-400 py-6">No students found for this class.</div>
           ) : (
@@ -707,61 +752,34 @@ export default function Marks() {
               </div>
             ))
           )}
-
         </div>
-
       </div>
-
     </div>
-
   );
-
 }
 
-/* COMPONENTS */
-
 function FilterSelect({label,value,onChange,options}){
-
   return(
-
     <div className="flex flex-col gap-1">
-
-      <label className="text-xs font-medium text-gray-500">
-        {label}
-      </label>
-
+      <label className="text-xs font-medium text-gray-500">{label}</label>
       <select
         value={value}
         onChange={(e)=>onChange(e.target.value)}
-        className="h-[44px] w-40 px-3 rounded-xl border"
+        className="h-[44px] w-40 px-3 rounded-xl border focus:outline-none focus:ring-2 focus:ring-indigo-500"
       >
-
         {options.map(o=>(
           <option key={o}>{o}</option>
         ))}
-
       </select>
-
     </div>
-
   );
-
 }
 
 function Kpi({title,value,danger}){
-
   return(
-
     <div className={`glass rounded-2xl p-4 ${danger?"text-red-600":""}`}>
-
-      <p className="text-xs text-gray-500">{title}</p>
-
-      <p className="text-2xl font-semibold mt-1">
-        {value}
-      </p>
-
+      <p className="text-xs text-gray-500 font-semibold uppercase tracking-wider">{title}</p>
+      <p className="text-3xl font-bold mt-1 text-gray-800">{value}</p>
     </div>
-
   );
-
 }

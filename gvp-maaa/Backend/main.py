@@ -190,6 +190,21 @@ def process_event_reminders():
 @app.on_event("startup")
 def startup_event():
     Base.metadata.create_all(bind=engine)
+    
+    # Run automatic migrations for scaling_logs
+    try:
+        db = SessionLocal()
+        db.execute(text("""
+            ALTER TABLE scaling_logs
+            ADD COLUMN IF NOT EXISTS file_name TEXT,
+            ADD COLUMN IF NOT EXISTS snapshot_data JSON;
+        """))
+        db.commit()
+    except Exception as e:
+        print("Schema migration failed:", e)
+    finally:
+        db.close()
+
     scheduler = BackgroundScheduler()
     scheduler.add_job(process_event_reminders, "interval", hours=24)
     scheduler.start()
@@ -3022,22 +3037,27 @@ async def preview_marks_excel(
         df.columns = df.columns.str.strip()
         df.columns = df.columns.str.replace("  ", " ")
         print("Exam:", exam)
-        # Map exam to column dynamically
         columns = df.columns.tolist()
+
+        is_scaled = "Final Total" in columns or "Assignment Total (Scaled to 10)" in columns
         column_name = None
-        for col in columns:
-            if col.strip().lower() == exam.strip().lower():
-                column_name = col
-                break
-        if not column_name:
-            exam_clean = exam.replace("-", " ").strip().lower()
+
+        if is_scaled:
+            column_name = "Final Total" if "Final Total" in columns else "Assignment Total (Scaled to 10)"
+        else:
             for col in columns:
-                if col.replace("-", " ").strip().lower() == exam_clean:
+                if col.strip().lower() == exam.strip().lower():
                     column_name = col
                     break
-                    
-        if not column_name:
-            return {"error": f"Column for given exam '{exam}' not found in Excel"}
+            if not column_name:
+                exam_clean = exam.replace("-", " ").strip().lower()
+                for col in columns:
+                    if col.replace("-", " ").strip().lower() == exam_clean:
+                        column_name = col
+                        break
+                        
+            if not column_name:
+                return {"error": f"Column for given exam '{exam}' not found in Excel"}
         print("Column:", column_name)
         print("Excel Columns:", df.columns.tolist())
     except Exception as e:
@@ -3116,6 +3136,62 @@ async def preview_marks_excel(
 
     return {"preview": preview}
 
+from pydantic import BaseModel
+class ValidateStudentsRequest(BaseModel):
+    register_numbers: list[str]
+    year: int
+    section: str
+
+@app.post("/faculty/marks/validate-students")
+def validate_students(req: ValidateStudentsRequest, current_user=Depends(get_current_user), db: Session=Depends(get_db)):
+    if current_user["role"] != "faculty":
+        return {"success": False, "error": "Faculty only"}
+    
+    try:
+        from models import Student
+        valid_students = db.query(Student.roll_no).filter(
+            Student.year == req.year,
+            Student.section == req.section
+        ).all()
+        valid_rolls = {s[0].strip().lower() for s in valid_students if s[0]}
+        
+        for r in req.register_numbers:
+            if str(r).strip().lower() not in valid_rolls:
+                return {"success": True, "valid": False, "message": f"Student data does not match selected Year/Section"}
+        return {"success": True, "valid": True, "message": "All students valid"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+class AnalyzeUploadRequest(BaseModel):
+    register_numbers: list[str]
+    subject_id: int
+    exam: str
+
+@app.post("/faculty/marks/analyze-upload")
+def analyze_upload(req: AnalyzeUploadRequest, current_user=Depends(get_current_user), db: Session=Depends(get_db)):
+    if current_user["role"] != "faculty":
+         return {"success": False, "error": "Faculty only"}
+
+    try:
+        from models import Mark, Student
+        existing_marks = db.query(Mark, Student).join(Student, Mark.student_id == Student.student_id).filter(
+            Mark.subject_id == req.subject_id,
+            Mark.exam == req.exam,
+            Student.roll_no.in_(req.register_numbers)
+        ).all()
+
+        existing_rolls = {s.roll_no.strip().lower() for m, s in existing_marks}
+
+        result = []
+        for r in req.register_numbers:
+            status = "existing" if str(r).strip().lower() in existing_rolls else "new"
+            result.append({"register_number": r, "status": status})
+
+        return {"success": True, "data": result}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
 @app.post("/faculty/marks/upload")
 async def upload_marks_excel(
     file: UploadFile = File(...),
@@ -3128,161 +3204,227 @@ async def upload_marks_excel(
     db: Session = Depends(get_db)
 ):
     if current_user["role"] != "faculty":
-        raise HTTPException(status_code=403, detail="Faculty only")
+        return {"success": False, "error": "Faculty only"}
 
     try:
         import pandas as pd
         from io import BytesIO
-    except ImportError:
-        return {"error": "pandas not installed"}
+        import hashlib
+        from models import MarksUpload, ScalingLog, Mark, Student
 
-    try:
         contents = await file.read()
+        file_hash = hashlib.sha256(contents).hexdigest()
+
+        if overwrite.lower() != "true":
+            duplicate = db.query(MarksUpload).filter(
+                MarksUpload.file_hash == file_hash,
+                MarksUpload.subject_id == subject_id,
+                MarksUpload.year == year,
+                MarksUpload.section == section,
+                MarksUpload.exam == exam
+            ).first()
+            if duplicate:
+                return {"duplicate": True, "message": "This file was already uploaded."}
+
         df = pd.read_excel(BytesIO(contents))
         df.columns = df.columns.str.strip()
         df.columns = df.columns.str.replace("  ", " ")
 
-        # Get available columns
         columns = df.columns.tolist()
-        print("Available columns:", columns)
-
+        is_scaled = "Final Total" in columns or "Assignment Total (Scaled to 10)" in columns
         column_name = None
-        for col in columns:
-            if col.strip().lower() == exam.strip().lower():
-                column_name = col
-                break
-        if not column_name:
-            exam_clean = exam.replace("-", " ").strip().lower()
+
+        if is_scaled:
+            column_name = "Final Total" if "Final Total" in columns else "Assignment Total (Scaled to 10)"
+        else:
             for col in columns:
-                if col.replace("-", " ").strip().lower() == exam_clean:
+                if col.strip().lower() == exam.strip().lower():
                     column_name = col
                     break
-                    
-        if not column_name:
-            return {"error": f"Column for given exam '{exam}' not found in Excel"}
+            if not column_name:
+                exam_clean = exam.replace("-", " ").strip().lower()
+                for col in columns:
+                    if col.replace("-", " ").strip().lower() == exam_clean:
+                        column_name = col
+                        break
+                        
+            if not column_name:
+                return {"success": False, "error": f"Column for given exam '{exam}' not found in Excel"}
 
         reserved_cols = {"register number", "student name", column_name.lower()}
         extra_columns_list = [c for c in columns if c.lower() not in reserved_cols]
 
-    except Exception as e:
-        return {"error": f"Excel read failed: {str(e)}"}
+        required = ["Register Number", "Student Name"]
+        for col in required:
+            if col not in df.columns:
+                return {"success": False, "error": f"Missing column: {col}"}
+        if df.empty:
+            return {"success": False, "error": "Excel file is empty"}
 
-    required = ["Register Number", "Student Name"]
-    for col in required:
-        if col not in df.columns:
-            return {"error": f"Missing column: {col}"}
-    if df.empty:
-        return {"error": "Excel file is empty"}
-
-    students = db.query(Student).filter(
-        Student.year == year,
-        Student.section == section
-    ).all()
-
-    def normalize_reg(val):
-        if pd.isna(val):
-            return None
-        val = str(val).strip()
-        if val.endswith(".0"):
-            val = val[:-2]
-        return val
-
-    valid_regs = set(
-        normalize_reg(s.roll_no)
-        for s in students if s.roll_no
-    )
-
-    def safe_get(row, col):
-        return row[col] if col and col in row and not pd.isna(row[col]) else None
-
-    overwrite = overwrite == "true"
-    updated = 0
-    skipped = 0
-    already_exists = 0
-
-    for _, row in df.iterrows():
-        reg = normalize_reg(row["Register Number"])
-        if not reg or reg not in valid_regs:
-            skipped += 1
-            continue
-
-        student = db.query(Student).filter(
-            Student.roll_no == reg,
+        students = db.query(Student).filter(
             Student.year == year,
             Student.section == section
-        ).first()
+        ).all()
 
-        if not student:
-            skipped += 1
-            continue
+        def normalize_reg(val):
+            if pd.isna(val): return None
+            val = str(val).strip()
+            if val.endswith(".0"): val = val[:-2]
+            return val
 
-        record = db.query(Mark).filter_by(
-            student_id=student.student_id,
-            subject_id=subject_id,
-            exam=exam
-        ).first()
+        valid_regs = set(normalize_reg(s.roll_no) for s in students if s.roll_no)
 
-        if not record:
-            record = Mark(
+        def safe_get(row, col):
+            return row[col] if col and col in row and not pd.isna(row[col]) else None
+
+        overwrite_flag = overwrite.lower() == "true"
+        updated = 0
+        skipped = 0
+        already_exists = 0
+
+        # ATOMIC TRANSACTION BLOCK
+        for _, row in df.iterrows():
+            reg = str(row.get("Register Number") or row.get("register_number") or "").strip()
+            if reg.endswith(".0"): reg = reg[:-2]
+            name = str(row.get("Student Name") or row.get("name") or "").strip()
+            
+            if not reg or reg not in valid_regs:
+                skipped += 1
+                continue
+
+            student = db.query(Student).filter(
+                Student.roll_no == reg,
+                Student.year == year,
+                Student.section == section
+            ).first()
+
+            if not student:
+                skipped += 1
+                continue
+
+            record = db.query(Mark).filter_by(
                 student_id=student.student_id,
                 subject_id=subject_id,
-                exam=exam,
+                exam=exam
+            ).first()
+
+            if is_scaled:
+                from models import ScaledMark
+                sm_record = db.query(ScaledMark).filter_by(
+                    student_id=student.student_id, subject_id=subject_id
+                ).first()
+                if not sm_record:
+                    sm_record = ScaledMark(
+                        student_id=student.student_id,
+                        subject_id=subject_id,
+                        year=year,
+                        section=section
+                    )
+                    db.add(sm_record)
+                
+                def get_flt(c):
+                    v = safe_get(row, c)
+                    try: return float(v) if v is not None and str(v).strip() != "" else None
+                    except: return None
+                
+                sm_record.assignment_scaled = get_flt("Assignment Total (Scaled to 10)")
+                sm_record.mid1_scaled = get_flt("Mid 1 (Scaled to 20)")
+                sm_record.mid2_scaled = get_flt("Mid 2 (Scaled to 20)")
+                sm_record.mid_combined = get_flt("Mid Combined (20)")
+                sm_record.internal_total = get_flt("Internal Total")
+                sm_record.final_total = get_flt("Final Total")
+                sm_record.semester_marks = get_flt("Semester")
+                
+                updated += 1
+                continue
+
+            if not record:
+                record = Mark(
+                    student_id=student.student_id,
+                    subject_id=subject_id,
+                    exam=exam,
+                    year=year,
+                    section=section,
+                    faculty_id=current_user["user_id"]
+                )
+                db.add(record)
+
+            if not overwrite_flag and record.marks is not None:
+                already_exists += 1
+                continue
+
+            val = safe_get(row, column_name)
+            if val is None or str(val).strip() in ("", "-"):
+                 record.marks = None
+            else:
+                 try:
+                     record.marks = float(val)
+                 except:
+                     record.marks = 0
+
+            extra = {}
+            for col in extra_columns_list:
+                 v = row.get(col)
+                 if not pd.isna(v) and str(v).strip() != "":
+                     extra[col] = str(v)
+            record.extra_data = extra
+            updated += 1
+
+        new_upload = MarksUpload(
+            faculty_id=current_user["user_id"],
+            subject_id=subject_id,
+            year=year,
+            section=section,
+            exam=exam,
+            file_hash=file_hash
+        )
+        db.add(new_upload)
+        
+        db.commit()
+
+        # Decouple Logging (Non-Blocking)
+        try:
+            from models import ScalingLog
+            new_log = ScalingLog(
+                faculty_id=current_user["user_id"],
+                subject_id=subject_id,
                 year=year,
                 section=section,
-                faculty_id=current_user["user_id"]
+                action_type="files_uploaded",
+                file_name=file.filename
             )
-            db.add(record)
+            db.add(new_log)
+            db.commit()
+        except Exception as log_error:
+            print("Logging failed:", log_error)
+            db.rollback()
 
-        # Check for existing data if not overwriting
-        if not overwrite and record.marks is not None:
-            already_exists += 1
-            continue
+        marks_list = db.query(Mark).filter(
+            Mark.subject_id == subject_id,
+            Mark.year == year,
+            Mark.section == section,
+            Mark.exam == exam
+        ).all()
+        values = [m.marks for m in marks_list if m.marks is not None]
+        avg = round(sum(values) / len(values), 2) if values else 0
+        highest = max(values) if values else 0
 
-        val = safe_get(row, column_name)
-        if val is None or str(val).strip() == "":
-             record.marks = None
-        else:
-             try:
-                 record.marks = float(val)
-             except:
-                 record.marks = 0
+        available_columns = [column_name] + extra_columns_list
 
-        # Extract extra_data
-        extra = {}
-        for col in extra_columns_list:
-             v = row.get(col)
-             if not pd.isna(v) and str(v).strip() != "":
-                 extra[col] = str(v)
-        
-        record.extra_data = extra
-        updated += 1
+        return {
+            "success": True,
+            "updated": updated,
+            "skipped": skipped,
+            "already_exists": already_exists,
+            "message": f"{updated} students updated • {skipped} skipped • {already_exists} already existed",
+            "available_columns": available_columns,
+            "average": avg,
+            "highest": highest
+        }
 
-    db.commit()
-
-    # Calculate stats
-    marks_list = db.query(Mark).filter(
-        Mark.subject_id == subject_id,
-        Mark.year == year,
-        Mark.section == section,
-        Mark.exam == exam
-    ).all()
-
-    values = [m.marks for m in marks_list if m.marks is not None]
-
-    avg = round(sum(values) / len(values), 2) if values else 0
-    highest = max(values) if values else 0
-
-    available_columns = [column_name] + extra_columns_list
-
-    return {
-        "updated": updated,
-        "skipped": skipped,
-        "already_exists": already_exists,
-        "message": f"{updated} students updated • {skipped} skipped • {already_exists} already existed",
-        "available_columns": available_columns,
-        "average": avg,
-        "highest": highest
-    }
+    except Exception as e:
+        db.rollback()
+        return {"success": False, "error": str(e)}
 
 
 # =========================
@@ -3393,30 +3535,73 @@ def get_my_marks(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    from models import Subject, Mark, ScaledMark, Student
     if current_user["role"] != "student":
         raise HTTPException(status_code=403, detail="Student only")
 
-    print(f"Fetching marks for student: {current_user['user_id']}")
+    student_id = current_user["user_id"]
+    student = db.query(Student).filter_by(student_id=student_id).first()
+    if not student:
+        return {"sgpa": 0, "cgpa": 0, "subjects": []}
 
-    marks = db.query(Mark).filter(Mark.student_id == current_user["user_id"]).all()
+    scaled_marks = db.query(ScaledMark).filter_by(student_id=student_id).all()
+    raw_marks = db.query(Mark).filter_by(student_id=student_id).all()
 
-    print(f"Found {len(marks)} marks for student")
+    subject_ids = set([sm.subject_id for sm in scaled_marks] + [rm.subject_id for rm in raw_marks])
+    subjects_info = db.query(Subject).filter(Subject.subject_id.in_(list(subject_ids))).all()
+    subject_map = {s.subject_id: s.subject_name for s in subjects_info}
 
-    result = []
-    for m in marks:
-        result.append({
-            "subject": m.subject.subject_name if m.subject else "Unknown",
-            "exam": m.exam,
-            "assignment_total": float(m.assignment_total or 0),
-            "mid1": float(m.mid1 or 0),
-            "mid2": float(m.mid2 or 0),
-            "semester": float(m.semester or 0),
-            "total": float(m.total or 0),
-            "sgpa": float(m.sgpa or 0),
-            "cgpa": float(m.cgpa or 0)
+    cgpa_val = float(student.cgpa) if student.cgpa else 0.0
+    sgpas = [float(m.sgpa) for m in raw_marks if m.sgpa]
+    sgpa_val = sum(sgpas)/len(sgpas) if sgpas else cgpa_val
+
+    result_subjects = []
+    for sub_id in subject_ids:
+        sub_name = subject_map.get(sub_id, "Unknown")
+        sm = next((x for x in scaled_marks if x.subject_id == sub_id), None)
+        rms = [x for x in raw_marks if x.subject_id == sub_id]
+
+        def get_raw(exam_name):
+            rec = next((x for x in rms if x.exam == exam_name), None)
+            if not rec: return "-"
+            val = rec.marks
+            if val is None:
+                if rec.extra_data and exam_name in rec.extra_data:
+                    try: return float(rec.extra_data[exam_name])
+                    except: return "-"
+                return "-"
+            return float(val)
+
+        def get_scl(attr):
+            if not sm: return "-"
+            val = getattr(sm, attr, None)
+            return float(val) if val is not None else "-"
+
+        result_subjects.append({
+            "subject": sub_name,
+            "assignments": {
+                "A1": get_raw("Assignment-1"),
+                "A2": get_raw("Assignment-2"),
+                "A3": get_raw("Assignment-3"),
+                "A4": get_raw("Assignment-4"),
+                "A5": get_raw("Assignment-5")
+            },
+            "mid1": get_raw("Mid-1"),
+            "mid2": get_raw("Mid-2"),
+            "scaled": {
+                "assignment_scaled": get_scl("assignment_scaled"),
+                "mid_combined": get_scl("mid_combined"),
+                "internal_total": get_scl("internal_total")
+            },
+            "semester": get_scl("semester_marks") if get_scl("semester_marks") != "-" else get_raw("Semester"),
+            "final_total": get_scl("final_total") if get_scl("final_total") != "-" else get_raw("Total")
         })
 
-    return result
+    return {
+        "sgpa": round(sgpa_val, 2),
+        "cgpa": round(cgpa_val, 2),
+        "subjects": result_subjects
+    }
 
 
 # =========================
@@ -6482,24 +6667,110 @@ def process_scaling(year, section, subject_id, faculty_id, db, action_type):
     return {"message": f"Successfully executed '{action_type}' for scaling records."}
 
 @app.post("/faculty/apply-scaling")
-def apply_scaling(
-    req: ApplyScalingRequest,
+async def apply_scaling(
+    file: UploadFile = File(...),
+    year: int = Form(...),
+    section: str = Form(...),
+    subject_id: int = Form(...),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     if current_user["role"] != "faculty":
         raise HTTPException(status_code=403, detail="Faculty only")
-    return process_scaling(req.year, req.section, req.subject_id, current_user["user_id"], db, "apply")
 
-@app.post("/faculty/recalculate-scaling")
-def recalculate_scaling(
-    req: ApplyScalingRequest,
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    if current_user["role"] != "faculty":
-        raise HTTPException(status_code=403, detail="Faculty only")
-    return process_scaling(req.year, req.section, req.subject_id, current_user["user_id"], db, "recalculate")
+    try:
+        import pandas as pd
+        from io import BytesIO
+    except ImportError:
+        return {"error": "pandas not installed"}
+
+    try:
+        contents = await file.read()
+        df = pd.read_excel(BytesIO(contents))
+        df.columns = df.columns.str.strip()
+    except Exception as e:
+        return {"error": f"Excel read failed: {str(e)}"}
+
+    required = ["Register Number", "Student Name"]
+    for col in required:
+        if col not in df.columns:
+            return {"error": f"Missing column: {col}"}
+
+    df["Assignment Total (Scaled to 10)"] = 0.0
+    df["Mid 1 (Scaled to 20)"] = 0.0
+    df["Mid 2 (Scaled to 20)"] = 0.0
+    df["Mid Combined (20)"] = 0.0
+    df["Internal Total"] = 0.0
+    df["Final Total"] = 0.0
+
+    for idx, row in df.iterrows():
+        assignments = []
+        for i in range(1, 6):
+            col_name = f"Assignment-{i}"
+            if col_name in row and not pd.isna(row[col_name]):
+                try: 
+                    assignments.append(float(row[col_name]))
+                except: 
+                    pass
+        
+        ass_total = sum(assignments)
+        ass_scaled = round((ass_total / 50.0) * 10, 2)
+        
+        mid1 = row.get("Mid-1")
+        mid1_val = float(mid1) if not pd.isna(mid1) else 0.0
+        mid1_scaled = round((mid1_val / 30.0) * 20, 2)
+
+        mid2 = row.get("Mid-2")
+        mid2_val = float(mid2) if not pd.isna(mid2) else 0.0
+        mid2_scaled = round((mid2_val / 30.0) * 20, 2)
+
+        mid_combined = round(((mid1_scaled + mid2_scaled) / 40.0) * 20, 2)
+
+        internal_total = round(ass_scaled + mid_combined, 2)
+        
+        sem = row.get("Semester")
+        sem_val = float(sem) if not pd.isna(sem) else 0.0
+        
+        final_total = round(internal_total + sem_val, 2)
+
+        df.at[idx, "Assignment Total (Scaled to 10)"] = ass_scaled
+        df.at[idx, "Mid 1 (Scaled to 20)"] = mid1_scaled
+        df.at[idx, "Mid 2 (Scaled to 20)"] = mid2_scaled
+        df.at[idx, "Mid Combined (20)"] = mid_combined
+        df.at[idx, "Internal Total"] = internal_total
+        df.at[idx, "Final Total"] = final_total
+
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False)
+    output.seek(0)
+    
+    subject_val = db.query(Subject).filter(Subject.subject_id == subject_id).first()
+    sub_name = subject_val.subject_name if subject_val else "Subject"
+
+    file_name_out = f"scaled_marks_{sub_name.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d%H%M%S')}.xlsx"
+
+    from models import ScalingLog
+    log = ScalingLog(
+        faculty_id=current_user["user_id"],
+        action_type="excel_scaling",
+        year=year,
+        section=section,
+        subject_id=subject_id,
+        file_name=file_name_out,
+        snapshot_data=[]
+    )
+    db.add(log)
+    db.commit()
+
+    return StreamingResponse(
+        output,
+        media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        headers={
+            "Content-Disposition": f'attachment; filename="{file_name_out}"',
+            "Access-Control-Expose-Headers": "Content-Disposition"
+        }
+    )
 
 @app.post("/faculty/undo-scaling")
 def undo_scaling(
@@ -6567,54 +6838,25 @@ def get_scaling_logs(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    from models import ScalingLog, User
-    logs = db.query(ScalingLog, User).join(
-        User, ScalingLog.faculty_id == User.user_id
-    ).filter(
-        ScalingLog.year == year,
-        ScalingLog.section == section,
-        ScalingLog.subject_id == subject_id
-    ).order_by(ScalingLog.timestamp.desc()).all()
-    
-    result = []
-    for log, user in logs:
-        result.append({
-            "action_type": log.action_type,
-            "faculty_name": user.name,
-            "timestamp": log.timestamp
-        })
-    return result
-
-@app.get("/student/my-marks")
-def get_student_marks(
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    from models import ScaledMark, Subject, Student
-    
-    if current_user["role"] != "student":
-        raise HTTPException(status_code=403, detail="Student access only")
+    try:
+        from models import ScalingLog, User
+        logs = db.query(ScalingLog, User).join(
+            User, ScalingLog.faculty_id == User.user_id
+        ).filter(
+            ScalingLog.year == year,
+            ScalingLog.section == section,
+            ScalingLog.subject_id == subject_id
+        ).order_by(ScalingLog.timestamp.desc()).all()
         
-    student = db.query(Student).filter_by(student_id=current_user["user_id"]).first()
-    if not student:
-        return []
+        result = []
+        for log, user in logs:
+            result.append({
+                "action_type": log.action_type,
+                "faculty_name": user.name,
+                "timestamp": log.timestamp,
+                "file_name": log.file_name
+            })
+        return {"success": True, "logs": result}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
-    results = db.query(ScaledMark, Subject).join(
-        Subject, ScaledMark.subject_id == Subject.subject_id
-    ).filter(
-        ScaledMark.student_id == student.student_id
-    ).all()
-    
-    out = []
-    for sm, sub in results:
-        out.append({
-            "subject": sub.subject_name,
-            "assignment_scaled": sm.assignment_scaled,
-            "mid1_scaled": sm.mid1_scaled,
-            "mid2_scaled": sm.mid2_scaled,
-            "mid_combined": sm.mid_combined,
-            "internal_total": sm.internal_total,
-            "semester_marks": sm.semester_marks,
-            "final_total": sm.final_total
-        })
-    return out
