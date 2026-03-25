@@ -235,23 +235,44 @@ def root():
 # -------------------------
 @app.post("/login")
 def login(data: LoginRequest, db: Session = Depends(get_db)):
+    print("\n=== LOGIN ATTEMPT ===")
+    print("Incoming email:", data.email)
+    print("Incoming password length:", len(data.password))
+    
     user = db.query(User).filter(User.email == data.email).first()
+    print("User found:", user is not None)
 
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    if not verify_password(data.password, user.password):
-       raise HTTPException(status_code=401, detail="Invalid password")
+    password_result = verify_password(data.password, user.password)
+    print("Password verification result:", password_result)
+    
+    # Handle three cases: True (valid), "upgrade" (valid but needs rehashing), False (invalid)
+    if password_result == "upgrade":
+        # 🔄 AUTO-UPGRADE: Old password format detected
+        # Rehash using new SHA256+bcrypt method and save
+        print("[!] Upgrading password hash for user:", user.email)
+        try:
+            user.password = hash_password(data.password)
+            db.commit()
+            print("[✓] Password upgraded successfully")
+        except Exception as e:
+            print(f"[!] Password upgrade error: {e}")
+            db.rollback()
+            # Continue login anyway - upgrade failed but password was valid
+    elif password_result != True:
+        # Password is invalid
+        raise HTTPException(status_code=401, detail="Invalid password")
 
-
-    # 🔐 CREATE JWT TOKEN
+    # 🔐 CREATE JWT TOKEN (both new and upgraded passwords reach here)
     access_token = create_access_token(
-    data={
-        "user_id": user.user_id,
-        "role": user.role,
-        "department_id": user.department_id   # ✅ ADD THIS
-    }
-)
+        data={
+            "user_id": user.user_id,
+            "role": user.role,
+            "department_id": user.department_id
+        }
+    )
 
     return {
         "access_token": access_token,
@@ -282,14 +303,6 @@ def student_signup(data: StudentSignupRequest, db: Session = Depends(get_db)):
     existing_user = db.query(User).filter(User.email == data.email).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Email already registered")
-    
-    # 🔐 PASSWORD LENGTH CHECK (bcrypt safety)
-    if len(data.password) > 72:
-        raise HTTPException(
-            status_code=400,
-            detail="Password must be 72 characters or less"
-        )
-
 
     # 1️⃣ Create user
     new_user = User(
@@ -417,13 +430,11 @@ def teacher_signup(data: TeacherSignupRequest, db: Session = Depends(get_db)):
     existing_user = db.query(User).filter(User.email == data.email).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Email already registered")
-    
-    # 🔐 PASSWORD LENGTH CHECK
-    if len(data.password) > 72:
-        raise HTTPException(
-            status_code=400,
-            detail="Password must be 72 characters or less"
-    )
+
+    # Check if employee_id already exists
+    existing_employee = db.query(Faculty).filter(Faculty.employee_id == data.employee_id).first()
+    if existing_employee:
+        raise HTTPException(status_code=400, detail="Employee ID already registered")
 
     try:
         # 1️⃣ Create user
@@ -1684,6 +1695,9 @@ def get_attendance_analytics(
 # -------------------------
 @app.post("/login/admin")
 def admin_login(data: AdminLoginRequest, db: Session = Depends(get_db)):
+    print("\n=== ADMIN LOGIN ATTEMPT ===")
+    print("Incoming email:", data.email)
+    print("Incoming password length:", len(data.password))
 
     # 1️⃣ Validate admin access key
     if data.access_key != os.getenv("ADMIN_ACCESS_KEY"):
@@ -1698,19 +1712,31 @@ def admin_login(data: AdminLoginRequest, db: Session = Depends(get_db)):
     if not admin:
         raise HTTPException(status_code=404, detail="Admin not found")
 
-    # 3️⃣ Verify bcrypt password ✅
-    if not verify_password(data.password, admin.password):
+    # 3️⃣ Verify password with backward compatibility
+    password_result = verify_password(data.password, admin.password)
+    print("Password verification result:", password_result)
+    
+    if password_result == "upgrade":
+        # 🔄 AUTO-UPGRADE: Old password format detected
+        print("[!] Upgrading password hash for admin:", admin.email)
+        try:
+            admin.password = hash_password(data.password)
+            db.commit()
+            print("[✓] Admin password upgraded successfully")
+        except Exception as e:
+            print(f"[!] Password upgrade error: {e}")
+            db.rollback()
+    elif password_result != True:
         raise HTTPException(status_code=401, detail="Invalid password")
 
     # 4️⃣ Create JWT
     access_token = create_access_token(
-    data={
-        "user_id": admin.user_id,
-        "role": admin.role,
-        "department_id": admin.department_id  # ✅ ADD THIS
-    }
-   )
-
+        data={
+            "user_id": admin.user_id,
+            "role": admin.role,
+            "department_id": admin.department_id
+        }
+    )
 
     return {
         "access_token": access_token,
@@ -6789,9 +6815,13 @@ def get_faculty_overview(
         raise HTTPException(status_code=403, detail="Faculty only")
 
     from models import Student, Mark, User, Attendance, Subject, FacultySubject  # type: ignore
-    from sqlalchemy import or_ # type: ignore
+    from sqlalchemy import or_, func  # type: ignore
     
     faculty_id = current_user["user_id"]
+    
+    # ===============================
+    # STEP 1: GET ALL SUBJECTS OF FACULTY
+    # ===============================
     assigned_subjects = db.query(FacultySubject).filter(
         FacultySubject.faculty_id == faculty_id,
         FacultySubject.is_active == True
@@ -6799,22 +6829,32 @@ def get_faculty_overview(
     
     total_subjects = len({s.subject_id for s in assigned_subjects})
     
-    faculty_students = 0
+    # ===============================
+    # STEP 2: TOTAL STUDENTS (ALL CLASSES)
+    # ===============================
+    # Count DISTINCT students across all faculty-assigned subjects
+    total_students = 0
     if assigned_subjects:
-        conditions = [
-            (Student.year == s.year) & (Student.section == s.section)
-            for s in assigned_subjects
-        ]
-        faculty_students = db.query(Student).filter(or_(*conditions)).count()
-        
+        subject_ids = [s.subject_id for s in assigned_subjects]
+        total_students = db.query(func.count(func.distinct(Mark.student_id))).filter(
+            Mark.subject_id.in_(subject_ids),
+            Mark.faculty_id == faculty_id
+        ).scalar() or 0
+    
     faculty_scope = {
-        "total_students": faculty_students,
+        "total_students": total_students,
         "total_subjects": total_subjects
     }
 
+    # ===============================
+    # STEP 3: GET SUBJECT NAME
+    # ===============================
     subject_obj = db.query(Subject).filter(Subject.subject_id == subject_id).first()
     subject_name = subject_obj.subject_name if subject_obj else "Subject"
 
+    # ===============================
+    # STEP 4: CURRENT CLASS STUDENTS (SELECTED SUBJECT)
+    # ===============================
     students_query = db.query(Student.student_id, User.name).join(
         User, Student.student_id == User.user_id
     ).filter(
@@ -6839,12 +6879,17 @@ def get_faculty_overview(
                 "at_risk_count": 0
             },
             "metrics": { "mid1": [], "mid2": [], "total": [], "assignment": [] },
-            "attendance": []
+            "attendance": [],
+            "marks_risk_students": [],
+            "attendance_risk_students": []
         }
     
     student_ids = [s.student_id for s in students_query]
     student_names = {s.student_id: s.name for s in students_query}
     
+    # ===============================
+    # STEP 5: FETCH MARKS FOR SELECTED SUBJECT
+    # ===============================
     marks_query = db.query(Mark.student_id, Mark.exam, Mark.marks).filter(
         Mark.student_id.in_(student_ids),
         Mark.subject_id == subject_id
@@ -6853,6 +6898,9 @@ def get_faculty_overview(
     metrics = { "mid1": [], "mid2": [], "total": [], "assignment": [] }
     student_metrics = { sid: {"mid1": 0.0, "mid2": 0.0, "assignment": 0.0, "total": 0.0} for sid in student_ids}
     
+    # Store individual exam marks for risk analysis
+    exam_marks = { sid: {"mid1": None, "mid2": None, "semester": None} for sid in student_ids}
+    
     for m in marks_query:
         if m.marks is None: continue
         val = float(m.marks)
@@ -6860,10 +6908,15 @@ def get_faculty_overview(
         sid = m.student_id
         
         student_metrics[sid]["total"] += val
+        
         if "mid-1" in exam or "mid 1" in exam or "mid1" in exam:
             student_metrics[sid]["mid1"] += val
+            exam_marks[sid]["mid1"] = val
         elif "mid-2" in exam or "mid 2" in exam or "mid2" in exam:
             student_metrics[sid]["mid2"] += val
+            exam_marks[sid]["mid2"] = val
+        elif "semester" in exam:
+            exam_marks[sid]["semester"] = val
         elif "assignment" in exam:
             student_metrics[sid]["assignment"] += val
 
@@ -6891,6 +6944,33 @@ def get_faculty_overview(
         if student_metrics[max_sid]["total"] > 0:
             topper = {"name": student_names[max_sid], "marks": round(student_metrics[max_sid]["total"], 2)}  # type: ignore
 
+    # ===============================
+    # STEP 6: MARKS RISK ANALYSIS
+    # ===============================
+    MARKS_RISK_THRESHOLD = 15
+    marks_risk_students = []
+    
+    for sid in student_ids:
+        marks_list = []
+        for exam_name, mark in exam_marks[sid].items():
+            if mark is not None and mark > 0:
+                marks_list.append((exam_name.replace("_", "-").upper(), mark))
+        
+        if marks_list:
+            exam_name, min_mark = min(marks_list, key=lambda x: x[1])
+            if min_mark < MARKS_RISK_THRESHOLD:
+                marks_risk_students.append({
+                    "name": student_names[sid],
+                    "value": round(min_mark, 2),
+                    "exam": exam_name
+                })
+    
+    # Sort by mark ascending (lowest first)
+    marks_risk_students.sort(key=lambda x: x["value"])
+    
+    # ===============================
+    # STEP 7: ATTENDANCE RISK ANALYSIS
+    # ===============================
     att_query = db.query(Attendance.student_id, Attendance.status).filter(
         Attendance.student_id.in_(student_ids),
         Attendance.subject_id == subject_id
@@ -6903,10 +6983,25 @@ def get_faculty_overview(
             att_counts[a.student_id]["present"] += 1
             
     attendance_data = []
+    ATTENDANCE_RISK_THRESHOLD = 75
+    attendance_risk_students = []
+    
     for sid, counts in att_counts.items():
         pct = round((counts["present"]/counts["total"])*100, 2) if counts["total"] > 0 else 100.0  # type: ignore
         attendance_data.append({"name": student_names[sid], "percentage": pct})
+        
+        if pct < ATTENDANCE_RISK_THRESHOLD:
+            attendance_risk_students.append({
+                "name": student_names[sid],
+                "value": pct
+            })
+    
+    # Sort by percentage ascending (lowest first)
+    attendance_risk_students.sort(key=lambda x: x["value"])
 
+    # ===============================
+    # STEP 8: RETURN RESPONSE
+    # ===============================
     return {
         "class_stats": class_stats,
         "faculty_scope": faculty_scope,
@@ -6917,7 +7012,9 @@ def get_faculty_overview(
             "at_risk_count": at_risk_count
         },
         "metrics": metrics,
-        "attendance": attendance_data
+        "attendance": attendance_data,
+        "marks_risk_students": marks_risk_students,
+        "attendance_risk_students": attendance_risk_students
     }
 
 @app.post("/faculty/apply-scaling")

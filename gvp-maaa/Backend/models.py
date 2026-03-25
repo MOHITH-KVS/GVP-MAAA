@@ -515,5 +515,5 @@ class ScalingLog(Base):
     subject_id = Column(Integer, ForeignKey("subjects.subject_id"))
     file_name = Column(String, nullable=True) # New column for excel scaling
     timestamp = Column(DateTime, default=datetime.utcnow)
-    snapshot_data = Column(JSON, nullable=True) # Stores previous state for undo
+    snapshot_data = Column(JSON, nullable=True) # Stores previous state for undo.
 
