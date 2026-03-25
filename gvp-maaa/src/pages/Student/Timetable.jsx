@@ -21,38 +21,60 @@ export default function Timetable() {
   const [now, setNow] = useState(Date.now());
 
 
-  const token = localStorage.getItem("access_token");
+  const token = localStorage.getItem("token");
 
   const fetchTimetables = async () => {
-    try {
-      setLoading(true);
+  try {
+    setLoading(true);
 
-      const params = new URLSearchParams();
+    const params = new URLSearchParams();
 
-      if (activeType !== "all") {
-        params.append("timetable_type", activeType);
+    if (activeType !== "all") {
+      params.append("timetable_type", activeType);
+    }
+
+    params.append("audience", "student");
+
+    const res = await fetch(
+      `http://127.0.0.1:8000/timetables?${params.toString()}`,
+      {
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
+          "Content-Type": "application/json"
+        },
+      }
+    );
+
+    if (!res.ok) {
+      if (res.status === 401) {
+        alert("Session expired. Please login again.");
+        localStorage.removeItem("token");
+        window.location.href = "/";
+        return;
       }
 
-      params.append("audience", "students");
-
-      const res = await fetch(
-        `http://127.0.0.1:8000/timetables?${params.toString()}`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
-
-      const data = await res.json();
-      setTimetables(data);
-
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
+      console.error("Failed to fetch timetables");
+      setTimetables([]);
+      return;
     }
-  };
+
+    const data = await res.json();
+
+    if (!Array.isArray(data)) {
+      console.error("Invalid response:", data);
+      setTimetables([]);
+      return;
+    }
+
+    setTimetables(data);
+
+  } catch (err) {
+    console.error(err);
+    setTimetables([]);
+  } finally {
+    setLoading(false);
+  }
+ };
 
   useEffect(() => {
     fetchTimetables();
@@ -68,13 +90,15 @@ export default function Timetable() {
 
 
   // 🔥 GROUP DATA BY TYPE
-  const grouped = timetables.reduce((acc, t) => {
-    if (!acc[t.timetable_type]) {
-      acc[t.timetable_type] = [];
-    }
-    acc[t.timetable_type].push(t);
-    return acc;
-  }, {});
+  const grouped = Array.isArray(timetables)
+  ? timetables.reduce((acc, t) => {
+      if (!acc[t.timetable_type]) {
+        acc[t.timetable_type] = [];
+      }
+      acc[t.timetable_type].push(t);
+      return acc;
+    }, {})
+  : {};
 
   return (
     <div className="space-y-8">

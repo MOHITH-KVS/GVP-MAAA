@@ -4,7 +4,7 @@ import AssessmentIcon from "@mui/icons-material/Assessment";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 
 export default function Attendance() {
-  const token = localStorage.getItem("access_token");
+  const token = localStorage.getItem("token");
 
   /* ================= STATES ================= */
   const [subjects, setSubjects] = useState([]);
@@ -34,22 +34,43 @@ export default function Attendance() {
   /* ================= LOAD MY SUBJECTS ================= */
   useEffect(() => {
     const loadMySubjects = async () => {
-      try {
-        const res = await fetch(
-          "http://localhost:8000/faculty/my-subjects",
-          {
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
-          }
-        );
-
-        const data = await res.json();
-        setSubjects(data);
-      } catch (err) {
-        console.error("Error loading subjects", err);
+  try {
+    const res = await fetch(
+      "http://localhost:8000/faculty/my-subjects",
+      {
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
+          "Content-Type": "application/json"
+        },
       }
-    };
+    );
+
+    if (!res.ok) {
+      if (res.status === 401) {
+        alert("Session expired. Please login again.");
+        localStorage.removeItem("token");
+        window.location.href = "/";
+        return;
+      }
+
+      console.error("Failed to fetch subjects");
+      return;
+    }
+
+    const data = await res.json();
+
+    if (!Array.isArray(data)) {
+      console.error("Invalid data:", data);
+      setSubjects([]);
+      return;
+    }
+
+    setSubjects(data);
+
+  } catch (err) {
+    console.error("Error loading subjects", err);
+  }
+ };
 
     loadMySubjects();
   }, []);
@@ -377,11 +398,12 @@ export default function Attendance() {
             className="w-full mt-1 p-2 rounded-xl border"
           >
             <option value="">Select</option>
-            {subjects.map((s) => (
-              <option key={s.subject_id} value={s.subject_id}>
-                {s.subject_name} - {s.year}{s.section}
-              </option>
-            ))}
+          
+              {subjects.map((s) => (
+                <option key={s.subject_id} value={s.subject_id}>
+                  {s.subject_name} - {s.year}{s.section}
+                </option>
+              ))}
           </select>
         </div>
 
