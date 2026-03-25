@@ -24,7 +24,7 @@ export default function GiveAlertModal({ onClose }) {
   const [sending, setSending] = useState(false);
   const [sentCount, setSentCount] = useState(0);
 
-  const token = localStorage.getItem("access_token");
+  const token = localStorage.getItem("token");
 
   useEffect(() => {
     async function fetchSubjects() {
@@ -32,6 +32,12 @@ export default function GiveAlertModal({ onClose }) {
         const res = await fetch("http://localhost:8000/faculty/subjects", {
           headers: { Authorization: `Bearer ${token}` },
         });
+        if (res.status === 401) {
+          alert("Session expired. Please login again.");
+          localStorage.clear();
+          window.location.href = "/login";
+          return;
+        }
         if (res.ok) {
           const data = await res.json();
           setSubjects(data);
@@ -57,6 +63,12 @@ export default function GiveAlertModal({ onClose }) {
         const res = await fetch(`http://localhost:8000/faculty/search-students?q=${searchQuery}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
+        if (res.status === 401) {
+          alert("Session expired. Please login again.");
+          localStorage.clear();
+          window.location.href = "/login";
+          return;
+        }
         if (res.ok) {
           const data = await res.json();
           setSearchResults(data);
@@ -137,6 +149,12 @@ export default function GiveAlertModal({ onClose }) {
         },
         body: JSON.stringify(payload)
       });
+      if (res.status === 401) {
+        alert("Session expired. Please login again.");
+        localStorage.clear();
+        window.location.href = "/login";
+        return;
+      }
       if (res.ok) {
         const data = await res.json();
         setSentCount(data.students_targeted || 0);

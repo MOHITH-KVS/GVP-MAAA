@@ -12,7 +12,7 @@ export default function UploadResourceModal({ onClose }) {
   const [uploading, setUploading] = useState(false);
   const [success, setSuccess] = useState(false);
 
-  const token = localStorage.getItem("access_token");
+  const token = localStorage.getItem("token");
 
   // Fetch subjects for the dropdown
   useEffect(() => {
@@ -21,6 +21,12 @@ export default function UploadResourceModal({ onClose }) {
         const res = await fetch("http://localhost:8000/faculty/subjects", {
           headers: { Authorization: `Bearer ${token}` }
         });
+        if (res.status === 401) {
+          alert("Session expired. Please login again.");
+          localStorage.clear();
+          window.location.href = "/login";
+          return;
+        }
         if (res.ok) {
           const data = await res.json();
           setSubjects(data);

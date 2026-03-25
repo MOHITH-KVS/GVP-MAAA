@@ -744,7 +744,7 @@ export default function Marks() {
                 ))}
                 
                 <div className="flex flex-col items-end w-24">
-                  <span className="text-xs text-gray-500">{exam === "Total" ? "Total Score" : "Marks"}</span>
+                  <span className="text-xs text-gray-500">{exam === "Total" ? "Total Score" : exam}</span>
                   <span className="font-medium text-lg">
                     {s.marks === null || s.marks === undefined ? "-" : s.marks}
                   </span>

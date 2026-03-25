@@ -30,7 +30,7 @@ export default function Resources() {
   const [newDesc, setNewDesc] = useState("");
   const [newFile, setNewFile] = useState(null);
 
-  const token = localStorage.getItem("access_token");
+  const token = localStorage.getItem("token");
 
   /* ================= FETCH LOGIC ================= */
 
@@ -56,9 +56,16 @@ export default function Resources() {
   async function fetchSubjects() {
     try {
       setSubjectsLoading(true);
+      console.log("TOKEN:", token);
       const res = await fetch("http://localhost:8000/faculty/subjects", {
         headers: { Authorization: `Bearer ${token}` },
       });
+      if (res.status === 401) {
+        alert("Session expired. Please login again.");
+        localStorage.clear();
+        window.location.href = "/login";
+        return;
+      }
       const data = await res.json();
       if (Array.isArray(data)) {
         setSubjects(data);
@@ -68,6 +75,7 @@ export default function Resources() {
       }
     } catch (err) {
       console.error("Error loading subjects:", err);
+      setSubjects([]);
     } finally {
       setSubjectsLoading(false);
     }
@@ -82,6 +90,12 @@ export default function Resources() {
           headers: { Authorization: `Bearer ${token}` }
         }
       );
+      if (res.status === 401) {
+        alert("Session expired. Please login again.");
+        localStorage.clear();
+        window.location.href = "/login";
+        return;
+      }
       const data = await res.json();
       if (Array.isArray(data)) {
         setResources(data);
