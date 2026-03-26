@@ -15,7 +15,7 @@ export default function Resources() {
   const [loading, setLoading] = useState(true);
   const [subjectFilter, setSubjectFilter] = useState("All");
 
-  const token = localStorage.getItem("access_token");
+  const token = localStorage.getItem("token");
 
   useEffect(() => {
     fetchResources();
