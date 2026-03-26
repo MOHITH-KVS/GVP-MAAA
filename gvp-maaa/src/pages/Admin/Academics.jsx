@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import api from "../../utils/api";
 
 /* ================= ADMIN ACADEMICS ================= */
 
@@ -149,21 +150,14 @@ function ManageSubjectsModal({ onClose }) {
 
   const [subjects, setSubjects] = useState([]);
 
-  const token = localStorage.getItem("access_token");
   useEffect(() => {
     fetchSubjects();
   }, []);
 
   const fetchSubjects = async () => {
     try {
-      const res = await fetch("http://localhost:8000/admin/subjects", {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      const data = await res.json();
-      setSubjects(data);
+      const response = await api.get('/admin/subjects');
+      setSubjects(response.data);
     } catch (err) {
       console.error("Error loading subjects", err);
     }
@@ -207,26 +201,13 @@ function ManageSubjectsModal({ onClose }) {
       return;
     }
 
-    const res = await fetch("http://localhost:8000/admin/subjects", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({
-        subject_code: newSubject.code,
-        subject_name: newSubject.name,
-        semester: semesterNumber,
-        credits: Number(newSubject.credits),
-        department_id: departmentId,
-      }),
+    const response = await api.post('/admin/subjects', {
+      subject_code: newSubject.code,
+      subject_name: newSubject.name,
+      semester: semesterNumber,
+      credits: Number(newSubject.credits),
+      department_id: departmentId,
     });
-
-    if (!res.ok) {
-      const err = await res.json();
-      alert(err.detail || "Failed to add subject");
-      return;
-    }
 
     await fetchSubjects();
  }
@@ -237,15 +218,7 @@ function ManageSubjectsModal({ onClose }) {
       );
 
    if (!confirmDelete) return;
-      await fetch(
-        `http://localhost:8000/admin/subjects/${selectedSubject.subject_id}`,
-        {
-          method: "DELETE",
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
+      await api.delete(`/admin/subjects/${selectedSubject.subject_id}`);
 
       await fetchSubjects();
     }
@@ -257,28 +230,13 @@ function ManageSubjectsModal({ onClose }) {
 
       const departmentId = DEPARTMENT_ID_MAP[context.department];
 
-      const res = await fetch(
-        `http://localhost:8000/admin/subjects/${selectedSubject.subject_id}`,
-        {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            subject_code: newSubject.code,
-            subject_name: newSubject.name,
-            semester: semesterNumber,
-            credits: Number(newSubject.credits),
-            department_id: departmentId,
-          }),
-        }
-      );
-
-      if (!res.ok) {
-        alert("Failed to update subject");
-        return;
-      }
+      await api.put(`/admin/subjects/${selectedSubject.subject_id}`, {
+        subject_code: newSubject.code,
+        subject_name: newSubject.name,
+        semester: semesterNumber,
+        credits: Number(newSubject.credits),
+        department_id: departmentId,
+      });
 
       await fetchSubjects();
    }

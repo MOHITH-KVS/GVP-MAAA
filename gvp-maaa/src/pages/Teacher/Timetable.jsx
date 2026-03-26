@@ -7,7 +7,7 @@ export default function Timetable() {
 
 
   useEffect(() => {
-    fetchTimetables();
+    fetchTimetable();
   }, []);
 
   useEffect(() => {
@@ -19,32 +19,32 @@ export default function Timetable() {
  }, []);
 
 
-  const fetchTimetables = async () => {
-    try {
-      const token = localStorage.getItem("token");
+  const fetchTimetable = async () => {
+  try {
+    const token = localStorage.getItem("token");
 
-      const res = await fetch(
-        "http://localhost:8000/timetables?audience=faculty",
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
-
-      if (!res.ok) {
-        console.error("Failed to fetch timetables");
-        return;
+    const res = await fetch(
+      "http://localhost:8000/timetables?audience=faculty",
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
       }
+    );
 
-      const data = await res.json();
-      setTimetables(data);
-    } catch (err) {
-      console.error("Error fetching timetables", err);
-    } finally {
-      setLoading(false);
+    if (!res.ok) {
+      console.error("Failed to fetch timetables");
+      return;
     }
-  };
+
+    const data = await res.json();
+    setTimetables(data);
+  } catch (err) {
+    console.error("Error fetching timetables", err);
+  } finally {
+    setLoading(false);
+  }
+ };
 
   return (
     <div className="space-y-8">

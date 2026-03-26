@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import api from "../../utils/api";
 
 
 export default function Students() {
@@ -20,24 +21,9 @@ export default function Students() {
     try {
       setLoading(true);
 
-      const token = localStorage.getItem("access_token");
+      const response = await api.get('/admin/students');
 
-      const response = await fetch("http://127.0.0.1:8000/admin/students", {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        console.error("Failed to fetch students:", data);
-        setStudents([]);
-        return;
-      }
-
-      setStudents(Array.isArray(data) ? data : []);
+      setStudents(Array.isArray(response.data) ? response.data : []);
 
     } catch (err) {
       console.error("Fetch students failed:", err);
@@ -83,37 +69,15 @@ export default function Students() {
 
   const downloadRiskReport = async () => {
     try {
-      const token = localStorage.getItem("access_token");
+      const response = await api.post('/admin/students/risk-report', {
+        year,
+        section,
+        search,
+      }, {
+        responseType: 'blob'
+      });
 
-      if (!token) {
-        alert("Session expired. Please login again.");
-        return;
-      }
-
-      const response = await fetch(
-        "http://localhost:8000/admin/students/risk-report", // ✅ FIXED
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            year,
-            section,
-            search,
-          }),
-        }
-      );
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => null);
-        console.error("Report generation failed:", errorData);
-        alert("Failed to generate report");
-        return;
-      }
-
-      const blob = await response.blob();
+      const blob = response.data;
 
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -427,8 +391,6 @@ function DeleteStudentModal({ students, onDelete, onClose }) {
 
   /* ===== FINAL DELETE ===== */
   const handleFinalDelete = async () => {
-    const token = localStorage.getItem("access_token");
-
     let ids = [];
 
 
@@ -450,21 +412,11 @@ function DeleteStudentModal({ students, onDelete, onClose }) {
     setUndoTimer(UNDO_DURATION); // reset timer
 
     try {
-      const res = await fetch("http://127.0.0.1:8000/admin/students", {
-        method: "DELETE",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
+      await api.delete('/admin/students', {
+        data: {
           student_ids: ids,
-        }),
+        },
       });
-
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.detail || "Delete failed");
-      }
 
       // 🔄 Update UI after DB delete
       onDelete((prev) => prev.filter((s) => !ids.includes(s.id)));
@@ -474,7 +426,7 @@ function DeleteStudentModal({ students, onDelete, onClose }) {
 
 
     } catch (err) {
-      alert(err.message);
+      alert(err.message || "Delete failed");
     }
   };
 
@@ -849,26 +801,11 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
   /* ===== CONFIRM UPDATE ===== */
   const confirmUpdate = async () => {
     setSubmitting(true);
-    const token = localStorage.getItem("access_token");
 
     try {
       // 🔹 SINGLE STUDENT UPDATE
       if (flow === "single" && selectedStudentId) {
-        const response = await fetch(
-          `http://127.0.0.1:8000/admin/students/${selectedStudentId}`,
-          {
-            method: "PUT",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify(singleUpdate),
-          }
-        );
-
-        if (!response.ok) throw new Error("Single update failed");
-
-        const result = await response.json();
+        await api.put(`/admin/students/${selectedStudentId}`, singleUpdate);
 
         setStudents((prev) =>
           prev.map((s) =>
@@ -913,23 +850,7 @@ function UpdateStudentModal({ students, setStudents, onClose }) {
 
         console.log("BULK PAYLOAD", payload);
 
-        const response = await fetch(
-          "http://127.0.0.1:8000/admin/students/bulk-promote",
-          {
-            method: "PUT",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify(payload),
-          }
-        );
-
-        if (!response.ok) {
-          const err = await response.json();
-          console.error(err);
-          throw new Error("Bulk update failed");
-        }
+        await api.put('/admin/students/bulk-promote', payload);
 
         // 🔄 Update UI locally (only update selected fields)
         setStudents((prev) =>
@@ -1511,18 +1432,8 @@ function NotifyStudentModal({ students, onClose }) {
   /* ===== FETCH HISTORY ===== */
   const fetchHistory = async () => {
     try {
-      const token = localStorage.getItem("access_token");
-
-      const res = await fetch("http://localhost:8000/admin/alerts?role=student", {
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
-      });
-
-      if (!res.ok) return;
-
-      const data = await res.json();
-      setHistory(data.filter(h => h.target_role === "student"));
+      const response = await api.get('/admin/alerts?role=student');
+      setHistory(response.data);
     } catch (err) {
       console.error("History fetch error", err);
     }
@@ -1531,19 +1442,7 @@ function NotifyStudentModal({ students, onClose }) {
   /* ===== DELETE ALERT ===== */
   const deleteAlert = async (id) => {
     try {
-      const token = localStorage.getItem("access_token");
-
-      const res = await fetch(
-        `http://localhost:8000/admin/alerts/${id}`,
-        {
-          method: "DELETE",
-          headers: {
-            Authorization: `Bearer ${token}`
-          }
-        }
-      );
-
-      if (!res.ok) return false;
+      await api.delete(`/admin/alerts/${id}`);
 
       setHistory(prev => prev.filter(a => a.id !== id));
       setStep("deleteSuccess");
@@ -1563,13 +1462,6 @@ function NotifyStudentModal({ students, onClose }) {
   /* ===== SEND NOTIFICATION ===== */
   const sendNotification = async () => {
     try {
-      const token = localStorage.getItem("access_token");
-
-      if (!token) {
-        alert("Admin not authenticated");
-        return;
-      }
-
       if (target === "individual" && !selectedStudentId) {
         alert("Please select a student");
         return;
@@ -1600,20 +1492,7 @@ function NotifyStudentModal({ students, onClose }) {
         formData.append("file", file);
       }
 
-      const res = await fetch("http://localhost:8000/admin/alerts", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`
-        },
-        body: formData
-      });
-
-      if (!res.ok) {
-        const errorData = await res.json();
-        console.log("Backend Error:", errorData);
-        alert("Validation error. Check console.");
-        return;
-      }
+      await api.post('/admin/alerts', formData);
 
       setStep("success");
 
@@ -1626,6 +1505,8 @@ function NotifyStudentModal({ students, onClose }) {
       alert("Something went wrong");
     }
   };
+
+  /* ===== FETCH HISTORY ===== */
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center">

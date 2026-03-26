@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import api from "../../utils/api";
 
 export default function Timetable() {
   const [showUpload, setShowUpload] = useState(false);
@@ -43,12 +44,8 @@ export default function Timetable() {
 }, [department, section, semester, timetableType, filterAudience]);
 
 
-
-
 const fetchTimetables = async () => {
   try {
-    const token = localStorage.getItem("access_token");
-
     const params = new URLSearchParams();
 
     if (department) params.append("department", department);
@@ -57,39 +54,14 @@ const fetchTimetables = async () => {
     if (timetableType) params.append("timetable_type", timetableType);
     if (filterAudience) params.append("audience", filterAudience);
 
-    const res = await fetch(
-      `http://localhost:8000/timetables?${params.toString()}`,
-      {
-        method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: token ? `Bearer ${token}` : "",
-        },
-      }
-    );
-
-  if (!res.ok) {
-    console.error("Server error:", res.status);
-    return;
-  }
-
-  if (!token) {
-  console.log("No token found");
-  return;
- }
- console.log("Using token:", token);
-
-
-
-
-    const data = await res.json();
-    setTimetables(data);
+    const response = await api.get(`/timetables?${params.toString()}`);
+    setTimetables(response.data);
 
   } catch (err) {
-    console.error("Error loading timetables", err);
+    console.error("Error fetching timetables:", err);
   }
 };
-
+ 
 
  // ================= UPLOAD TIMETABLE API =================
  const uploadTimetable = async (data) => {
@@ -109,34 +81,15 @@ const fetchTimetables = async () => {
       formData.append("faculty_id", Number(data.teacher_id));
     }
 
-    const token = localStorage.getItem("access_token");
-
-    const res = await fetch(
-      "http://localhost:8000/admin/timetable/upload",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-        body: formData,
-      }
-    );
-
-    if (!res.ok) {
-      const err = await res.text();
-      console.error("Upload failed:", err);
-      throw new Error("Upload failed");
-    }
+    await api.post('/admin/timetable/upload', formData);
 
     console.log("Upload success");
 
   } catch (err) {
     console.error("Upload error:", err);
-    alert("Failed to upload timetable");
+    throw err;
   }
  };
-
-
 
   return (
     <div className="space-y-8">
@@ -421,15 +374,8 @@ function UploadModal({ onCancel, onProceed }) {
 
  const fetchTeachers = async () => {
   try {
-    const token = localStorage.getItem("access_token");
-
-    const res = await fetch("http://localhost:8000/admin/teachers", {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
-
-    const data = await res.json();
+    const response = await api.get('/admin/teachers');
+    const data = response.data;
 
     const filtered = department
       ? data.filter((t) => t.department === department)

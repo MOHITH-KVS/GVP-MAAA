@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import api from "../../utils/api";
 
 const DEPARTMENT_MAP = {
   CSE: 11,
@@ -24,43 +25,20 @@ export default function Teachers() {
   const [showNotifyTeacher, setShowNotifyTeacher] = useState(false);
 
   const fetchTeachers = async () => {
-  try {
-    const token = localStorage.getItem("access_token");
-
-    if (!token) {
-      window.location.href = "/auth/admin/signin";
-      return;
-    }
-
-    
-
-    const res = await fetch("http://127.0.0.1:8000/admin/teachers", {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
-
-
-    if (res.status === 401) {
-      localStorage.removeItem("access_token");
-      window.location.href = "/auth/admin/signin";
-      return;
-    }
-
-    const data = await res.json();
-    setTeachers(data);
-    if (Array.isArray(data)) {
+    try {
+      const response = await api.get('/admin/teachers');
+      const data = response.data;
+      if (Array.isArray(data)) {
         setTeachers(data);
       } else {
         console.error("Invalid teacher data:", data);
         setTeachers([]);
       }
-
-
-  } catch (error) {
-    console.error("Failed to fetch teachers", error);
-  }
- };
+    } catch (error) {
+      console.error("Failed to fetch teachers", error);
+      setTeachers([]);
+    }
+  };
 
   /* ===== FILTER ===== */
   const filtered = teachers.filter((t) => {
@@ -422,23 +400,11 @@ function DeleteTeacherModal({ teachers, setTeachers, onClose }) {
   /* ===== FINAL DELETE ===== */
   const confirmDelete = async () => {
   try {
-    const token = localStorage.getItem("access_token");
-
-    const res = await fetch(
-      "http://localhost:8000/admin/teachers",
-      {
-        method: "DELETE",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          teacher_ids: selectedIds,
-        }),
-      }
-    );
-
-    if (!res.ok) throw new Error("Delete failed");
+    await api.delete('/admin/teachers', {
+      data: {
+        teacher_ids: selectedIds,
+      },
+    });
 
     const deletedTeachers = teachers.filter(t =>
       selectedIds.includes(t.id)
@@ -637,18 +603,8 @@ function DeleteTeacherModal({ teachers, setTeachers, onClose }) {
                 {recentlyDeleted.length > 0 && (
                   <button
                     onClick={async () => {
-                      const token = localStorage.getItem("access_token");
-
                       for (const teacher of recentlyDeleted) {
-                        await fetch(
-                          `http://localhost:8000/admin/teachers/${teacher.id}/restore`,
-                          {
-                            method: "PUT",
-                            headers: {
-                              Authorization: `Bearer ${token}`,
-                            },
-                          }
-                        );
+                        await api.put(`/admin/teachers/${teacher.id}/restore`);
                       }
 
                       setTeachers(prev => [...prev, ...recentlyDeleted]);
@@ -704,8 +660,6 @@ function UpdateTeacherModal({ teachers, setTeachers, onClose }) {
   /* ===== FINAL CONFIRM UPDATE (FIXED) ===== */
   const confirmUpdate = async () => {
   try {
-    const token = localStorage.getItem("access_token");
-
     const payload = {};
 
     if (editFields.designation)
@@ -715,21 +669,7 @@ function UpdateTeacherModal({ teachers, setTeachers, onClose }) {
       payload.department_id =
       DEPARTMENT_MAP[updatedData.department];
 
-    const res = await fetch(
-      `http://localhost:8000/admin/teachers/${selectedId}`,
-      {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(payload),
-      }
-    );
-
-    if (!res.ok) throw new Error("Update failed");
-
-    const responseData = await res.json();
+    await api.put(`/admin/teachers/${selectedId}`, payload);
 
     setTeachers(prev =>
       prev.map(t => {
@@ -760,8 +700,6 @@ function UpdateTeacherModal({ teachers, setTeachers, onClose }) {
     alert("Failed to update teacher");
   }
  };
-
-
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
@@ -988,25 +926,23 @@ function ReviewRow({ label, oldValue, newValue }) {
 }
 
 /* ================= NOTIFY TEACHER MODAL ================= */
-function NotifyTeacherModal({ teachers, onClose }) {
-  const [step, setStep] = useState("form"); // form | review | success
 
-  const [target, setTarget] = useState("all"); // all | department | individual
+function NotifyTeacherModal({ teachers, onClose }) {
+  const [step, setStep] = useState("form");
+  const [target, setTarget] = useState("all");
   const [department, setDepartment] = useState("CSE");
   const [selectedTeacherId, setSelectedTeacherId] = useState(null);
 
-  const [type, setType] = useState("notice"); // notice | reminder | urgent
+  const [type, setType] = useState("notice");
   const [title, setTitle] = useState("");
   const [message, setMessage] = useState("");
   const [file, setFile] = useState(null);
   const [showHistory, setShowHistory] = useState(false);
   const [history, setHistory] = useState([]);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
-  
-
-
-
+    
   /* ===== FILTERED TEACHERS ===== */
+  
   const departmentTeachers = teachers.filter(
     (t) => t.department === department
   );
@@ -1041,30 +977,13 @@ function NotifyTeacherModal({ teachers, onClose }) {
  /* ===== DELETE ALERT ===== */
  const deleteAlert = async (id) => {
   try {
-    const token = localStorage.getItem("access_token");
-
-    const res = await fetch(
-      `http://localhost:8000/admin/alerts/${id}`,
-      {
-        method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
-      }
-    );
-
-    if (!res.ok) {
-      console.error("Delete failed");
-      return false;
-    }
+    await api.delete(`/admin/alerts/${id}`);
 
     setHistory(prev => prev.filter(a => a.id !== id));
-
-    // 🔥 THIS IS THE IMPORTANT LINE
     setStep("deleteSuccess");
 
     setTimeout(() => {
-      onClose();   // close modal after animation
+      onClose();
     }, 2200);
 
     return true;
@@ -1080,12 +999,6 @@ function NotifyTeacherModal({ teachers, onClose }) {
   /* ===== FINAL SEND ===== */
   const sendNotification = async () => {
   try {
-    const token = localStorage.getItem("access_token");
-
-    if (!token) {
-      alert("Admin not authenticated");
-      return;
-    }
     if (target === "individual" && !selectedTeacherId) {
       alert("Please select a teacher");
       return;
@@ -1117,22 +1030,7 @@ function NotifyTeacherModal({ teachers, onClose }) {
       formData.append("file", file);
     }
 
-    const res = await fetch("http://localhost:8000/admin/alerts", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`
-      },
-      body: formData
-    });
-
-
-    if (!res.ok) {
-  const errorData = await res.json();
-  console.log("FULL Backend Error:", JSON.stringify(errorData, null, 2));
-  alert("Check console for validation error");
-  return;
- }
-
+    await api.post('/admin/alerts', formData);
 
     setStep("success");
 
@@ -1142,7 +1040,7 @@ function NotifyTeacherModal({ teachers, onClose }) {
 
   } catch (error) {
     console.error(error);
-    alert("Something went wrong while sending alert");
+    alert("Something went wrong");
   }
  };
 
@@ -1504,9 +1402,7 @@ function NotifyTeacherModal({ teachers, onClose }) {
   );
 }
 
-/* ================= ASSIGN SUBJECT MODAL ================= */
 function AssignSubjectModal({ teachers, onClose }) {
-  const token = localStorage.getItem("access_token");
   const [department, setDepartment] = useState("All");
   const [search, setSearch] = useState("");
   const [selectedTeacherId, setSelectedTeacherId] = useState(null);
@@ -1520,13 +1416,15 @@ function AssignSubjectModal({ teachers, onClose }) {
   const [section, setSection] = useState("");
 
   useEffect(() => {
-    fetch("http://localhost:8000/admin/subjects", {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    })
-      .then(res => res.json())
-      .then(data => setSubjects(data));
+    const fetchSubjects = async () => {
+      try {
+        const res = await api.get('/admin/subjects');
+        setSubjects(res.data);
+      } catch (err) {
+        console.error("Failed to fetch subjects", err);
+      }
+    };
+    fetchSubjects();
   }, []);
 
   const handleAssign = async () => {
@@ -1536,25 +1434,13 @@ function AssignSubjectModal({ teachers, onClose }) {
   }
 
   for (const item of assignmentList) {
-    const res = await fetch("http://localhost:8000/admin/assign-subject", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({
-        faculty_id: selectedTeacherId,
-        subject_id: parseInt(item.subject_id),
-        year: parseInt(item.year),
-        semester: parseInt(item.semester),
-        section: item.section,
-      }),
+    await api.post('/admin/assign-subject', {
+      faculty_id: selectedTeacherId,
+      subject_id: parseInt(item.subject_id),
+      year: parseInt(item.year),
+      semester: parseInt(item.semester),
+      section: item.section,
     });
-
-    if (!res.ok) {
-      alert("One assignment failed");
-      return;
-    }
   }
 
   setStep("success");
