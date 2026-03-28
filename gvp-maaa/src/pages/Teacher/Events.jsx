@@ -43,7 +43,7 @@ export default function Events() {
   const [eventPreview, setEventPreview] = useState(null);
   const [targetStudentCount, setTargetStudentCount] = useState(0);
 
-  const token = localStorage.getItem("token");
+  const token = localStorage.getItem("access_token");
 
   useEffect(() => {
     fetchEvents();

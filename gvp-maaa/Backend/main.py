@@ -3744,6 +3744,7 @@ def get_my_marks(
 # =========================
 # MARK ALERT AS READ
 # =========================
+@app.patch("/alerts/{alert_id}/read")
 @app.put("/alerts/{alert_id}/read")
 def mark_read(alert_id: int, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
     recipient = db.query(AlertRecipient).filter(

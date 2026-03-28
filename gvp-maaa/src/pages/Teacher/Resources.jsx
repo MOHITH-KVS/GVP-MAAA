@@ -30,7 +30,7 @@ export default function Resources() {
   const [newDesc, setNewDesc] = useState("");
   const [newFile, setNewFile] = useState(null);
 
-  const token = localStorage.getItem("token");
+  const token = localStorage.getItem("access_token");
 
   /* ================= FETCH LOGIC ================= */
 

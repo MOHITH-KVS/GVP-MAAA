@@ -21,7 +21,7 @@ export default function Timetable() {
 
   const fetchTimetable = async () => {
   try {
-    const token = localStorage.getItem("token");
+    const token = localStorage.getItem("access_token");
 
     const res = await fetch(
       "http://localhost:8000/timetables?audience=faculty",

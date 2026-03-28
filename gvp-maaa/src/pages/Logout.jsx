@@ -9,9 +9,8 @@ export default function Logout({ onBack, role = "student" }) {
   // Animate IN
   useEffect(() => {
   // 🔐 CLEAR AUTH DATA
-  localStorage.removeItem("token");
-  localStorage.removeItem("role");
   localStorage.removeItem("access_token");
+  localStorage.removeItem("role");
   localStorage.removeItem("user_role");
   localStorage.removeItem("user");
 

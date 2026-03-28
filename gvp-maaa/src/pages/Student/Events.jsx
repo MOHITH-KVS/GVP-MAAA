@@ -29,7 +29,7 @@ export default function Events() {
     certificate_file: null,
     proof_file: null
   });
-  const token = localStorage.getItem("token");
+  const token = localStorage.getItem("access_token");
 
   useEffect(() => {
     fetchEvents();

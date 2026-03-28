@@ -53,7 +53,7 @@ export default function TeacherSignIn() {
     const data = response.data;
 
     // Store JWT token
-    localStorage.setItem("token", data.access_token);
+    localStorage.setItem("access_token", data.access_token);
     localStorage.setItem("role", "faculty");
     localStorage.setItem("user", JSON.stringify(data));
 

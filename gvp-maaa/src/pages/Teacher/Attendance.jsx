@@ -4,7 +4,7 @@ import AssessmentIcon from "@mui/icons-material/Assessment";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 
 export default function Attendance() {
-  const token = localStorage.getItem("token");
+  const token = localStorage.getItem("access_token");
 
   /* ================= STATES ================= */
   const [subjects, setSubjects] = useState([]);
@@ -39,8 +39,7 @@ export default function Attendance() {
       "http://localhost:8000/faculty/my-subjects",
       {
         headers: {
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-          "Content-Type": "application/json"
+          Authorization: `Bearer ${localStorage.getItem("access_token")}`,
         },
       }
     );
@@ -48,9 +47,7 @@ export default function Attendance() {
     if (!res.ok) {
       if (res.status === 401) {
         alert("Session expired. Please login again.");
-        localStorage.removeItem("token");
-        window.location.href = "/";
-        return;
+        localStorage.removeItem("access_token");
       }
 
       console.error("Failed to fetch subjects");

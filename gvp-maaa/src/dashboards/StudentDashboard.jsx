@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import api from "../utils/axios";
 
 
@@ -51,6 +51,35 @@ export default function StudentDashboard() {
   const unreadCount = alerts.filter(a => !a.is_read).length;
 
   const navigate = useNavigate();
+  const location = useLocation();
+
+  const availableStudentPages = [
+    "overview",
+    "attendance",
+    "marks",
+    "assignments",
+    "timetable",
+    "placement",
+    "events",
+    "insights",
+    "resources",
+    "alerts",
+  ];
+
+  const resolvePageFromPath = (pathname) => {
+    const parts = pathname.split("/").filter(Boolean);
+    const page = parts[1] || "overview";
+    return availableStudentPages.includes(page) ? page : "overview";
+  };
+
+  const goToPage = (page) => {
+    const targetPath = page === "overview" ? "/student" : `/student/${page}`;
+    navigate(targetPath);
+  };
+
+  useEffect(() => {
+    setActivePage(resolvePageFromPath(location.pathname));
+  }, [location.pathname]);
 
 
   // Fetch student profile on mount
@@ -152,26 +181,26 @@ export default function StudentDashboard() {
           <div className="flex-1 overflow-y-auto">
             <SidebarSection title="Academics" open={sidebarOpen}>
               <MenuItem icon={DashboardIcon} label="Overview" open={sidebarOpen}
-                active={activePage === "overview"} onClick={() => setActivePage("overview")} />
+                active={activePage === "overview"} onClick={() => goToPage("overview")} />
               <MenuItem icon={EventAvailableIcon} label="Attendance" open={sidebarOpen}
-                active={activePage === "attendance"} onClick={() => setActivePage("attendance")} />
+                active={activePage === "attendance"} onClick={() => goToPage("attendance")} />
               <MenuItem icon={BarChartIcon} label="Marks" open={sidebarOpen}
-                active={activePage === "marks"} onClick={() => setActivePage("marks")} />
+                active={activePage === "marks"} onClick={() => goToPage("marks")} />
               <MenuItem icon={AssignmentIcon} label="Assignments" open={sidebarOpen}
-                active={activePage === "assignments"} onClick={() => setActivePage("assignments")} />
+                active={activePage === "assignments"} onClick={() => goToPage("assignments")} />
               <MenuItem icon={ScheduleIcon} label="Timetable" open={sidebarOpen}
-                active={activePage === "timetable"} onClick={() => setActivePage("timetable")} />
+                active={activePage === "timetable"} onClick={() => goToPage("timetable")} />
             </SidebarSection>
 
             <SidebarSection title="Career & Growth" open={sidebarOpen}>
               <MenuItem icon={WorkIcon} label="Placement" open={sidebarOpen}
-                active={activePage === "placement"} onClick={() => setActivePage("placement")} />
+                active={activePage === "placement"} onClick={() => goToPage("placement")} />
               <MenuItem icon={EventIcon} label="Events" open={sidebarOpen}
-                active={activePage === "events"} onClick={() => setActivePage("events")} />
+                active={activePage === "events"} onClick={() => goToPage("events")} />
               <MenuItem icon={InsightsIcon} label="Insights" open={sidebarOpen}
-                active={activePage === "insights"} onClick={() => setActivePage("insights")} />
+                active={activePage === "insights"} onClick={() => goToPage("insights")} />
               <MenuItem icon={MenuBookIcon} label="Resources" open={sidebarOpen}
-                active={activePage === "resources"} onClick={() => setActivePage("resources")} />
+                active={activePage === "resources"} onClick={() => goToPage("resources")} />
             </SidebarSection>
 
             <SidebarSection title="System" open={sidebarOpen}>
@@ -181,7 +210,7 @@ export default function StudentDashboard() {
                   label="Alerts"
                   open={sidebarOpen}
                   active={activePage === "alerts"}
-                  onClick={() => setActivePage("alerts")}
+                  onClick={() => goToPage("alerts")}
                 />
                 {unreadCount > 0 && (
                   <span className="absolute top-0 right-4 bg-red-500 text-white text-xs px-2 py-0.5 rounded-full">

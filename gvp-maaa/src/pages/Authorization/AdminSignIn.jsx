@@ -41,7 +41,7 @@ export default function AdminSignIn() {
       const data = response.data;
 
       // Store JWT token
-      localStorage.setItem("token", data.access_token);
+      localStorage.setItem("access_token", data.access_token);
       localStorage.setItem("role", "admin");
       localStorage.setItem("user", JSON.stringify(data));
 

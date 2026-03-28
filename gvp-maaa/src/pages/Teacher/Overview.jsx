@@ -35,7 +35,7 @@ export default function Overview({ profile }) {
   const [selectedMetric, setSelectedMetric] = useState("total");
   const [riskType, setRiskType] = useState("marks"); // 'marks' | 'attendance'
 
-  const token = localStorage.getItem("token");
+  const token = localStorage.getItem("access_token");
   const user = JSON.parse(localStorage.getItem("user"));
 
   // 1. Fetch subjects

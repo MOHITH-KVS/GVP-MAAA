@@ -112,7 +112,7 @@ export default function Marks() {
     try {
       const response = await fetch(
         `http://localhost:8000/faculty/marks/template?year=${year}&section=${section}&subject_id=${subjectObj.subject_id}`,
-        { headers: { "Authorization": `Bearer ${localStorage.getItem("token")}` } }
+        { headers: { "Authorization": `Bearer ${localStorage.getItem("access_token")}` } }
       );
       if (!response.ok) throw new Error("Download failed");
       const blob = await response.blob();
@@ -248,7 +248,7 @@ export default function Marks() {
         `http://localhost:8000/faculty/marks/upload?year=${year}&section=${section}&subject_id=${subjectObj.subject_id}&exam=${exam}`,
         {
           method: "POST",
-          headers: { "Authorization": `Bearer ${localStorage.getItem("token")}` },
+          headers: { "Authorization": `Bearer ${localStorage.getItem("access_token")}` },
           body: formData
         }
       );
@@ -311,7 +311,7 @@ export default function Marks() {
 
       const res = await fetch(`http://localhost:8000/faculty/apply-scaling`, {
         method: "POST",
-        headers: { "Authorization": `Bearer ${localStorage.getItem("token")}` },
+        headers: { "Authorization": `Bearer ${localStorage.getItem("access_token")}` },
         body: formData
       });
 

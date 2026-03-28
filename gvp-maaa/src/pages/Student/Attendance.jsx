@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 
 export default function Attendance() {
 
-  const token = localStorage.getItem("token");
+  const token = localStorage.getItem("access_token");
   const navigate = useNavigate();
 
   const [activeSem, setActiveSem] = useState(null);
@@ -24,7 +24,7 @@ export default function Attendance() {
   useEffect(() => {
     fetch("http://localhost:8000/student/profile", {
       headers: {
-        Authorization: `Bearer ${localStorage.getItem("token")}`,
+        Authorization: `Bearer ${localStorage.getItem("access_token")}`,
         "Content-Type": "application/json"
       }
     })
@@ -41,7 +41,7 @@ export default function Attendance() {
       `http://localhost:8000/student/attendance?semester=${activeSem}`,
       { 
         headers: {
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
+          Authorization: `Bearer ${localStorage.getItem("access_token")}`,
           "Content-Type": "application/json"
        } 
      })
@@ -66,7 +66,7 @@ export default function Attendance() {
       `http://localhost:8000/student/attendance/monthly?semester=${activeSem}&month=${Number(month)}&year=${Number(year)}`,
       { headers: 
         {
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
+          Authorization: `Bearer ${localStorage.getItem("access_token")}`,
           "Content-Type": "application/json"
         } 
      }) 

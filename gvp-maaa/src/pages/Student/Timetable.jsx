@@ -21,7 +21,7 @@ export default function Timetable() {
   const [now, setNow] = useState(Date.now());
 
 
-  const token = localStorage.getItem("token");
+  const token = localStorage.getItem("access_token");
 
   const fetchTimetables = async () => {
   try {
@@ -39,7 +39,7 @@ export default function Timetable() {
       `http://127.0.0.1:8000/timetables?${params.toString()}`,
       {
         headers: {
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
+          Authorization: `Bearer ${localStorage.getItem("access_token")}`,
           "Content-Type": "application/json"
         },
       }
@@ -48,7 +48,7 @@ export default function Timetable() {
     if (!res.ok) {
       if (res.status === 401) {
         alert("Session expired. Please login again.");
-        localStorage.removeItem("token");
+        localStorage.removeItem("access_token");
         window.location.href = "/";
         return;
       }

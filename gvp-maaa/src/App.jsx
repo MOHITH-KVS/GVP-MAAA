@@ -87,7 +87,7 @@ export default function App() {
         </Route>
 
         <Route
-          path="/student"
+          path="/student/*"
           element={
             <ProtectedRoute allowedRole="student">
               <StudentDashboard />

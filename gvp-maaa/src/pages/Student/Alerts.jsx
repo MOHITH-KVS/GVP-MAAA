@@ -5,6 +5,12 @@ export default function Alerts({ alerts = [], setAlerts, loading }) {
   const fetchAlerts = async () => {
     try {
       const token = localStorage.getItem("access_token");
+      console.log("TOKEN:", token);
+
+      if (!token) {
+        console.error("No token found");
+        return;
+      }
 
       const res = await fetch("http://localhost:8000/student/alerts", {
         headers: {
@@ -12,25 +18,37 @@ export default function Alerts({ alerts = [], setAlerts, loading }) {
         },
       });
 
-      if (!res.ok) throw new Error("Failed to fetch alerts");
+      if (res.status === 401) {
+        console.error("Unauthorized - invalid or expired token");
+        return;
+      }
+
+      if (!res.ok) {
+        throw new Error(`Failed to fetch alerts (${res.status})`);
+      }
 
       const data = await res.json();
       setAlerts(data);
     } catch (err) {
       console.error("Error loading alerts:", err);
-    } 
+    }
   };
 
   const markAsRead = async (id) => {
     try {
       const token = localStorage.getItem("access_token");
 
-      await fetch(`http://localhost:8000/alerts/${id}/read`, {
-        method: "PUT",
+      const res = await fetch(`http://localhost:8000/alerts/${id}/read`, {
+        method: "PATCH",
         headers: {
           Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
         },
       });
+
+      if (!res.ok) {
+        throw new Error(`Failed to mark read (${res.status})`);
+      }
 
       setAlerts((prev) =>
         prev.map((a) =>

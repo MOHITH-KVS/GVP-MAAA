@@ -12,7 +12,7 @@ export default function UploadResourceModal({ onClose }) {
   const [uploading, setUploading] = useState(false);
   const [success, setSuccess] = useState(false);
 
-  const token = localStorage.getItem("token");
+  const token = localStorage.getItem("access_token");
 
   // Fetch subjects for the dropdown
   useEffect(() => {

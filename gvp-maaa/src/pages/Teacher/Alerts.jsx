@@ -13,7 +13,7 @@ export default function Alerts({ alerts = [], setAlerts, loading }) {
     const res = await fetch(
       `http://localhost:8000/alerts/${id}/read`,
       {
-        method: "PUT",
+        method: "PATCH",
         headers: {
           Authorization: `Bearer ${token}`,
         },
