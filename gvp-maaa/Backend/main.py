@@ -3850,128 +3850,159 @@ def get_subject_performance(
     department: Optional[str] = Query(None),
     year: Optional[str] = Query(None),
     semester: Optional[str] = Query(None),
+    assessment_type: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     if current_user["role"] != "admin":
         raise HTTPException(status_code=403, detail="Admin only")
 
+    if not department or department == "All" or department.strip() == "" or \
+       not year or str(year) == "All" or str(year).strip() == "" or \
+       not semester or str(semester) == "All" or str(semester).strip() == "" or \
+       not assessment_type or assessment_type == "All" or assessment_type.strip() == "":
+        return {
+            "subjects": [],
+            "kpis": None,
+            "students": []
+        }
+
     query = db.query(Subject)
 
-    if department and department != "All" and department.strip() != "":
-        department_key = department.strip().upper()
-        department_lookup = {
-            "CSE": 11, "CSM": 12, "ECE": 14, "MECH": 15, "CIVIL": 1,
-        }
-        department_id = department_lookup.get(department_key)
-        if department_id is not None:
-            query = query.filter(Subject.department_id == department_id)
+    department_key = department.strip().upper()
+    department_lookup = {
+        "CSE": 11, "CSM": 12, "ECE": 14, "MECH": 15, "CIVIL": 1,
+    }
+    department_id = department_lookup.get(department_key)
+    if department_id is not None:
+        query = query.filter(Subject.department_id == department_id)
 
-    if year is not None and str(year).strip() != "All" and str(year).strip() != "":
-        yr = int(year)
-        year_to_semesters = {1: [1, 2], 2: [3, 4], 3: [5, 6], 4: [7, 8]}
-        semesters = year_to_semesters.get(yr)
-        if semesters:
-            query = query.filter(Subject.semester.in_(semesters))
+    yr = int(year)
+    year_to_semesters = {1: [1, 2], 2: [3, 4], 3: [5, 6], 4: [7, 8]}
+    semesters = year_to_semesters.get(yr)
+    if semesters:
+        query = query.filter(Subject.semester.in_(semesters))
 
-    if semester is not None and str(semester).strip() != "All" and str(semester).strip() != "":
-        query = query.filter(Subject.semester == int(semester))
+    query = query.filter(Subject.semester == int(semester))
+
+    pass_threshold = 40
+    mapping = {
+        "Mid 1": "Mid-1",
+        "Mid 2": "Mid-2",
+        "Semester": "Semester"
+    }
+    db_exam = mapping.get(assessment_type, assessment_type)
+
+    if db_exam in ["Mid-1", "Mid-2"]:
+        pass_threshold = 15
+    elif db_exam == "Semester":
+        pass_threshold = 40
 
     filtered_subjects = query.subquery()
-    PASS_MARK = 40
+
+    base_marks_query = db.query(
+        Mark.student_id,
+        Mark.subject_id,
+        Mark.marks,
+        Mark.exam
+    )
+
+    if db_exam:
+        base_marks_query = base_marks_query.filter(Mark.exam == db_exam)
+            
+    marks_subq = base_marks_query.subquery()
 
     subject_query = (
         db.query(
-            filtered_subjects.c.subject_id,
-            filtered_subjects.c.subject_name,
-            filtered_subjects.c.subject_code,
-            filtered_subjects.c.semester,
-            func.avg(Mark.marks).label("avg_marks"),
-            func.count(Mark.id).label("marks_count"),
-            func.sum(case((Mark.marks < PASS_MARK, 1), else_=0)).label("fail_count"),
-            func.sum(case((Mark.marks >= PASS_MARK, 1), else_=0)).label("pass_count")
+            filtered_subjects.c.subject_name.label("subject_name"),
+            func.avg(marks_subq.c.marks).label("avg_marks"),
+            func.count(func.distinct(marks_subq.c.student_id)).label("total_students"),
+            func.sum(case((marks_subq.c.marks < pass_threshold, 1), else_=0)).label("fail_count"),
+            func.sum(case((marks_subq.c.marks >= pass_threshold, 1), else_=0)).label("pass_count")
         )
-        .outerjoin(Mark, Mark.subject_id == filtered_subjects.c.subject_id)
-        .group_by(
-            filtered_subjects.c.subject_id,
-            filtered_subjects.c.subject_name,
-            filtered_subjects.c.subject_code,
-            filtered_subjects.c.semester
-        )
+        .outerjoin(marks_subq, marks_subq.c.subject_id == filtered_subjects.c.subject_id)
+        .group_by(filtered_subjects.c.subject_name)
         .order_by(filtered_subjects.c.subject_name)
     )
 
     subjects_data = subject_query.all()
 
-    performance = []
+    final_subjects = []
+    total_global_students = 0
+    total_global_passed = 0
 
     for row in subjects_data:
-        avg_score = int(round(row.avg_marks)) if row.avg_marks is not None else 0
-        fail_count = int(row.fail_count or 0)
-        pass_count = int(row.pass_count or 0)
-        marks_count = int(row.marks_count or 0)
+        total_st = int(row.total_students or 0)
+        
+        # We only want to include subjects that actually have data context
+        if total_st == 0:
+            continue
+            
+        pass_ct = int(row.pass_count or 0)
+        pass_rt = round((pass_ct / total_st) * 100, 1)
 
-        perf_item = {
-            "subject_id": row.subject_id,
-            "subject": row.subject_name,
+        total_global_students += total_st
+        total_global_passed += pass_ct
+
+        final_subjects.append({
             "subject_name": row.subject_name,
-            "subject_code": row.subject_code,
-            "semester": row.semester,
-            "avg_score": avg_score,
-            "marks_count": marks_count,
-            "fail_count": fail_count,
-            "pass_count": pass_count,
-            "pass_rate": None
-        }
-        if marks_count > 0:
-            perf_item["pass_rate"] = int(round((pass_count / marks_count) * 100))
-        performance.append(perf_item)
-
-    sorted_risk = sorted([p for p in performance if p["marks_count"] > 0], key=lambda x: (-x["fail_count"], x["avg_score"]))
-    
-    risky_subjects = []
-    for r in sorted_risk[:5]:
-        risky_subjects.append({
-            "subject": r["subject"],
-            "avg_score": r["avg_score"],
-            "fail_count": r["fail_count"]
+            "total_students": total_st,
+            "avg_marks": round(float(row.avg_marks or 0), 1),
+            "failure_count": int(row.fail_count or 0),
+            "pass_rate": pass_rt
         })
 
-    student_marks_query = (
-        db.query(
-            Mark.student_id,
-            func.min(Mark.marks).label("min_score")
-        )
-        .join(filtered_subjects, Mark.subject_id == filtered_subjects.c.subject_id)
-        .group_by(Mark.student_id)
-    )
-    
-    student_marks_results = student_marks_query.all()
-    total_students = len(student_marks_results)
-    
-    passed_students = sum(1 for sm in student_marks_results if sm.min_score is not None and sm.min_score >= PASS_MARK)
-    
-    overall_pass_rate = 0.0
-    if total_students > 0:
-        overall_pass_rate = round((passed_students / total_students) * 100, 1)
-
-    if total_students == 0:
+    if total_global_students == 0:
         return {
             "subjects": [],
-            "pass_rate": 0,
-            "risky_subjects": [],
-            "total_fail_count": 0,
-            "total_marks": 0,
+            "kpis": None,
+            "students": []
         }
 
-    return {
-        "subjects": performance,
-        "pass_rate": overall_pass_rate,
-        "risky_subjects": risky_subjects,
-        "total_fail_count": sum(p["fail_count"] for p in performance),
-        "total_marks": sum(p["marks_count"] for p in performance),
+    # Calculate actual KPIs
+    overall_pass_rate = round((total_global_passed / total_global_students) * 100, 1)
+
+    avg_marks_result = db.query(func.avg(marks_subq.c.marks)).join(
+        filtered_subjects, marks_subq.c.subject_id == filtered_subjects.c.subject_id
+    ).scalar()
+    avg_marks = round(float(avg_marks_result), 1) if avg_marks_result else None
+
+    at_risk_count = db.query(func.count(func.distinct(marks_subq.c.student_id))).join(
+        filtered_subjects, marks_subq.c.subject_id == filtered_subjects.c.subject_id
+    ).filter(marks_subq.c.marks < pass_threshold).scalar()
+
+    kpis = {
+        "avgMarks": avg_marks,
+        "atRisk": at_risk_count or 0,
+        "passRate": overall_pass_rate
     }
 
+    # Fetch Top At-Risk Students specifically
+    at_risk_query = (
+        db.query(
+            User.name.label("student_name"),
+            filtered_subjects.c.subject_name.label("subject"),
+            func.avg(marks_subq.c.marks).label("marks")
+        )
+        .join(filtered_subjects, marks_subq.c.subject_id == filtered_subjects.c.subject_id)
+        .join(Student, marks_subq.c.student_id == Student.student_id)
+        .join(User, Student.student_id == User.user_id)
+        .filter(marks_subq.c.marks < pass_threshold)
+        .group_by(User.name, filtered_subjects.c.subject_name)
+        .order_by(func.avg(marks_subq.c.marks))
+        .limit(5)
+    )
+    at_risk_results = at_risk_query.all()
+    at_risk_students = [
+        {"student_name": r.student_name, "subject": r.subject, "marks": round(r.marks, 1) if r.marks else 0}
+        for r in at_risk_results
+    ]
+
+    return {
+        "subjects": sorted(final_subjects, key=lambda x: (-x["failure_count"], x["avg_marks"])),
+        "kpis": kpis,
+        "students": at_risk_students
+    }
 
 # =========================
 # ADMIN – CREATE SUBJECT

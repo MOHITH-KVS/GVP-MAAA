@@ -19,13 +19,27 @@ export default function Academics() {
   const [departmentFilter, setDepartmentFilter] = useState("");
   const [yearFilter, setYearFilter] = useState("");
   const [semesterFilter, setSemesterFilter] = useState("");
+  const [assessmentFilter, setAssessmentFilter] = useState("Mid 1");
   const [subjectPerformance, setSubjectPerformance] = useState([]);
   const [performanceLoading, setPerformanceLoading] = useState(false);
   const [performanceError, setPerformanceError] = useState("");
-  const [overallPassRate, setOverallPassRate] = useState(null);
+  const [kpis, setKpis] = useState({
+    avgMarks: null,
+    atRisk: null,
+    passRate: null,
+  });
   const [riskySubjects, setRiskySubjects] = useState([]);
+  const [atRiskStudents, setAtRiskStudents] = useState([]);
 
   const fetchSubjectPerformance = async () => {
+    if (!departmentFilter || !yearFilter || !semesterFilter || !assessmentFilter) {
+      setSubjectPerformance([]);
+      setRiskySubjects([]);
+      setAtRiskStudents([]);
+      setKpis({ avgMarks: null, atRisk: null, passRate: null });
+      return;
+    }
+
     setPerformanceLoading(true);
     setPerformanceError("");
 
@@ -34,24 +48,27 @@ export default function Academics() {
       if (departmentFilter) params.department = departmentFilter;
       if (yearFilter) params.year = Number(yearFilter);
       if (semesterFilter) params.semester = Number(semesterFilter);
+      if (assessmentFilter) params.assessment_type = assessmentFilter;
 
       const response = await api.get("/admin/subject-performance", {
         params,
       });
 
       const payload = response.data || {};
-      const subjects = Array.isArray(payload.subjects) ? payload.subjects : [];
+      const consolidatedSubjects = Array.isArray(payload.subjects) ? payload.subjects : [];
 
-      setSubjectPerformance(subjects);
-      setOverallPassRate(payload.pass_rate ?? null);
-      setRiskySubjects(payload.risky_subjects || []);
+      setSubjectPerformance(consolidatedSubjects);
+      setRiskySubjects(consolidatedSubjects);
+      setAtRiskStudents(payload.students || []);
+      setKpis(payload.kpis || { avgMarks: null, atRisk: null, passRate: null });
 
     } catch (error) {
       console.error("Subject performance fetch failed", error);
       setSubjectPerformance([]);
-      setOverallPassRate(null);
       setRiskySubjects([]);
-      setPerformanceError("Unable to load subject performance at the moment.");
+      setAtRiskStudents([]);
+      setKpis({ avgMarks: null, atRisk: null, passRate: null });
+      setPerformanceError("Unable to load data");
     } finally {
       setPerformanceLoading(false);
     }
@@ -59,7 +76,7 @@ export default function Academics() {
 
   useEffect(() => {
     fetchSubjectPerformance();
-  }, [departmentFilter, yearFilter, semesterFilter]);
+  }, [departmentFilter, yearFilter, semesterFilter, assessmentFilter]);
 
   return (
     <div className="space-y-10">
@@ -133,14 +150,24 @@ export default function Academics() {
           <option value="7">Sem 7</option>
           <option value="8">Sem 8</option>
         </select>
+
+        <select
+          className="border px-3 py-2 rounded-lg"
+          value={assessmentFilter}
+          onChange={(e) => setAssessmentFilter(e.target.value)}
+        >
+          <option value="">All Assessments</option>
+          <option value="Mid 1">Mid 1</option>
+          <option value="Mid 2">Mid 2</option>
+          <option value="Semester">Semester</option>
+        </select>
       </div>
 
       {/* ================= KPI CARDS ================= */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <Kpi title="Avg Attendance" value="82%" />
-        <Kpi title="Avg CGPA" value="7.6" />
-        <Kpi title="At-Risk Students" value="154" danger />
-        <Kpi title="Pass Rate (%)" value={`${overallPassRate ?? 0}%`} />
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <Kpi title="Avg Marks" value={kpis.avgMarks !== null ? kpis.avgMarks : "--"} />
+        <Kpi title="At-Risk Students" value={kpis.atRisk !== null ? kpis.atRisk : "--"} danger />
+        <Kpi title="Pass Rate (%)" value={kpis.passRate !== null ? `${kpis.passRate}%` : "--"} />
       </div>
 
       {/* ================= SUBJECT PERFORMANCE OVERVIEW ================= */}
@@ -158,21 +185,22 @@ export default function Academics() {
           <div className="rounded-2xl border border-dashed border-slate-200 p-12 text-center text-slate-500">
             Loading subject performance...
           </div>
+        ) : !departmentFilter || !yearFilter || !semesterFilter || !assessmentFilter ? (
+          <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-12 text-center text-slate-500">
+            Please select all filters
+          </div>
         ) : performanceError ? (
           <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-red-700">
             {performanceError}
           </div>
         ) : subjectPerformance.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-slate-200 p-12 text-center text-slate-500">
-            No academic data available for selected filters
-          </div>
-        ) : subjectPerformance.length === 1 ? (
-          <div className="rounded-2xl border border-dashed border-slate-200 p-12 text-center text-slate-500">
-            Not enough data to compare subjects
+            No data available for selected filters
           </div>
         ) : (
           <div className="space-y-6">
             <div className="h-[320px] w-full">
+              {console.log("Chart Data:", subjectPerformance)}
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart
                   data={subjectPerformance}
@@ -182,37 +210,70 @@ export default function Academics() {
                   <XAxis dataKey="subject_name" tick={{ fontSize: 12 }} />
                   <YAxis domain={[0, 100]} tick={{ fontSize: 12 }} />
                   <Tooltip />
-                  <Bar dataKey="avg_score" fill="#4338ca" radius={[8, 8, 0, 0]} />
+                  <Bar dataKey="avg_marks" fill="#4338ca" radius={[8, 8, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
 
-            {/* ================= WEAK SUBJECTS TABLE ================= */}
+            {/* ================= SUBJECTS OVERVIEW TABLE ================= */}
             <div className="pt-6 border-t">
-              <h3 className="text-lg font-semibold text-slate-800 mb-4">Highest Failure Subjects</h3>
+              <h3 className="text-lg font-semibold text-slate-800 mb-4">Subjects Overview</h3>
               {riskySubjects.length > 0 ? (
                 <div className="overflow-x-auto rounded-xl border border-slate-200">
                   <table className="w-full text-left text-sm text-slate-600">
                     <thead className="bg-slate-50 text-slate-800">
                       <tr>
                         <th className="px-4 py-3 font-semibold border-b">Subject Name</th>
+                        <th className="px-4 py-3 font-semibold border-b">Total Students</th>
                         <th className="px-4 py-3 font-semibold border-b">Average Marks</th>
                         <th className="px-4 py-3 font-semibold border-b">Failure Count</th>
+                        <th className="px-4 py-3 font-semibold border-b">Pass Rate (%)</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200">
                       {riskySubjects.map((rs, idx) => (
                         <tr key={idx} className="hover:bg-slate-50 transition">
-                          <td className="px-4 py-3 font-medium text-slate-700">{rs.subject}</td>
-                          <td className="px-4 py-3">{rs.avg_score}</td>
-                          <td className="px-4 py-3 text-red-600 font-semibold">{rs.fail_count}</td>
+                          <td className="px-4 py-3 font-medium text-slate-700">{rs.subject_name}</td>
+                          <td className="px-4 py-3">{rs.total_students}</td>
+                          <td className="px-4 py-3">{rs.avg_marks}</td>
+                          <td className="px-4 py-3 text-red-600 font-semibold">{rs.failure_count}</td>
+                          <td className="px-4 py-3">{rs.pass_rate}%</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
               ) : (
-                <p className="text-sm text-slate-500">No failure data recorded.</p>
+                <p className="text-sm text-slate-500">No subject overview data recorded.</p>
+              )}
+            </div>
+
+            {/* ================= AT-RISK STUDENTS ================= */}
+            <div className="pt-6 border-t">
+              <h3 className="text-lg font-semibold text-slate-800 mb-4">Top At-Risk Students</h3>
+              {atRiskStudents.length > 0 ? (
+                <div className="overflow-x-auto rounded-xl border border-slate-200">
+                  <table className="w-full text-left text-sm text-slate-600">
+                    <thead className="bg-slate-50 text-slate-800">
+                      <tr>
+                        <th className="px-4 py-3 font-semibold border-b">Student Name</th>
+                        <th className="px-4 py-3 font-semibold border-b">Subject</th>
+                        <th className="px-4 py-3 font-semibold border-b">Marks</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200">
+                      {atRiskStudents.map((rs, idx) => (
+                        <tr key={idx} className="hover:bg-slate-50 transition">
+                          <td className="px-4 py-3 font-medium text-slate-700">{rs.student_name}</td>
+                          <td className="px-4 py-3">{rs.subject}</td>
+                          <td className="px-4 py-3 text-red-600 font-semibold">{rs.marks}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-sm text-slate-500">No at-risk students recorded.</p>
               )}
             </div>
           </div>
