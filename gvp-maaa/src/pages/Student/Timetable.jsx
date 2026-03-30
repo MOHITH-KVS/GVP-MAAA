@@ -36,7 +36,7 @@ export default function Timetable() {
     params.append("audience", "student");
 
     const res = await fetch(
-      `http://127.0.0.1:8000/timetables?${params.toString()}`,
+      `http://localhost:8000/timetables?${params.toString()}`,
       {
         headers: {
           Authorization: `Bearer ${localStorage.getItem("access_token")}`,
@@ -196,7 +196,7 @@ function TimetableCard({ t, type, now }) {
         <button
           onClick={() =>
             window.open(
-              `http://127.0.0.1:8000${t.file_url}`,
+              `http://localhost:8000${t.file_url}`,
               "_blank"
             )
           }
@@ -226,5 +226,6 @@ function getRelativeTime(dateString, now) {
 
   return `${Math.floor(diff / 604800)} weeks ago`;
 }
+
 
 

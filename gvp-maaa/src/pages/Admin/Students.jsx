@@ -63,10 +63,6 @@ export default function Students() {
     return bRisk - aRisk;
   });
 
-  const atRiskCount = students.filter(
-    (s) => s.attendance < 75
-  ).length;
-
   const downloadRiskReport = async () => {
     try {
       const response = await api.post('/admin/students/risk-report', {
@@ -231,77 +227,6 @@ export default function Students() {
             })}
           </tbody>
         </table>
-      </div>
-
-      {/* ================= STUDENT ANALYTICS ================= */}
-      <div className="space-y-4">
-
-        <h2 className="text-lg font-semibold">
-          Student Analytics & Insights
-        </h2>
-        <p className="text-sm text-gray-500">
-          Performance distribution, risk analysis, and academic health overview
-        </p>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-
-          {/* Card 1 */}
-          <div className="bg-white rounded-xl border p-4">
-            <h3 className="font-medium mb-1">
-              At-Risk vs Safe Students
-            </h3>
-            <p className="text-xs text-gray-500 mb-3">
-              Overall academic risk distribution
-            </p>
-
-            <div className="h-40 border border-dashed rounded-lg flex items-center justify-center text-sm text-gray-400">
-              📊 Analytics Agent will render chart here
-            </div>
-          </div>
-
-          {/* Card 2 */}
-          <div className="bg-white rounded-xl border p-4">
-            <h3 className="font-medium mb-1">
-              Attendance Distribution
-            </h3>
-            <p className="text-xs text-gray-500 mb-3">
-              Attendance range across students
-            </p>
-
-            <div className="h-40 border border-dashed rounded-lg flex items-center justify-center text-sm text-gray-400">
-              📊 Analytics Agent will render chart here
-            </div>
-          </div>
-
-          {/* Card 3 */}
-          <div className="bg-white rounded-xl border p-4">
-            <h3 className="font-medium mb-1">
-              CGPA Distribution
-            </h3>
-            <p className="text-xs text-gray-500 mb-3">
-              Academic performance breakdown
-            </p>
-
-            <div className="h-40 border border-dashed rounded-lg flex items-center justify-center text-sm text-gray-400">
-              📊 Analytics Agent will render chart here
-            </div>
-          </div>
-
-          {/* Card 4 */}
-          <div className="bg-white rounded-xl border p-4">
-            <h3 className="font-medium mb-1">
-              Section-wise Risk Analysis
-            </h3>
-            <p className="text-xs text-gray-500 mb-3">
-              Risk comparison between sections
-            </p>
-
-            <div className="h-40 border border-dashed rounded-lg flex items-center justify-center text-sm text-gray-400">
-              📊 Analytics Agent will render chart here
-            </div>
-          </div>
-
-        </div>
       </div>
 
       {/* ================= MODALS ================= */}

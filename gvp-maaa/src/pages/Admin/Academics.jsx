@@ -1,15 +1,65 @@
 import { useState, useEffect } from "react";
 import api from "../../utils/api";
+import {
+  ResponsiveContainer,
+  BarChart,
+  XAxis,
+  YAxis,
+  Tooltip,
+  Bar,
+  CartesianGrid,
+} from "recharts";
 
 /* ================= ADMIN ACADEMICS ================= */
 
 export default function Academics() {
-  const [showModal, setShowModal] = useState(false);
-  const [mode, setMode] = useState(null); // "student" | "faculty"
   const [showSubjectModal, setShowSubjectModal] = useState(false);
-  const [showSyllabusModal, setShowSyllabusModal] = useState(false);
   const [showNoticeModal, setShowNoticeModal] = useState(false);
 
+  const [departmentFilter, setDepartmentFilter] = useState("");
+  const [yearFilter, setYearFilter] = useState("");
+  const [semesterFilter, setSemesterFilter] = useState("");
+  const [subjectPerformance, setSubjectPerformance] = useState([]);
+  const [performanceLoading, setPerformanceLoading] = useState(false);
+  const [performanceError, setPerformanceError] = useState("");
+  const [overallPassRate, setOverallPassRate] = useState(null);
+  const [riskySubjects, setRiskySubjects] = useState([]);
+
+  const fetchSubjectPerformance = async () => {
+    setPerformanceLoading(true);
+    setPerformanceError("");
+
+    try {
+      const params = {};
+      if (departmentFilter) params.department = departmentFilter;
+      if (yearFilter) params.year = Number(yearFilter);
+      if (semesterFilter) params.semester = Number(semesterFilter);
+
+      const response = await api.get("/admin/subject-performance", {
+        params,
+      });
+
+      const payload = response.data || {};
+      const subjects = Array.isArray(payload.subjects) ? payload.subjects : [];
+
+      setSubjectPerformance(subjects);
+      setOverallPassRate(payload.pass_rate ?? null);
+      setRiskySubjects(payload.risky_subjects || []);
+
+    } catch (error) {
+      console.error("Subject performance fetch failed", error);
+      setSubjectPerformance([]);
+      setOverallPassRate(null);
+      setRiskySubjects([]);
+      setPerformanceError("Unable to load subject performance at the moment.");
+    } finally {
+      setPerformanceLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchSubjectPerformance();
+  }, [departmentFilter, yearFilter, semesterFilter]);
 
   return (
     <div className="space-y-10">
@@ -26,7 +76,6 @@ export default function Academics() {
 
       {/* ================= ADMIN ACTIONS ================= */}
       <div className="bg-white px-4 py-3 rounded-xl border flex gap-3 flex-wrap items-center">
-
         <button
           onClick={() => setShowSubjectModal(true)}
           className="px-4 py-2 rounded-xl border bg-white hover:bg-gray-50"
@@ -35,45 +84,54 @@ export default function Academics() {
         </button>
 
         <button
-          onClick={() => setShowSyllabusModal(true)}
-          className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm hover:bg-gray-50 transition"
-        >
-          🗂 Syllabus Progress
-        </button>
-
-        <button
           onClick={() => setShowNoticeModal(true)}
           className="ml-auto px-4 py-2 rounded-lg border border-amber-300 text-amber-600 text-sm hover:bg-amber-50 transition"
         >
           📄 Upload Academic Notice
         </button>
-
       </div>
-
 
       {/* ================= FILTERS ================= */}
       <div className="bg-white p-4 rounded-xl border flex flex-wrap gap-4">
-        <select className="border px-3 py-2 rounded-lg">
-          <option>All Departments</option>
-          <option>CSE</option>
-          <option>CSM</option>
-          <option>ECE</option>
-          <option>MECH</option>
-          <option>CIVIL</option>
+        <select
+          className="border px-3 py-2 rounded-lg"
+          value={departmentFilter}
+          onChange={(e) => setDepartmentFilter(e.target.value)}
+        >
+          <option value="">All Departments</option>
+          <option value="CSE">CSE</option>
+          <option value="CSM">CSM</option>
+          <option value="ECE">ECE</option>
+          <option value="MECH">MECH</option>
+          <option value="CIVIL">CIVIL</option>
         </select>
 
-        <select className="border px-3 py-2 rounded-lg">
-          <option>All Years</option>
-          <option>1st Year</option>
-          <option>2nd Year</option>
-          <option>3rd Year</option>
-          <option>4th Year</option>
+        <select
+          className="border px-3 py-2 rounded-lg"
+          value={yearFilter}
+          onChange={(e) => setYearFilter(e.target.value)}
+        >
+          <option value="">All Years</option>
+          <option value="1">1st Year</option>
+          <option value="2">2nd Year</option>
+          <option value="3">3rd Year</option>
+          <option value="4">4th Year</option>
         </select>
 
-        <select className="border px-3 py-2 rounded-lg">
-          <option>All Semesters</option>
-          <option>Sem 1</option>
-          <option>Sem 2</option>
+        <select
+          className="border px-3 py-2 rounded-lg"
+          value={semesterFilter}
+          onChange={(e) => setSemesterFilter(e.target.value)}
+        >
+          <option value="">All Semesters</option>
+          <option value="1">Sem 1</option>
+          <option value="2">Sem 2</option>
+          <option value="3">Sem 3</option>
+          <option value="4">Sem 4</option>
+          <option value="5">Sem 5</option>
+          <option value="6">Sem 6</option>
+          <option value="7">Sem 7</option>
+          <option value="8">Sem 8</option>
         </select>
       </div>
 
@@ -82,54 +140,88 @@ export default function Academics() {
         <Kpi title="Avg Attendance" value="82%" />
         <Kpi title="Avg CGPA" value="7.6" />
         <Kpi title="At-Risk Students" value="154" danger />
-        <Kpi title="Syllabus Delays" value="8 Subjects" warning />
+        <Kpi title="Pass Rate (%)" value={`${overallPassRate ?? 0}%`} />
       </div>
 
+      {/* ================= SUBJECT PERFORMANCE OVERVIEW ================= */}
+      <div className="rounded-3xl bg-white border p-6 space-y-5">
+        <div>
+          <h2 className="text-xl font-semibold text-slate-800">
+            Subject Performance Overview
+          </h2>
+          <p className="text-sm text-slate-600">
+            Average performance across subjects
+          </p>
+        </div>
 
-      {/* ================= STUDENT ANALYTICS ================= */}
-      <AnalyticsSection title="Student Academic Health">
-        <ChartCard title="Attendance Trend">
-          Analytics agent will render attendance trends
-        </ChartCard>
-        <ChartCard title="CGPA Distribution">
-          Analytics agent will render CGPA distribution
-        </ChartCard>
-        <ChartCard title="At-Risk Students by Year">
-          Analytics agent will render risk segmentation
-        </ChartCard>
-      </AnalyticsSection>
+        {performanceLoading ? (
+          <div className="rounded-2xl border border-dashed border-slate-200 p-12 text-center text-slate-500">
+            Loading subject performance...
+          </div>
+        ) : performanceError ? (
+          <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-red-700">
+            {performanceError}
+          </div>
+        ) : subjectPerformance.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-slate-200 p-12 text-center text-slate-500">
+            No academic data available for selected filters
+          </div>
+        ) : subjectPerformance.length === 1 ? (
+          <div className="rounded-2xl border border-dashed border-slate-200 p-12 text-center text-slate-500">
+            Not enough data to compare subjects
+          </div>
+        ) : (
+          <div className="space-y-6">
+            <div className="h-[320px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={subjectPerformance}
+                  margin={{ top: 16, right: 20, left: 0, bottom: 0 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                  <XAxis dataKey="subject_name" tick={{ fontSize: 12 }} />
+                  <YAxis domain={[0, 100]} tick={{ fontSize: 12 }} />
+                  <Tooltip />
+                  <Bar dataKey="avg_score" fill="#4338ca" radius={[8, 8, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
 
-      {/* ================= FACULTY IMPACT ================= */}
-      <AnalyticsSection title="Teaching Impact Analysis">
-        <ChartCard title="Avg Student Attendance per Faculty">
-          Analytics agent will render faculty impact
-        </ChartCard>
-        <ChartCard title="Avg Subject CGPA per Faculty">
-          Analytics agent will render subject performance
-        </ChartCard>
-        <ChartCard title="Subjects with Weak Outcomes">
-          Analytics agent will highlight problem subjects
-        </ChartCard>
-      </AnalyticsSection>
+            {/* ================= WEAK SUBJECTS TABLE ================= */}
+            <div className="pt-6 border-t">
+              <h3 className="text-lg font-semibold text-slate-800 mb-4">Highest Failure Subjects</h3>
+              {riskySubjects.length > 0 ? (
+                <div className="overflow-x-auto rounded-xl border border-slate-200">
+                  <table className="w-full text-left text-sm text-slate-600">
+                    <thead className="bg-slate-50 text-slate-800">
+                      <tr>
+                        <th className="px-4 py-3 font-semibold border-b">Subject Name</th>
+                        <th className="px-4 py-3 font-semibold border-b">Average Marks</th>
+                        <th className="px-4 py-3 font-semibold border-b">Failure Count</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200">
+                      {riskySubjects.map((rs, idx) => (
+                        <tr key={idx} className="hover:bg-slate-50 transition">
+                          <td className="px-4 py-3 font-medium text-slate-700">{rs.subject}</td>
+                          <td className="px-4 py-3">{rs.avg_score}</td>
+                          <td className="px-4 py-3 text-red-600 font-semibold">{rs.fail_count}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-sm text-slate-500">No failure data recorded.</p>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
 
-      {/* ================= SYLLABUS TRACKING ================= */}
-      <AnalyticsSection title="Syllabus Completion Tracking">
-        <ChartCard title="Planned vs Completed Syllabus">
-          Analytics agent will render syllabus progress
-        </ChartCard>
-        <ChartCard title="Delayed Subjects by Department">
-          Analytics agent will render delay analysis
-        </ChartCard>
-        <ChartCard title="Faculty-wise Syllabus Status">
-          Analytics agent will render faculty progress
-        </ChartCard>
-      </AnalyticsSection>
-
-      
       {/* ================= ACADEMICS MODALS ================= */}
       {showSubjectModal && (<ManageSubjectsModal onClose={() => setShowSubjectModal(false)}/>)}
 
-      {showSyllabusModal && ( <SyllabusProgressModal onClose={() => setShowSyllabusModal(false)} />)}
 
       {showNoticeModal && ( <UploadAcademicNoticeModal onClose={() => setShowNoticeModal(false)} />)}
 
@@ -571,255 +663,6 @@ function ManageSubjectsModal({ onClose }) {
   );
 }
 
-/* ================= SYLLABUS PROGRESS MODAL ================= */
-function SyllabusProgressModal({ onClose }) {
-  /* ===== TEMP DATA ===== */
-  const SUBJECTS = [
-    {
-      id: 1,
-      code: "CS301",
-      name: "Database Management Systems",
-      faculty: "Dr. Ramesh Kumar",
-      expected: 70,
-      actual: 62,
-    },
-    {
-      id: 2,
-      code: "CS302",
-      name: "Operating Systems",
-      faculty: "Prof. Anjali Sharma",
-      expected: 70,
-      actual: 74,
-    },
-    {
-      id: 3,
-      code: "CS303",
-      name: "Computer Networks",
-      faculty: "Dr. Suresh Rao",
-      expected: 70,
-      actual: 45,
-    },
-  ];
-
-  const POLICY = { warning: 10 };
-
-  const [filter, setFilter] = useState({
-    department: "",
-    year: "",
-    semester: "",
-  });
-
-  const [alertSubject, setAlertSubject] = useState(null);
-  const [alertMsg, setAlertMsg] = useState("");
-  const [sending, setSending] = useState(false);
-  const [sent, setSent] = useState(false);
-
-  /* ===== STATUS LOGIC ===== */
-  const getStatus = (expected, actual) => {
-    const gap = expected - actual;
-    if (gap <= 0)
-      return { label: "On Track", color: "bg-green-100 text-green-700" };
-    if (gap <= POLICY.warning)
-      return { label: "Needs Attention", color: "bg-amber-100 text-amber-700" };
-    return { label: "Delayed", color: "bg-red-100 text-red-700" };
-  };
-
-  /* ===== PROGRESS BAR ===== */
-  const ProgressBar = ({ value }) => {
-    let color = "bg-green-500";
-    if (value < 60) color = "bg-red-500";
-    else if (value < 70) color = "bg-amber-500";
-
-    return (
-      <div className="w-full bg-gray-200 rounded-full h-2">
-        <div
-          className={`${color} h-2 rounded-full transition-all duration-700`}
-          style={{ width: `${value}%` }}
-        />
-      </div>
-    );
-  };
-
-  /* ===== SEND ALERT ===== */
-  const handleSendAlert = () => {
-    setSending(true);
-
-    setTimeout(() => {
-      setSending(false);
-      setSent(true);
-
-      setTimeout(() => {
-        setSent(false);
-        setAlertMsg("");
-        setAlertSubject(null);
-      }, 1800);
-    }, 1400);
-  };
-
-  return (
-    <div className="fixed top-0 left-0 w-screen h-screen bg-black/50 z-[9999] flex items-center justify-center">
-      <div className="bg-white w-full max-w-5xl rounded-2xl p-6 space-y-6">
-
-        {/* HEADER */}
-        <div className="flex justify-between items-center">
-          <h2 className="text-lg font-semibold">Syllabus Progress</h2>
-          <button onClick={onClose}>✕</button>
-        </div>
-
-        {/* FILTERS (RESTORED) */}
-        <div className="grid grid-cols-3 gap-4">
-          <select
-            className="border px-3 py-2 rounded-lg"
-            onChange={(e) => setFilter({ ...filter, department: e.target.value })}
-          >
-            <option value="">Department</option>
-            <option>CSE</option>
-            <option>CSM</option>
-            <option>ECE</option>
-            <option>MECH</option>
-            <option>CIVIL</option>
-          </select>
-
-          <select
-            className="border px-3 py-2 rounded-lg"
-            onChange={(e) => setFilter({ ...filter, year: e.target.value })}
-          >
-            <option value="">Year</option>
-            <option>1st Year</option>
-            <option>2nd Year</option>
-            <option>3rd Year</option>
-            <option>4th Year</option>
-          </select>
-
-          <select
-            className="border px-3 py-2 rounded-lg"
-            onChange={(e) => setFilter({ ...filter, semester: e.target.value })}
-          >
-            <option value="">Semester</option>
-            <option>Sem 1</option>
-            <option>Sem 2</option>
-          </select>
-        </div>
-
-        {/* TABLE */}
-        <div className="border rounded-xl overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-4 py-2 text-left">Subject</th>
-                <th className="px-4 py-2 text-left">Faculty</th>
-                <th className="px-4 py-2 text-center">Expected</th>
-                <th className="px-4 py-2 text-center">Actual</th>
-                <th className="px-4 py-2">Progress</th>
-                <th className="px-4 py-2 text-center">Status</th>
-                <th className="px-4 py-2 text-center">Alert</th>
-              </tr>
-            </thead>
-            <tbody>
-              {SUBJECTS.map((s) => {
-                const status = getStatus(s.expected, s.actual);
-                return (
-                  <tr key={s.id} className="border-t">
-                    <td className="px-4 py-2">
-                      <p className="font-medium">{s.code}</p>
-                      <p className="text-xs text-gray-500">{s.name}</p>
-                    </td>
-
-                    <td className="px-4 py-2">{s.faculty}</td>
-
-                    <td className="px-4 py-2 text-center">{s.expected}%</td>
-
-                    <td className="px-4 py-2 text-center">{s.actual}%</td>
-
-                    <td className="px-4 py-2">
-                      <ProgressBar value={s.actual} />
-                    </td>
-
-                    <td className="px-4 py-2 text-center">
-                      <span className={`px-3 py-1 text-xs rounded-full ${status.color}`}>
-                        {status.label}
-                      </span>
-                    </td>
-
-                    <td className="px-4 py-2 text-center">
-                      <button
-                        onClick={() => setAlertSubject(s)}
-                        className="px-3 py-1 text-xs rounded-lg border text-red-600 hover:bg-red-50"
-                      >
-                        Alert
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* ALERT MODAL */}
-      {alertSubject && (
-        <div className="fixed inset-0 bg-black/40 z-60 flex items-center justify-center">
-          <div className="bg-white w-full max-w-md rounded-2xl p-6 space-y-4">
-
-            {!sent ? (
-              <>
-                <h3 className="text-lg font-semibold">Send Alert to Faculty</h3>
-
-                <div className="text-sm">
-                  <p><b>Faculty:</b> {alertSubject.faculty}</p>
-                  <p><b>Subject:</b> {alertSubject.code} – {alertSubject.name}</p>
-                </div>
-
-                <textarea
-                  rows={4}
-                  value={alertMsg}
-                  onChange={(e) => setAlertMsg(e.target.value)}
-                  placeholder="Write alert message..."
-                  className="w-full border rounded-lg px-3 py-2"
-                />
-
-                <div className="flex justify-end gap-3">
-                  <button
-                    onClick={() => setAlertSubject(null)}
-                    className="px-4 py-2 border rounded-lg"
-                  >
-                    Cancel
-                  </button>
-
-                  <button
-                    onClick={handleSendAlert}
-                    disabled={sending || !alertMsg}
-                    className="px-4 py-2 bg-red-600 text-white rounded-lg disabled:opacity-50 flex items-center gap-2"
-                  >
-                    {sending && (
-                      <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    )}
-                    {sending ? "Sending..." : "Send Alert"}
-                  </button>
-                </div>
-              </>
-            ) : (
-              /* SUCCESS (RED) */
-              <div className="text-center py-10 space-y-3">
-                <div className="mx-auto w-16 h-16 rounded-full bg-red-100 flex items-center justify-center animate-bounce">
-                  <span className="text-3xl text-red-600">✓</span>
-                </div>
-                <h4 className="font-semibold text-red-600">
-                  Alert Sent Successfully
-                </h4>
-                <p className="text-sm text-gray-500">
-                  Faculty has been notified
-                </p>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 
 /* ================= SIMPLE ACADEMIC MODAL ================= */
  function UploadAcademicNoticeModal({ onClose }) {
@@ -1073,28 +916,6 @@ function ActionBtn({ label, danger, onClick }) {
     >
       {label}
     </button>
-  );
-}
-
-function AnalyticsSection({ title, children }) {
-  return (
-    <div className="space-y-4">
-      <h2 className="text-lg font-semibold">{title}</h2>
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function ChartCard({ title, children }) {
-  return (
-    <div className="p-6 rounded-2xl border bg-white h-64 flex flex-col">
-      <p className="font-medium mb-2">{title}</p>
-      <div className="flex-1 flex items-center justify-center text-sm text-gray-400 border rounded-lg">
-        {children}
-      </div>
-    </div>
   );
 }
 

@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware  # type: ignore
 from io import BytesIO
 from fastapi.responses import StreamingResponse  # type: ignore
 from sqlalchemy.orm import Session  # type: ignore
-from sqlalchemy import text,extract, func, or_  # type: ignore
+from sqlalchemy import text, extract, func, or_, case  # type: ignore
 from typing import Optional, List
 from security import hash_password, verify_password  # type: ignore
 from mail import send_reset_email  # type: ignore
@@ -222,6 +222,50 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def build_attendance_trend(records, view: str = "daily"):
+    view_key = (view or "daily").strip().lower()
+    if view_key not in {"daily", "weekly", "monthly"}:
+        view_key = "daily"
+
+    if view_key == "daily":
+        sorted_records = sorted(records, key=lambda r: r.attendance_date)
+        return [
+            {
+                "date": r.attendance_date.strftime("%Y-%m-%d"),
+                "percentage": 100 if r.status else 0,
+            }
+            for r in sorted_records
+        ]
+
+    grouped = {}
+    for record in records:
+        if view_key == "weekly":
+            year, week_num, _ = record.attendance_date.isocalendar()
+            key = (year, week_num)
+            label = f"Week {week_num}"
+        else:
+            year = record.attendance_date.year
+            month_index = record.attendance_date.month
+            key = (year, month_index)
+            label = record.attendance_date.strftime("%b")
+
+        bucket = grouped.get(key)
+        if bucket is None:
+            bucket = {"date": label, "present": 0, "total": 0}
+            grouped[key] = bucket
+
+        bucket["present"] += 1 if record.status else 0
+        bucket["total"] += 1
+
+    sorted_items = sorted(grouped.items(), key=lambda item: item[0])
+    trend = []
+    for _, bucket in sorted_items:
+        percentage = round((bucket["present"] / bucket["total"]) * 100, 2) if bucket["total"] > 0 else 0
+        trend.append({"date": bucket["date"], "percentage": percentage})
+
+    return trend
 
 # -------------------------
 # Root Check
@@ -1420,6 +1464,8 @@ def get_class_attendance_summary(
 def get_student_attendance(
     semester: int,
     subject_id: Optional[int] = None,
+    student_id: Optional[int] = None,
+    view: str = "daily",
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -1427,9 +1473,13 @@ def get_student_attendance(
     if current_user["role"] != "student":
         raise HTTPException(status_code=403, detail="Student only")
 
+    selected_student_id = student_id or current_user["user_id"]
+    if student_id and student_id != current_user["user_id"]:
+        raise HTTPException(status_code=403, detail="Cannot access another student's attendance")
+
     # Get student record
     student = db.query(Student).filter(
-        Student.student_id == current_user["user_id"]
+        Student.student_id == selected_student_id
     ).first()
 
     if not student:
@@ -1476,13 +1526,21 @@ def get_student_attendance(
             for r in last_5_records
         ]
 
+        attendance_records = db.query(Attendance).filter(
+            Attendance.student_id == student.student_id,
+            Attendance.subject_id == subject.subject_id
+        ).order_by(Attendance.attendance_date.asc()).all()
+
+        trend = build_attendance_trend(attendance_records, view)
+
         result.append({
             "subject_id": subject.subject_id,
             "subject_name": subject.subject_name,
             "conducted": total,
             "attended": present,
             "percentage": percentage,
-            "last_5": last_5
+            "last_5": last_5,
+            "trend": trend,
         })
 
     return result
@@ -1685,7 +1743,6 @@ def get_attendance_analytics(
         "subject_comparison": subject_comparison,
         "prediction": prediction
     }
-
 
 
 
@@ -3786,8 +3843,138 @@ def get_all_subjects(
 
 
 # =========================
-# ADMIN – CREATE SUBJECT
 # =========================
+# ADMIN – SUBJECT PERFORMANCE
+@app.get("/admin/subject-performance")
+def get_subject_performance(
+    department: Optional[str] = Query(None),
+    year: Optional[str] = Query(None),
+    semester: Optional[str] = Query(None),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    query = db.query(Subject)
+
+    if department and department != "All" and department.strip() != "":
+        department_key = department.strip().upper()
+        department_lookup = {
+            "CSE": 11, "CSM": 12, "ECE": 14, "MECH": 15, "CIVIL": 1,
+        }
+        department_id = department_lookup.get(department_key)
+        if department_id is not None:
+            query = query.filter(Subject.department_id == department_id)
+
+    if year is not None and str(year).strip() != "All" and str(year).strip() != "":
+        yr = int(year)
+        year_to_semesters = {1: [1, 2], 2: [3, 4], 3: [5, 6], 4: [7, 8]}
+        semesters = year_to_semesters.get(yr)
+        if semesters:
+            query = query.filter(Subject.semester.in_(semesters))
+
+    if semester is not None and str(semester).strip() != "All" and str(semester).strip() != "":
+        query = query.filter(Subject.semester == int(semester))
+
+    filtered_subjects = query.subquery()
+    PASS_MARK = 40
+
+    subject_query = (
+        db.query(
+            filtered_subjects.c.subject_id,
+            filtered_subjects.c.subject_name,
+            filtered_subjects.c.subject_code,
+            filtered_subjects.c.semester,
+            func.avg(Mark.marks).label("avg_marks"),
+            func.count(Mark.id).label("marks_count"),
+            func.sum(case((Mark.marks < PASS_MARK, 1), else_=0)).label("fail_count"),
+            func.sum(case((Mark.marks >= PASS_MARK, 1), else_=0)).label("pass_count")
+        )
+        .outerjoin(Mark, Mark.subject_id == filtered_subjects.c.subject_id)
+        .group_by(
+            filtered_subjects.c.subject_id,
+            filtered_subjects.c.subject_name,
+            filtered_subjects.c.subject_code,
+            filtered_subjects.c.semester
+        )
+        .order_by(filtered_subjects.c.subject_name)
+    )
+
+    subjects_data = subject_query.all()
+
+    performance = []
+
+    for row in subjects_data:
+        avg_score = int(round(row.avg_marks)) if row.avg_marks is not None else 0
+        fail_count = int(row.fail_count or 0)
+        pass_count = int(row.pass_count or 0)
+        marks_count = int(row.marks_count or 0)
+
+        perf_item = {
+            "subject_id": row.subject_id,
+            "subject": row.subject_name,
+            "subject_name": row.subject_name,
+            "subject_code": row.subject_code,
+            "semester": row.semester,
+            "avg_score": avg_score,
+            "marks_count": marks_count,
+            "fail_count": fail_count,
+            "pass_count": pass_count,
+            "pass_rate": None
+        }
+        if marks_count > 0:
+            perf_item["pass_rate"] = int(round((pass_count / marks_count) * 100))
+        performance.append(perf_item)
+
+    sorted_risk = sorted([p for p in performance if p["marks_count"] > 0], key=lambda x: (-x["fail_count"], x["avg_score"]))
+    
+    risky_subjects = []
+    for r in sorted_risk[:5]:
+        risky_subjects.append({
+            "subject": r["subject"],
+            "avg_score": r["avg_score"],
+            "fail_count": r["fail_count"]
+        })
+
+    student_marks_query = (
+        db.query(
+            Mark.student_id,
+            func.min(Mark.marks).label("min_score")
+        )
+        .join(filtered_subjects, Mark.subject_id == filtered_subjects.c.subject_id)
+        .group_by(Mark.student_id)
+    )
+    
+    student_marks_results = student_marks_query.all()
+    total_students = len(student_marks_results)
+    
+    passed_students = sum(1 for sm in student_marks_results if sm.min_score is not None and sm.min_score >= PASS_MARK)
+    
+    overall_pass_rate = 0.0
+    if total_students > 0:
+        overall_pass_rate = round((passed_students / total_students) * 100, 1)
+
+    if total_students == 0:
+        return {
+            "subjects": [],
+            "pass_rate": 0,
+            "risky_subjects": [],
+            "total_fail_count": 0,
+            "total_marks": 0,
+        }
+
+    return {
+        "subjects": performance,
+        "pass_rate": overall_pass_rate,
+        "risky_subjects": risky_subjects,
+        "total_fail_count": sum(p["fail_count"] for p in performance),
+        "total_marks": sum(p["marks_count"] for p in performance),
+    }
+
+
+# =========================
+# ADMIN – CREATE SUBJECT
 @app.post("/admin/subjects")
 def create_subject(
     subject: SubjectCreate,

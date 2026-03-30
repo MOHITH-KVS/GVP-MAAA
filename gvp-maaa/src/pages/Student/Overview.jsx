@@ -29,8 +29,12 @@ export default function Overview({ profile }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [marksSubjects, setMarksSubjects] = useState([]);
+  const [attendanceSubjects, setAttendanceSubjects] = useState([]);
   const [attendanceSubject, setAttendanceSubject] = useState("All Subjects");
-  const [attendanceRecords, setAttendanceRecords] = useState([]);
+  const [selectedAttendanceSubjectId, setSelectedAttendanceSubjectId] = useState(null);
+  const [view, setView] = useState("daily");
+  const [attendanceData, setAttendanceData] = useState([]);
+  const [semester, setSemester] = useState("");
   const navigate = useNavigate();
 
   const normalizeText = (value) => value?.toString().trim().toLowerCase() || "";
@@ -39,46 +43,47 @@ export default function Overview({ profile }) {
   const getDateLabel = (item, index) =>
     item?.date || item?.attendance_date || item?.day || item?.label || `Point ${index + 1}`;
 
+  const handleAttendanceSubjectChange = (e) => {
+    const selectedId = e.target.value ? Number(e.target.value) : null;
+    const selected = attendanceSubjectOptions.find((subject) => subject.id === selectedId);
+    setAttendanceSubject(selected?.name || "All Subjects");
+    setSelectedAttendanceSubjectId(selectedId);
+  };
+
+  const buildAttendanceUrl = ({ studentId, semester, subjectId, view }) => {
+    const params = new URLSearchParams();
+    if (studentId) params.set("student_id", studentId);
+    if (semester) params.set("semester", semester);
+    if (subjectId) params.set("subject_id", subjectId);
+    params.set("view", (view || "daily").toString().toLowerCase());
+    return `http://localhost:8000/student/attendance?${params.toString()}`;
+  };
+
   const token = localStorage.getItem("access_token");
   const user = JSON.parse(localStorage.getItem("user") || "{}");
+  const studentId =
+    user?.user_id || user?.student_id || user?.id || profile?.student_id || profile?.id || null;
 
   useEffect(() => {
-    function normalizeAttendance(records) {
-      return records
-        .map((item, index) => {
-          const subject = getSubjectName(item);
-          const date = getDateLabel(item, index);
-          const originalStatus = item?.status ?? item?.attendance_status ?? item?.presence ?? item?.present ?? item?.attendance ?? item?.value ?? null;
-          const statusText = normalizeText(originalStatus);
-
-          let value = null;
-          if (typeof originalStatus === "boolean") {
-            value = originalStatus ? 1 : 0;
-          } else if (statusText === "present" || statusText === "p" || statusText === "true" || statusText === "yes") {
-            value = 1;
-          } else if (statusText === "absent" || statusText === "a" || statusText === "false" || statusText === "no") {
-            value = 0;
-          } else if (originalStatus !== null && originalStatus !== undefined && originalStatus !== "") {
-            const numeric = Number(originalStatus);
-            if (!Number.isNaN(numeric)) {
-              value = numeric === 0 || numeric === 1 ? numeric : numeric >= 50 ? 1 : 0;
-            }
-          }
-
-          return { subject, date, value, status: originalStatus };
-        })
-        .filter((item) => item.date && item.value !== null && item.value !== undefined);
-    }
-
-
     async function fetchOverview() {
       setLoading(true);
       setError(null);
       try {
         const headers = { Authorization: `Bearer ${token}` };
-        const [profileRes, attendanceRes, marksRes, assignmentsRes, eventsRes] = await Promise.all([
-          fetch("http://localhost:8000/student/profile", { headers }),
-          fetch("http://localhost:8000/student/attendance", { headers }),
+        const profileRes = await fetch("http://localhost:8000/student/profile", { headers });
+        const profileData = profileRes.ok ? await profileRes.json() : {};
+        const semesterValue =
+          profileData?.semester || profileData?.sem || profile?.semester || "";
+        setSemester(semesterValue);
+
+        const attendanceUrl = buildAttendanceUrl({
+          studentId,
+          semester: semesterValue,
+          view,
+        });
+
+        const [attendanceRes, marksRes, assignmentsRes, eventsRes] = await Promise.all([
+          fetch(attendanceUrl, { headers }),
           fetch("http://localhost:8000/student/my-marks", { headers }),
           fetch("http://localhost:8000/student/assignments", { headers }),
           fetch("http://localhost:8000/student/events", { headers }),
@@ -97,11 +102,25 @@ export default function Overview({ profile }) {
           return;
         }
 
-        const profileData = profileRes.ok ? await profileRes.json() : {};
         const attendanceData = attendanceRes.ok ? await attendanceRes.json() : {};
         const marksData = marksRes.ok ? await marksRes.json() : {};
         const assignmentsData = assignmentsRes.ok ? await assignmentsRes.json() : {};
         const eventsData = eventsRes.ok ? await eventsRes.json() : {};
+
+        const attendanceSubjectsRaw = Array.isArray(attendanceData)
+          ? attendanceData
+              .filter((subject) => subject && (subject.subject_id || subject.id))
+              .map((subject) => ({
+                id: subject.subject_id ?? subject.id,
+                name:
+                  subject.subject_name ||
+                  subject.subject ||
+                  subject.name ||
+                  `Subject ${subject.subject_id ?? subject.id}`,
+              }))
+          : [];
+
+        setAttendanceSubjects(attendanceSubjectsRaw);
 
         const studentName =
           profileData?.name ||
@@ -158,15 +177,11 @@ export default function Overview({ profile }) {
           : Array.isArray(attendanceData?.data)
           ? attendanceData.data
           : Array.isArray(attendanceData)
-          ? attendanceData.flatMap((subject) => {
-              const subjectName = subject?.subject_name || subject?.subject || "";
-              return Array.isArray(subject?.last_5)
-                ? subject.last_5.map((record) => ({ ...record, subject: subjectName }))
-                : [subject];
-            })
+          ? attendanceData
           : [];
 
-        const normalizedAttendanceRecords = normalizeAttendance(attendanceRecordsRaw);
+        const attendanceArray = Array.isArray(attendanceRecordsRaw) ? attendanceRecordsRaw : [];
+        setAttendanceData(attendanceArray);
 
         const marksSubjectsRaw = Array.isArray(marksData?.subjects)
           ? marksData.subjects
@@ -191,7 +206,7 @@ export default function Overview({ profile }) {
         });
 
         setMarksSubjects(marksSubjectsRaw);
-        setAttendanceRecords(normalizedAttendanceRecords);
+        setAttendanceData(attendanceArray);
       } catch (err) {
         console.error("FETCH ERROR:", err);
         setError("Failed to load dashboard data");
@@ -210,16 +225,16 @@ export default function Overview({ profile }) {
   }, [token, profile, user?.name]);
 
   useEffect(() => {
-    if (!token) return;
+    if (!token || !semester || !studentId) return;
 
     async function fetchAttendanceBySubject() {
       try {
-        const url =
-          attendanceSubject === "All Subjects"
-            ? "http://localhost:8000/student/attendance"
-            : `http://localhost:8000/student/attendance?subject=${encodeURIComponent(
-                attendanceSubject
-              )}`;
+        const url = buildAttendanceUrl({
+          studentId,
+          semester,
+          subjectId: selectedAttendanceSubjectId,
+          view,
+        });
 
         const res = await fetch(url, {
           headers: { Authorization: `Bearer ${token}` },
@@ -232,33 +247,17 @@ export default function Overview({ profile }) {
           return;
         }
 
-        const attendanceData = res.ok ? await res.json() : [];
-        const attendanceRecordsRaw = Array.isArray(attendanceData?.records)
-          ? attendanceData.records
-          : Array.isArray(attendanceData?.trend)
-          ? attendanceData.trend
-          : Array.isArray(attendanceData?.history)
-          ? attendanceData.history
-          : Array.isArray(attendanceData?.data)
-          ? attendanceData.data
-          : Array.isArray(attendanceData)
-          ? attendanceData.flatMap((subject) => {
-              const subjectName = subject?.subject_name || subject?.subject || "";
-              return Array.isArray(subject?.last_5)
-                ? subject.last_5.map((record) => ({ ...record, subject: subjectName }))
-                : [subject];
-            })
-          : [];
-
-        setAttendanceRecords(normalizeAttendance(attendanceRecordsRaw));
+        const attendanceResponse = res.ok ? await res.json() : [];
+        const attendanceArray = Array.isArray(attendanceResponse) ? attendanceResponse : [];
+        setAttendanceData(attendanceArray);
       } catch (err) {
         console.error("Attendance fetch failed:", err);
-        setAttendanceRecords([]);
+        setAttendanceData([]);
       }
     }
 
     fetchAttendanceBySubject();
-  }, [attendanceSubject, token]);
+  }, [selectedAttendanceSubjectId, semester, token, studentId, view]);
 
   const attendanceDisplay = data.attendance !== null && data.attendance !== undefined ? `${data.attendance}%` : "--";
   const cgpaDisplay = data.cgpa !== null && data.cgpa !== undefined ? data.cgpa.toFixed(2) : "--";
@@ -267,49 +266,83 @@ export default function Overview({ profile }) {
   const upcomingEventsCount = data.upcomingEvents?.length ?? 0;
 
   const attendanceSubjectOptions = useMemo(() => {
-    const subjectNames = marksSubjects
-      .map((subject) =>
-        (subject?.subject_name || subject?.subject || subject?.name || "")
-          .toString()
-          .trim()
-      )
-      .filter(Boolean);
-
-    const unique = Array.from(new Set(subjectNames));
-    return unique.length > 0 ? ["All Subjects", ...unique] : ["All Subjects"];
-  }, [marksSubjects]);
+    const options = [{ name: "All Subjects", id: null }, ...attendanceSubjects];
+    return options;
+  }, [attendanceSubjects]);
 
   const attendanceTrendData = useMemo(() => {
-    const normalizedSelectedSubject = normalizeText(attendanceSubject);
+    if (!Array.isArray(attendanceData) || attendanceData.length === 0) return [];
 
-    const filteredAttendance =
-      normalizedSelectedSubject === "all subjects"
-        ? attendanceRecords
-        : attendanceRecords.filter((a) => normalizeText(a.subject) === normalizedSelectedSubject);
-
-    const sortedAttendance = [...filteredAttendance].sort((a, b) => {
-      const aTime = new Date(a.date).getTime();
-      const bTime = new Date(b.date).getTime();
-      return Number.isNaN(aTime) || Number.isNaN(bTime) ? 0 : aTime - bTime;
+    const formatPoint = (point) => ({
+      label: point?.date ?? point?.label ?? "",
+      value: Number(point?.percentage ?? point?.value ?? 0),
     });
 
-    const chartData = sortedAttendance
-      .map((a, index) => {
-        const rawStatus = a.status ?? a.attendance_status ?? "";
-        const isPresent = String(rawStatus).toLowerCase() === "present" || a.value === 1;
+    if (selectedAttendanceSubjectId) {
+      const selectedSubject = attendanceData.find(
+        (subject) =>
+          subject.subject_id === selectedAttendanceSubjectId ||
+          subject.id === selectedAttendanceSubjectId
+      );
+      return Array.isArray(selectedSubject?.trend)
+        ? selectedSubject.trend.map(formatPoint)
+        : [];
+    }
 
-        return {
-          name: a.date || a.attendance_date || `Day ${index + 1}`,
-          label: a.date || a.attendance_date || `Day ${index + 1}`,
-          value: isPresent ? 1 : 0,
-        };
-      })
-      .filter((item) => item.name && (item.value === 0 || item.value === 1));
+    const trendMap = {};
+    const labelOrder = [];
 
-    return chartData.length === 1
-      ? [...chartData, { ...chartData[0], name: " " }]
-      : chartData;
-  }, [attendanceRecords, attendanceSubject]);
+    attendanceData.forEach((subject) => {
+      if (!Array.isArray(subject?.trend)) return;
+      subject.trend.forEach((point) => {
+        const label = point?.date ?? point?.label;
+        if (!label) return;
+
+        if (!trendMap[label]) {
+          trendMap[label] = { total: 0, count: 0 };
+          labelOrder.push(label);
+        }
+
+        trendMap[label].total += Number(point?.percentage ?? 0);
+        trendMap[label].count += 1;
+      });
+    });
+
+    return labelOrder.map((label) => ({
+      label,
+      value: Number(
+        ((trendMap[label].total || 0) / (trendMap[label].count || 1)).toFixed(2)
+      ),
+    }));
+  }, [attendanceData, selectedAttendanceSubjectId]);
+
+  const overallPercentage = useMemo(() => {
+    if (!Array.isArray(attendanceData) || attendanceData.length === 0) return null;
+    if (selectedAttendanceSubjectId) {
+      const selectedSubject = attendanceData.find(
+        (subject) =>
+          subject.subject_id === selectedAttendanceSubjectId ||
+          subject.id === selectedAttendanceSubjectId
+      );
+      return selectedSubject?.percentage !== undefined
+        ? Number(selectedSubject.percentage)
+        : null;
+    }
+
+    const percents = attendanceData
+      .map((subject) => Number(subject?.percentage ?? 0))
+      .filter((value) => !Number.isNaN(value));
+
+    if (!percents.length) return null;
+    return Number((percents.reduce((sum, value) => sum + value, 0) / percents.length).toFixed(2));
+  }, [attendanceData, selectedAttendanceSubjectId]);
+
+  const attendanceStatus = useMemo(() => {
+    if (overallPercentage === null || overallPercentage === undefined) return "--";
+    if (overallPercentage >= 75) return "Safe";
+    if (overallPercentage >= 65) return "Warning";
+    return "At Risk";
+  }, [overallPercentage]);
 
   const getRiskStatus = (assessmentName, marks) => {
     const name = (assessmentName || "").toString().toLowerCase();
@@ -523,24 +556,55 @@ export default function Overview({ profile }) {
                   <h3 className="font-bold text-gray-900 text-lg">Attendance Trend</h3>
                   <p className="text-sm text-gray-500">Your attendance history by subject</p>
                 </div>
-                <div>
-                  <label className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Subject</label>
-                  <select
-                    value={attendanceSubject}
-                    onChange={(e) => setAttendanceSubject(e.target.value)}
-                    className="mt-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-100"
-                  >
-                    {attendanceSubjectOptions.map((subject) => (
-                      <option key={subject} value={subject}>
-                        {subject}
-                      </option>
-                    ))}
-                  </select>
+                <div className="flex flex-col sm:flex-row gap-4">
+                  <div>
+                    <label className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Subject</label>
+                    <select
+                      value={selectedAttendanceSubjectId ?? ""}
+                      onChange={handleAttendanceSubjectChange}
+                      className="mt-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                    >
+                      {attendanceSubjectOptions.map((subject) => (
+                        <option key={subject.id ?? "all"} value={subject.id ?? ""}>
+                          {subject.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">View</label>
+                    <select
+                      value={view}
+                      onChange={(e) => setView(e.target.value)}
+                      className="mt-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm focus:border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                    >
+                      <option value="daily">Daily</option>
+                      <option value="weekly">Weekly</option>
+                      <option value="monthly">Monthly</option>
+                    </select>
+                  </div>
                 </div>
               </div>
 
-              {attendanceTrendData.length > 0 ? (
-                <div className="h-72">
+              <div className="grid gap-3 sm:grid-cols-2 sm:items-end mb-4">
+                <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Overall Percentage</p>
+                  <p className="mt-2 text-3xl font-bold text-slate-900">
+                    {overallPercentage !== null ? `${overallPercentage}%` : "--"}
+                  </p>
+                </div>
+                <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Status</p>
+                  <p className="mt-2 text-xl font-semibold text-slate-900">{attendanceStatus}</p>
+                </div>
+              </div>
+
+              {attendanceTrendData.length === 0 ? (
+                <div className="flex h-72 items-center justify-center rounded-3xl border border-dashed border-slate-200 bg-slate-50 px-4 text-center">
+                  <p className="text-sm text-slate-500">No attendance data available for selected subject</p>
+                </div>
+              ) : (
+                <div style={{ width: "100%", height: 250 }}>
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={attendanceTrendData}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
@@ -548,23 +612,18 @@ export default function Overview({ profile }) {
                       <YAxis
                         tick={{ fontSize: 12 }}
                         stroke="#94a3b8"
-                        domain={[0, 1]}
-                        ticks={[0, 1]}
-                        tickFormatter={(value) => (value === 1 ? "Present" : "Absent")}
+                        domain={[0, 100]}
+                        ticks={[0, 25, 50, 75, 100]}
+                        tickFormatter={(value) => `${value}%`}
                       />
                       <Tooltip
                         contentStyle={{ backgroundColor: "#fff", border: "1px solid #e2e8f0", borderRadius: 10 }}
-                        formatter={(value) => (value === 1 ? "Present" : value === 0 ? "Absent" : value)}
+                        labelFormatter={(label) => label}
+                        formatter={(value) => [`${value}%`, "Attendance"]}
                       />
                       <Line type="monotone" dataKey="value" stroke="#3b82f6" strokeWidth={3} dot={{ r: 4 }} />
                     </LineChart>
                   </ResponsiveContainer>
-                </div>
-              ) : (
-                <div className="flex h-72 items-center justify-center rounded-3xl border border-dashed border-slate-200 bg-slate-50 px-4 text-center">
-                  <p className="text-sm text-slate-500">
-                    No attendance records available for selected subject
-                  </p>
                 </div>
               )}
             </div>

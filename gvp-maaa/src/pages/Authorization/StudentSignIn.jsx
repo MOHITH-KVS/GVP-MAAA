@@ -46,7 +46,7 @@ export default function StudentSignIn() {
   try {
     setLoading(true);
 
-    const response = await axios.post("http://127.0.0.1:8000/login", {
+    const response = await axios.post("http://localhost:8000/login", {
       email,
       password
     });
@@ -279,3 +279,4 @@ function SocialButton({ icon: Icon, label }) {
     </button>
   );
 }
+

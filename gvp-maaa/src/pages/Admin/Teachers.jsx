@@ -150,22 +150,6 @@ export default function Teachers() {
         />
       </div>
 
-      {/* ================= ANALYTICS ================= */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <AnalyticsCard
-          title="Avg Student Attendance by Department"
-          description="Overall classroom health by department"
-        />
-        <AnalyticsCard
-          title="Teaching Condition Distribution"
-          description="Stable vs Attention vs Action Required"
-        />
-        <AnalyticsCard
-          title="Student Strength vs Attendance"
-          description="Impact signal for teaching stress zones"
-        />
-      </div>
-
       {/* ================= TABLE ================= */}
       <div className="bg-white rounded-xl border overflow-hidden">
         <table className="w-full">
@@ -241,20 +225,6 @@ export default function Teachers() {
       {showAssignWork && (<AssignSubjectModal  teachers={teachers}  onClose={() => {    setShowAssignWork(false);    fetchTeachers();  }} />)}
       {showNotifyTeacher && (<NotifyTeacherModal teachers={teachers} onClose={() => setShowNotifyTeacher(false)}  />)}
 
-    </div>
-  );
-}
-
-/* ================= ANALYTICS CARD ================= */
-
-function AnalyticsCard({ title, description }) {
-  return (
-    <div className="bg-white border rounded-xl p-5 space-y-2">
-      <h3 className="font-medium">{title}</h3>
-      <p className="text-xs text-gray-500">{description}</p>
-      <div className="h-40 mt-4 flex items-center justify-center rounded-lg bg-gray-50 border border-dashed text-sm text-gray-400">
-        📊 Analytics Agent will render chart here
-      </div>
     </div>
   );
 }

@@ -32,7 +32,7 @@ export default function AdminSignIn() {
     try {
       setLoading(true);
 
-      const response = await axios.post("http://127.0.0.1:8000/login/admin", {
+      const response = await axios.post("http://localhost:8000/login/admin", {
         email,
         password,
         access_key: adminKey
@@ -217,3 +217,4 @@ function Input({ label, type = "text", placeholder, value, onChange }) {
     </div>
   );
 }
+

@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import api from "../../utils/axios";
 
-const API_URL = "http://127.0.0.1:8000";
+const API_URL = "http://localhost:8000";
 
 export default function Assignments() {
   const [assignments, setAssignments] = useState([]);
@@ -380,3 +380,4 @@ function SuccessToast() {
     </div>
   );
 }
+

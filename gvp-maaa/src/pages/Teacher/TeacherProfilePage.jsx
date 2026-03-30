@@ -65,7 +65,7 @@ export default function TeacherProfilePage({ onBack, profile, onProfileUpdated }
     console.log("TOKEN:", token);
 
 
-    const res = await fetch("http://127.0.0.1:8000/faculty/profile", {
+    const res = await fetch("http://localhost:8000/faculty/profile", {
       method: "PUT",
       headers: {
         "Content-Type": "application/json",
@@ -750,3 +750,4 @@ function List({ items }) {
     </ul>
   );
 }
+

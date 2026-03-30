@@ -239,7 +239,7 @@ const fetchTimetables = async () => {
                   <button
                     onClick={() =>
                       window.open(
-                        `http://127.0.0.1:8000${t.file_url}`,
+                        `http://localhost:8000${t.file_url}`,
                         "_blank"
                       )
                     }
@@ -600,4 +600,5 @@ function ConfirmUploadModal({ data, onBack, onUpload }) {
     </div>
   );
 }
+
 

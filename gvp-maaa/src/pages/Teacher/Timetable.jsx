@@ -108,7 +108,7 @@ export default function Timetable() {
                     <button
                       onClick={() =>
                         window.open(
-                          `http://127.0.0.1:8000${t.file_url}`,
+                          `http://localhost:8000${t.file_url}`,
                           "_blank"
                         )
                       }
@@ -145,4 +145,5 @@ function getRelativeTime(dateString, nowValue) {
 
   return `${Math.floor(diff / 604800)} weeks ago`;
 }
+
 

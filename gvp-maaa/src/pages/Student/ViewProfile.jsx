@@ -73,7 +73,7 @@ export default function ViewProfile({ onClose, profile }) {
     // ⏳ artificial delay for UX
     await new Promise((res) => setTimeout(res, 1500));
 
-    const res = await fetch("http://127.0.0.1:8000/student/profile", {
+    const res = await fetch("http://localhost:8000/student/profile", {
       method: "PUT",
       headers: {
         "Content-Type": "application/json",
@@ -430,3 +430,4 @@ const Chip = ({ text }) => (
     {text}
   </span>
 );
+

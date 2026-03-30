@@ -134,7 +134,7 @@ export default function TeacherSignUp() {
 
     console.log("Sending payload:", payload); // 🔥 DEBUG
 
-    const response = await fetch("http://127.0.0.1:8000/signup/teacher", {
+    const response = await fetch("http://localhost:8000/signup/teacher", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -398,3 +398,4 @@ function Spinner() {
     <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
   );
 }
+
