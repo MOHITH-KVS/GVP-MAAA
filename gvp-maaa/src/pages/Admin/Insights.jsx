@@ -5,17 +5,26 @@ export default function Insights() {
     <div className="space-y-12">
 
       {/* ================= PREMIUM HEADER ================= */}
-      <div className="p-8 rounded-3xl bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 text-white">
-        <h1 className="text-3xl font-semibold">
-          Institutional Intelligence
-        </h1>
-        <p className="text-sm opacity-90 mt-2 max-w-3xl">
-          Campus-wide academic insights that monitor performance, detect risks,
-          and support strategic administrative decisions.
-        </p>
-        <p className="text-xs mt-3 opacity-80">
-          Intelligence mode active • Updated today
-        </p>
+      <div className="flex flex-col gap-4 p-8 rounded-3xl bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 text-white sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-3xl font-semibold">
+            Institutional Intelligence
+          </h1>
+          <p className="text-sm opacity-90 mt-2 max-w-3xl">
+            Campus-wide academic insights that monitor performance, detect risks,
+            and support strategic administrative decisions.
+          </p>
+          <p className="text-xs mt-3 opacity-80">
+            Intelligence mode active • Updated today
+          </p>
+        </div>
+
+        <button
+          className="inline-flex items-center justify-center rounded-xl border border-white/40 bg-white/10 px-5 py-3 text-sm font-medium text-white transition hover:border-white hover:bg-white/20"
+          type="button"
+        >
+          ⬇ Download PDF
+        </button>
       </div>
 
       {/* ================= KPI SNAPSHOT ================= */}

@@ -8,7 +8,6 @@ import Academics from "../pages/Admin/Academics";
 import Timetable from "../pages/Admin/Timetable";
 import Alerts from "../pages/Admin/Alerts";
 import Insights from "../pages/Admin/Insights";
-import Reports from "../pages/Admin/Reports";
 import Settings from "../pages/Admin/Settings";
 import Logout from "../pages/Logout";
 
@@ -20,7 +19,6 @@ import MenuBookIcon from "@mui/icons-material/MenuBook";
 import EventAvailableIcon from "@mui/icons-material/EventAvailable";
 import NotificationsIcon from "@mui/icons-material/Notifications";
 import BarChartIcon from "@mui/icons-material/BarChart";
-import ReportProblemIcon from "@mui/icons-material/ReportProblem";
 import SettingsIcon from "@mui/icons-material/Settings";
 import LogoutIcon from "@mui/icons-material/Logout";
 import MenuIcon from "@mui/icons-material/Menu";
@@ -49,9 +47,7 @@ export default function AdminDashboard() {
 
         {/* ================= SIDEBAR ================= */}
         <aside
-          className={`transition-[width] duration-300 ease-out flex flex-col
-          ${sidebarOpen ? "w-72" : "w-20"}
-          p-4 glass border-r border-white/40`}
+          className={`transition-all duration-300 flex flex-col ${sidebarOpen ? "w-72" : "w-20"} p-4 glass border-r border-white/40`}
         >
           {/* LOGO */}
           <div className="flex items-center justify-between mb-8">
@@ -68,98 +64,93 @@ export default function AdminDashboard() {
             </button>
           </div>
 
-          {/* MENU */}
-          <div className="flex-1 overflow-y-auto">
+          {/* MENU GROUP */}
+          <div className="flex-1 overflow-y-auto flex flex-col">
+            <div className="flex flex-col gap-2">
+              <SidebarSection title="Management" open={sidebarOpen}>
+                <MenuItem
+                  icon={DashboardIcon}
+                  label="Overview"
+                  open={sidebarOpen}
+                  active={activePage === "overview"}
+                  onClick={() => setActivePage("overview")}
+                />
 
-            <SidebarSection title="Management" open={sidebarOpen}>
-              <MenuItem
-                icon={DashboardIcon}
-                label="Overview"
-                open={sidebarOpen}
-                active={activePage === "overview"}
-                onClick={() => setActivePage("overview")}
-              />
+                <MenuItem
+                  icon={PeopleIcon}
+                  label="Students"
+                  open={sidebarOpen}
+                  active={activePage === "students"}
+                  onClick={() => setActivePage("students")}
+                />
 
-              <MenuItem
-                icon={PeopleIcon}
-                label="Students"
-                open={sidebarOpen}
-                active={activePage === "students"}
-                onClick={() => setActivePage("students")}
-              />
+                <MenuItem
+                  icon={SchoolIcon}
+                  label="Teachers"
+                  open={sidebarOpen}
+                  active={activePage === "teachers"}
+                  onClick={() => setActivePage("teachers")}
+                />
+              </SidebarSection>
 
-              <MenuItem
-                icon={SchoolIcon}
-                label="Teachers"
-                open={sidebarOpen}
-                active={activePage === "teachers"}
-                onClick={() => setActivePage("teachers")}
-              />
-            </SidebarSection>
+              <SidebarSection title="Academics" open={sidebarOpen}>
+                <MenuItem
+                  icon={MenuBookIcon}
+                  label="Academics"
+                  open={sidebarOpen}
+                  active={activePage === "academics"}
+                  onClick={() => setActivePage("academics")}
+                />
 
-            <SidebarSection title="Academics" open={sidebarOpen}>
-              <MenuItem
-                icon={MenuBookIcon}
-                label="Academics"
-                open={sidebarOpen}
-                active={activePage === "academics"}
-                onClick={() => setActivePage("academics")}
-              />
+                <MenuItem
+                  icon={EventAvailableIcon}
+                  label="Timetable"
+                  open={sidebarOpen}
+                  active={activePage === "timetable"}
+                  onClick={() => setActivePage("timetable")}
+                />
+              </SidebarSection>
 
-              <MenuItem
-                icon={EventAvailableIcon}
-                label="Timetable"
-                open={sidebarOpen}
-                active={activePage === "timetable"}
-                onClick={() => setActivePage("timetable")}
-              />
-            </SidebarSection>
+              <SidebarSection title="Monitoring" open={sidebarOpen}>
+                <MenuItem
+                  icon={NotificationsIcon}
+                  label="Alerts"
+                  open={sidebarOpen}
+                  active={activePage === "alerts"}
+                  onClick={() => setActivePage("alerts")}
+                />
 
-            <SidebarSection title="Monitoring" open={sidebarOpen}>
-              <MenuItem
-                icon={NotificationsIcon}
-                label="Alerts"
-                open={sidebarOpen}
-                active={activePage === "alerts"}
-                onClick={() => setActivePage("alerts")}
-              />
+                <MenuItem
+                  icon={BarChartIcon}
+                  label="Insights"
+                  open={sidebarOpen}
+                  active={activePage === "insights"}
+                  onClick={() => setActivePage("insights")}
+                />
+              </SidebarSection>
 
-              <MenuItem
-                icon={BarChartIcon}
-                label="Insights"
-                open={sidebarOpen}
-                active={activePage === "insights"}
-                onClick={() => setActivePage("insights")}
-              />
+              <SidebarSection title="System" open={sidebarOpen}>
+                <MenuItem
+                  icon={SettingsIcon}
+                  label="Settings"
+                  open={sidebarOpen}
+                  active={activePage === "settings"}
+                  onClick={() => setActivePage("settings")}
+                />
+              </SidebarSection>
+            </div>
 
-              <MenuItem
-                icon={ReportProblemIcon}
-                label="Reports"
-                open={sidebarOpen}
-                active={activePage === "reports"}
-                onClick={() => setActivePage("reports")}
-              />
-            </SidebarSection>
-            
+            <div className="flex-1" />
+          </div>
 
-            <SidebarSection title="System" open={sidebarOpen}>
-              <MenuItem
-                icon={SettingsIcon}
-                label="Settings"
-                open={sidebarOpen}
-                active={activePage === "settings"}
-                onClick={() => setActivePage("settings")}
-              />
-
-              <MenuItem
-                icon={LogoutIcon}
-                label="Logout"
-                open={sidebarOpen}
-                danger
-                onClick={() => setShowLogout(true)}
-             />
-            </SidebarSection>
-
+          <div className="pt-4 border-t border-white/40">
+            <button
+              onClick={() => setShowLogout(true)}
+              className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-red-600 hover:bg-red-50"
+            >
+              <LogoutIcon fontSize="small" />
+              {sidebarOpen && <span>Logout</span>}
+            </button>
           </div>
         </aside>
 
@@ -173,7 +164,6 @@ export default function AdminDashboard() {
           {activePage === "timetable" && <Timetable />}
           {activePage === "alerts" && <Alerts />}
           {activePage === "insights" && <Insights />}
-          {activePage === "reports" && <Reports />}
           {activePage === "settings" && <Settings />}
 
         </main>

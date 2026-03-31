@@ -96,8 +96,15 @@ export default function Academics() {
         <button
           onClick={() => setShowSubjectModal(true)}
           className="px-4 py-2 rounded-xl border bg-white hover:bg-gray-50"
-         >
+        >
           📘 Manage Subjects
+        </button>
+
+        <button
+          className="px-4 py-2 rounded-xl border bg-white hover:bg-gray-50"
+          type="button"
+        >
+          📄 Export Excel
         </button>
 
         <button
