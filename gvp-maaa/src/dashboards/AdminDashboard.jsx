@@ -9,6 +9,7 @@ import Timetable from "../pages/Admin/Timetable";
 import Alerts from "../pages/Admin/Alerts";
 import Insights from "../pages/Admin/Insights";
 import Settings from "../pages/Admin/Settings";
+import ErrorBoundary from "../components/ErrorBoundary";
 import Logout from "../pages/Logout";
 
 /* ===== ICONS ===== */
@@ -164,7 +165,11 @@ export default function AdminDashboard() {
           {activePage === "timetable" && <Timetable />}
           {activePage === "alerts" && <Alerts />}
           {activePage === "insights" && <Insights />}
-          {activePage === "settings" && <Settings />}
+          {activePage === "settings" && (
+            <ErrorBoundary>
+              <Settings />
+            </ErrorBoundary>
+          )}
 
         </main>
       </div>

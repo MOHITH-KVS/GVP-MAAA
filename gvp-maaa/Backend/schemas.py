@@ -117,6 +117,73 @@ class ResetPasswordRequest(BaseModel):
     token: str
     new_password: str
 
+class SettingsUpdateRequest(BaseModel):
+    attendance_threshold: Optional[float] = None
+    cgpa_threshold: Optional[float] = None
+    attendance_alert_enabled: Optional[bool] = None
+    cgpa_alert_enabled: Optional[bool] = None
+    alert_frequency: Optional[str] = None
+    report_retention_days: Optional[int] = None
+    analytics_refresh_interval: Optional[str] = None
+    session_timeout: Optional[int] = None
+    report_format: Optional[str] = None
+    marks_format: Optional[str] = None
+    attendance_format: Optional[str] = None
+    assignment_format: Optional[str] = None
+    resources_format: Optional[str] = None
+
+    class Config:
+        extra = "forbid"
+
+class SettingsPreviewRequest(BaseModel):
+    attendance_threshold: float
+    cgpa_threshold: float
+
+class AdminOverviewMetrics(BaseModel):
+    at_risk_students: int
+    attendance_risk_percent: float
+    data_completeness: float
+    active_alerts: int
+    total_students: int
+    total_teachers: int
+    active_events: int
+    events_today: int
+    events_this_week: int
+
+class AdminAcademicHealth(BaseModel):
+    avg_attendance: float
+    avg_cgpa: float
+    at_risk_students: int
+
+class AdminFacultyHealth(BaseModel):
+    avg_classes: float
+    overloaded: int
+    underutilized: int
+
+class AdminSystemHealth(BaseModel):
+    active_users: int
+    last_sync: str
+    data_completeness: float
+
+class AdminOverviewAlert(BaseModel):
+    title: str
+    type: str
+    severity: str
+    timestamp: str
+    action: str
+
+class AdminOverviewTrendPoint(BaseModel):
+    date: str
+    attendance: float
+
+class AdminOverviewResponse(BaseModel):
+    metrics: AdminOverviewMetrics
+    academic_health: AdminAcademicHealth
+    faculty_health: AdminFacultyHealth
+    system_health: AdminSystemHealth
+    alerts: List[AdminOverviewAlert]
+    trend: List[AdminOverviewTrendPoint]
+
 # =========================
 # TIMETABLE SCHEMAS
 # =========================

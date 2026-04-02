@@ -1,6 +1,6 @@
 # pyre-ignore-all-errors
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Body, Query  # type: ignore
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Body, Query, Request  # type: ignore
 from fastapi.middleware.cors import CORSMiddleware  # type: ignore
 from io import BytesIO
 from fastapi.responses import StreamingResponse  # type: ignore
@@ -9,7 +9,7 @@ from sqlalchemy import text, extract, func, or_, case  # type: ignore
 from typing import Optional, List
 from security import hash_password, verify_password  # type: ignore
 from mail import send_reset_email  # type: ignore
-from schemas import  AlertCreate, AssignSubjectRequest, AttendanceCreate, ResetPasswordRequest, StudentPromotionRequest, TeacherAdminUpdate, TeacherDeleteRequest,TimetableCreate, TimetableResponse,StudentDeleteRequest,SubjectCreate,AttendanceAnalyticsResponse, MarksUpload  # type: ignore
+from schemas import  AlertCreate, AssignSubjectRequest, AttendanceCreate, ResetPasswordRequest, StudentPromotionRequest, TeacherAdminUpdate, TeacherDeleteRequest,TimetableCreate, TimetableResponse,StudentDeleteRequest,SubjectCreate,AttendanceAnalyticsResponse, MarksUpload, AdminOverviewResponse  # type: ignore
 import schemas  # type: ignore
 from datetime import datetime, timedelta
 from database import engine  # type: ignore
@@ -33,6 +33,8 @@ from models import (  # type: ignore
     EventAttendance,
     EventRegistration,
     ExternalEventSubmission,
+    SystemSetting,
+    SettingsAuditLog,
     Mark
 
 )
@@ -57,6 +59,7 @@ from reportlab.lib.units import inch  # type: ignore
 from fastapi.responses import FileResponse  # type: ignore
 from reportlab.pdfbase.pdfmetrics import stringWidth  # type: ignore
 from reportlab.pdfgen import canvas  # type: ignore
+from jose import JWTError, jwt  # type: ignore
 from datetime import date, timedelta
 
 
@@ -74,6 +77,48 @@ DEPARTMENT_MAP = {
     15: "MECH",
     1: "CIVIL"
 }
+
+BRANCH_TO_DEPARTMENT = {name: id for id, name in DEPARTMENT_MAP.items()}
+
+
+def apply_student_filters(query, branch: Optional[str], year: Optional[int], semester: Optional[int], section: Optional[str]):
+    if branch:
+        dept_id = BRANCH_TO_DEPARTMENT.get(branch)
+        if dept_id is not None:
+            query = query.join(User, User.user_id == Student.student_id).filter(User.department_id == dept_id)
+        else:
+            try:
+                query = query.join(User, User.user_id == Student.student_id).filter(User.department_id == int(branch))
+            except Exception:
+                query = query.filter(Student.section == branch)
+
+    if year is not None:
+        query = query.filter(Student.year == year)
+    if semester is not None:
+        query = query.filter(Student.semester == semester)
+    if section:
+        query = query.filter(Student.section == section)
+    return query
+
+
+def apply_alert_filters(query, branch: Optional[str], year: Optional[int], semester: Optional[int], section: Optional[str]):
+    if branch or year is not None or semester is not None or section:
+        query = query.join(Student, Student.student_id == Alert.student_id)
+
+    if branch:
+        dept_id = BRANCH_TO_DEPARTMENT.get(branch)
+        if dept_id is not None:
+            query = query.join(User, User.user_id == Student.student_id).filter(User.department_id == dept_id)
+        else:
+            query = query.filter(Alert.department == branch)
+
+    if year is not None:
+        query = query.filter(Student.year == year)
+    if semester is not None:
+        query = query.filter(Student.semester == semester)
+    if section:
+        query = query.filter(Student.section == section)
+    return query
 
 
 from dotenv import load_dotenv  # type: ignore
@@ -113,7 +158,9 @@ from auth import (  # type: ignore
     create_access_token,
     create_reset_token,
     verify_reset_token,
-    get_current_user   # ✅ ADD THIS
+    get_current_user,
+    SECRET_KEY,
+    ALGORITHM   # ✅ ADD THIS
 )
 
 
@@ -141,6 +188,42 @@ app.mount(
     StaticFiles(directory="uploads"),
     name="uploads"
 )
+
+settings_cache = {}
+settings_cache_loaded = False
+
+
+def refresh_settings_cache():
+    global settings_cache, settings_cache_loaded
+    db = SessionLocal()
+    try:
+        settings_cache = {setting.key: setting.value for setting in db.query(SystemSetting).all()}
+        settings_cache_loaded = True
+    except Exception as e:
+        print("Failed to refresh settings cache:", e)
+        settings_cache = {}
+        settings_cache_loaded = False
+    finally:
+        db.close()
+
+
+def get_optional_current_user(request: Request):
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.lower().startswith("bearer "):
+        return None
+
+    token = auth_header.split(" ", 1)[1]
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return payload
+    except JWTError:
+        return None
+
+
+def get_current_setting(key: str):
+    if settings_cache_loaded:
+        return settings_cache.get(key)
+    return get_setting(key)
 
 
 def process_event_reminders():
@@ -200,7 +283,33 @@ def startup_event():
             ADD COLUMN IF NOT EXISTS file_name TEXT,
             ADD COLUMN IF NOT EXISTS snapshot_data JSON;
         """))
+
+        default_settings = {
+            "attendance_threshold": 75,
+            "cgpa_threshold": 6.5,
+            "attendance_alert_enabled": True,
+            "cgpa_alert_enabled": True,
+            "alert_frequency": "immediate",
+            "report_retention_days": 30,
+            "analytics_refresh_interval": "daily",
+            "session_timeout": 30,
+            "report_format": "PDF",
+            "marks_format": None,
+            "attendance_format": None,
+            "assignment_format": None,
+            "resources_format": None
+        }
+
+        existing_settings = {
+            setting.key for setting in db.query(SystemSetting).all()
+        }
+
+        for key, value in default_settings.items():
+            if key not in existing_settings:
+                db.add(SystemSetting(key=key, value=value))
+
         db.commit()
+        refresh_settings_cache()
     except Exception as e:
         print("Schema migration failed:", e)
     finally:
@@ -222,6 +331,312 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def get_setting(key: str):
+    db = None
+    try:
+        if settings_cache_loaded:
+            return settings_cache.get(key)
+        db = SessionLocal()
+        setting = db.query(SystemSetting).filter(SystemSetting.key == key).first()
+        if not setting:
+            return None
+        return setting.value
+    except Exception as e:
+        print(f"[ERROR] get_setting failed for {key}: {e}")
+        return None
+    finally:
+        if db:
+            db.close()
+
+
+def get_settings():
+    try:
+        if settings_cache_loaded:
+            return dict(settings_cache)
+        db = SessionLocal()
+        settings = db.query(SystemSetting).all()
+        return {setting.key: setting.value for setting in settings}
+    except Exception:
+        return {}
+    finally:
+        db.close()
+
+
+def get_default_format_for_module(module_name: str):
+    defaults = {
+        "marks": "excel",
+        "attendance": "pdf",
+        "assignments": "pdf",
+        "resources": "docx"
+    }
+    return defaults.get(module_name, "pdf")
+
+
+def get_report_format(module_name: str):
+    settings = get_settings()
+    module_key = f"{module_name}_format"
+    value = settings.get(module_key)
+    if isinstance(value, str) and value.strip().lower() in {"pdf", "excel", "docx"}:
+        return value.strip().lower()
+    return get_default_format_for_module(module_name)
+
+
+@app.get("/admin/overview", response_model=AdminOverviewResponse)
+def admin_overview(
+    branch: Optional[str] = Query(None),
+    year: Optional[int] = Query(None),
+    semester: Optional[int] = Query(None),
+    section: Optional[str] = Query(None),
+):
+    db = SessionLocal()
+    try:
+        attendance_threshold = get_setting("attendance_threshold") or 75
+        cgpa_threshold = get_setting("cgpa_threshold") or 6.5
+
+        student_query = db.query(Student)
+        if branch or year is not None or semester is not None or section:
+            student_query = apply_student_filters(student_query, branch, year, semester, section)
+
+        total_students = student_query.count()
+        teacher_query = db.query(FacultySubject.faculty_id).distinct()
+        if branch or year is not None or semester is not None or section:
+            if branch:
+                dept_id = BRANCH_TO_DEPARTMENT.get(branch)
+                if dept_id is not None:
+                    teacher_query = teacher_query.join(Subject, Subject.subject_id == FacultySubject.subject_id).filter(Subject.department_id == dept_id)
+            if year is not None:
+                teacher_query = teacher_query.filter(FacultySubject.year == year)
+            if semester is not None:
+                teacher_query = teacher_query.join(Subject, Subject.subject_id == FacultySubject.subject_id).filter(Subject.semester == semester)
+            if section:
+                teacher_query = teacher_query.filter(FacultySubject.section == section)
+            total_teachers = teacher_query.count()
+        else:
+            total_teachers = db.query(Faculty).count()
+
+        student_rows = student_query.all()
+        at_risk_students = 0
+        attendance_percentages = []
+        low_attendance_count = 0
+
+        for student in student_rows:
+            total = db.query(Attendance).filter(Attendance.student_id == student.student_id).count()
+            present = db.query(Attendance).filter(
+                Attendance.student_id == student.student_id,
+                Attendance.status == True
+            ).count()
+            percentage = round((present / total) * 100, 2) if total > 0 else 0.0
+            if total > 0:
+                attendance_percentages.append(percentage)
+            student_cgpa = float(student.cgpa) if student.cgpa is not None else 0.0
+            if percentage < attendance_threshold or student_cgpa < cgpa_threshold:
+                at_risk_students += 1
+            if percentage < attendance_threshold:
+                low_attendance_count += 1
+
+        avg_attendance = round(sum(attendance_percentages) / len(attendance_percentages), 2) if attendance_percentages else 0.0
+        avg_cgpa_raw = student_query.with_entities(func.avg(Student.cgpa)).scalar() or 0.0
+        avg_cgpa = round(float(avg_cgpa_raw), 2)
+        attendance_risk_percent = round((at_risk_students / total_students) * 100, 2) if total_students > 0 else 0.0
+
+        faculty_class_counts = db.query(
+            FacultySubject.faculty_id,
+            func.count(FacultySubject.id).label("class_count")
+        ).group_by(FacultySubject.faculty_id)
+        if branch or year is not None or semester is not None or section:
+            if branch:
+                dept_id = BRANCH_TO_DEPARTMENT.get(branch)
+                if dept_id is not None:
+                    faculty_class_counts = faculty_class_counts.join(Subject, Subject.subject_id == FacultySubject.subject_id).filter(Subject.department_id == dept_id)
+            if year is not None:
+                faculty_class_counts = faculty_class_counts.filter(FacultySubject.year == year)
+            if semester is not None:
+                faculty_class_counts = faculty_class_counts.join(Subject, Subject.subject_id == FacultySubject.subject_id).filter(Subject.semester == semester)
+            if section:
+                faculty_class_counts = faculty_class_counts.filter(FacultySubject.section == section)
+        faculty_class_counts = faculty_class_counts.all()
+        teacher_counts = {faculty_id: class_count for faculty_id, class_count in faculty_class_counts}
+        overloaded = sum(1 for count in teacher_counts.values() if count > 8)
+        underutilized = sum(1 for count in teacher_counts.values() if count < 3)
+        avg_classes = round(sum(teacher_counts.values()) / len(teacher_counts), 2) if teacher_counts else 0.0
+
+        alert_query = db.query(Alert).filter(
+            Alert.created_at >= datetime.utcnow() - timedelta(days=7)
+        )
+        if branch or year is not None or semester is not None or section:
+            alert_query = alert_query.join(Student, Student.student_id == Alert.student_id)
+            if branch:
+                dept_id = BRANCH_TO_DEPARTMENT.get(branch)
+                if dept_id is not None:
+                    alert_query = alert_query.join(User, User.user_id == Student.student_id).filter(User.department_id == dept_id)
+                else:
+                    alert_query = alert_query.filter(Alert.department == branch)
+            if year is not None:
+                alert_query = alert_query.filter(Student.year == year)
+            if semester is not None:
+                alert_query = alert_query.filter(Student.semester == semester)
+            if section:
+                alert_query = alert_query.filter(Student.section == section)
+
+        active_alerts = alert_query.count()
+        alert_records = alert_query.order_by(Alert.created_at.desc()).limit(5).all()
+
+        event_query = db.query(Event)
+        if year is not None:
+            event_query = event_query.filter(Event.year == str(year))
+        if section:
+            event_query = event_query.filter(Event.section == section)
+        today = date.today()
+        active_events = event_query.filter(
+            or_(Event.status == "ongoing", Event.event_date >= today)
+        ).count()
+        events_today = event_query.filter(Event.event_date == today).count()
+        week_end = today + timedelta(days=7)
+        events_this_week = event_query.filter(Event.event_date >= today, Event.event_date <= week_end).count()
+
+        attendance_trend = []
+        today = date.today()
+        for i in range(6, -1, -1):
+            day = today - timedelta(days=i)
+            daily_query = db.query(Attendance).filter(Attendance.attendance_date == day)
+            if branch or year is not None or semester is not None or section:
+                daily_query = daily_query.join(Student, Student.student_id == Attendance.student_id)
+                if branch:
+                    dept_id = BRANCH_TO_DEPARTMENT.get(branch)
+                    if dept_id is not None:
+                        daily_query = daily_query.join(User, User.user_id == Student.student_id).filter(User.department_id == dept_id)
+                if year is not None:
+                    daily_query = daily_query.filter(Student.year == year)
+                if semester is not None:
+                    daily_query = daily_query.filter(Student.semester == semester)
+                if section:
+                    daily_query = daily_query.filter(Student.section == section)
+            total_day = daily_query.count()
+            present_day = daily_query.filter(Attendance.status == True).count()
+            attendance_trend.append({
+                "date": day.strftime("%Y-%m-%d"),
+                "attendance": round((present_day / total_day) * 100, 2) if total_day > 0 else 0.0
+            })
+
+        alerts = []
+        if attendance_risk_percent >= 25:
+            alerts.append({
+                "title": "Large attendance risk cluster detected",
+                "type": "academic",
+                "severity": "high",
+                "timestamp": datetime.utcnow().isoformat(),
+                "action": "View Students"
+            })
+        if at_risk_students > 0 and avg_cgpa < cgpa_threshold:
+            alerts.append({
+                "title": "CGPA decline detected across students",
+                "type": "academic",
+                "severity": "medium",
+                "timestamp": datetime.utcnow().isoformat(),
+                "action": "View Students"
+            })
+        if overloaded > 0:
+            alerts.append({
+                "title": "Faculty overload identified",
+                "type": "faculty",
+                "severity": "high",
+                "timestamp": datetime.utcnow().isoformat(),
+                "action": "Assign Faculty"
+            })
+        if low_attendance_count > 0 and avg_attendance < attendance_threshold:
+            alerts.append({
+                "title": "Timetable review recommended",
+                "type": "system",
+                "severity": "low",
+                "timestamp": datetime.utcnow().isoformat(),
+                "action": "Fix Timetable"
+            })
+
+        filtered_student_ids = [student.student_id for student in student_rows]
+        attendance_student_ids = set(id for (id,) in db.query(Attendance.student_id).filter(Attendance.student_id.in_(filtered_student_ids)).distinct().all()) if filtered_student_ids else set()
+        marks_student_ids = set(id for (id,) in db.query(Mark.student_id).filter(Mark.student_id.in_(filtered_student_ids)).distinct().all()) if filtered_student_ids else set()
+        students_with_both = len(attendance_student_ids & marks_student_ids)
+
+        data_completeness = round((students_with_both / total_students) * 100, 2) if total_students > 0 else 0.0
+
+        return {
+            "metrics": {
+                "at_risk_students": at_risk_students,
+                "attendance_risk_percent": attendance_risk_percent,
+                "data_completeness": data_completeness,
+                "active_alerts": active_alerts,
+                "total_students": total_students,
+                "total_teachers": total_teachers,
+                "active_events": active_events,
+                "events_today": events_today,
+                "events_this_week": events_this_week,
+            },
+            "academic_health": {
+                "avg_attendance": avg_attendance,
+                "avg_cgpa": avg_cgpa,
+                "at_risk_students": at_risk_students,
+            },
+            "faculty_health": {
+                "avg_classes": avg_classes,
+                "overloaded": overloaded,
+                "underutilized": underutilized,
+            },
+            "system_health": {
+                "active_users": db.query(Attendance).filter(Attendance.attendance_date == today).count(),
+                "last_sync": datetime.utcnow().isoformat(),
+                "data_completeness": data_completeness,
+            },
+            "alerts": [
+                {
+                    "title": alert.title,
+                    "type": "system",
+                    "severity": "low",
+                    "timestamp": alert.created_at.isoformat() if alert.created_at else datetime.utcnow().isoformat(),
+                    "action": "View Alerts"
+                }
+                for alert in alert_records
+            ] + alerts,
+            "trend": attendance_trend,
+        }
+    except Exception as e:
+        print(f"Failed to build admin overview: {e}")
+        return {
+            "metrics": {
+                "at_risk_students": 0,
+                "attendance_risk_percent": 0.0,
+                "faculty_overload": 0,
+                "active_alerts": 0,
+                "total_students": 0,
+                "total_teachers": 0,
+            },
+            "academic_health": {
+                "avg_attendance": 0.0,
+                "avg_cgpa": 0.0,
+                "at_risk_students": 0,
+            },
+            "faculty_health": {
+                "avg_classes": 0.0,
+                "overloaded": 0,
+                "underutilized": 0,
+            },
+            "system_health": {
+                "active_users": 0,
+                "last_sync": datetime.utcnow().isoformat(),
+                "data_completeness": 0.0,
+            },
+            "alerts": [],
+            "trend": [],
+        }
+    finally:
+        db.close()
+
+    generic = settings.get("report_format")
+    if isinstance(generic, str) and generic.strip().lower() in {"pdf", "excel", "docx"}:
+        return generic.strip().lower()
+
+    return get_default_format_for_module(module_name)
 
 
 def build_attendance_trend(records, view: str = "daily"):
@@ -273,6 +688,127 @@ def build_attendance_trend(records, view: str = "daily"):
 @app.get("/")
 def root():
     return {"message": "Backend connected to database successfully"}
+
+# -------------------------
+# SYSTEM SETTINGS
+@app.get("/api/settings")
+def get_system_settings(db: Session = Depends(get_db)):
+    if settings_cache_loaded:
+        payload = dict(settings_cache)
+    else:
+        settings = db.query(SystemSetting).all()
+        payload = {setting.key: setting.value for setting in settings}
+
+    last_updated = None
+    for key, value in payload.items():
+        if key == "settings_last_updated":
+            continue
+        setting = db.query(SystemSetting).filter(SystemSetting.key == key).first()
+        if setting and setting.updated_at is not None:
+            if last_updated is None or setting.updated_at > last_updated:
+                last_updated = setting.updated_at
+
+    if last_updated is not None:
+        payload["settings_last_updated"] = last_updated.isoformat()
+
+    return payload
+
+
+@app.post("/api/settings/preview-impact")
+def preview_settings_impact(data: schemas.SettingsPreviewRequest, db: Session = Depends(get_db)):
+    attendance_threshold = data.attendance_threshold
+    cgpa_threshold = data.cgpa_threshold
+
+    students = db.query(Student).filter(Student.is_deleted == False).all()
+    at_risk = 0
+
+    for student in students:
+        total = db.query(Attendance).filter(Attendance.student_id == student.student_id).count()
+        present = db.query(Attendance).filter(
+            Attendance.student_id == student.student_id,
+            Attendance.status == True
+        ).count()
+        percentage = round((present / total) * 100, 2) if total > 0 else 0
+        student_cgpa = float(student.cgpa) if student.cgpa is not None else 0.0
+
+        if percentage < attendance_threshold or student_cgpa < cgpa_threshold:
+            at_risk += 1
+
+    return {"at_risk_students": at_risk}
+
+
+@app.get("/api/settings/logs")
+def get_settings_logs(db: Session = Depends(get_db)):
+    logs = db.query(SettingsAuditLog).order_by(SettingsAuditLog.timestamp.desc()).limit(10).all()
+    return [
+        {
+            "id": log.id,
+            "key": log.key,
+            "old_value": log.old_value,
+            "new_value": log.new_value,
+            "updated_by": log.updated_by,
+            "timestamp": log.timestamp.isoformat() if log.timestamp else None,
+        }
+        for log in logs
+    ]
+
+
+@app.put("/api/settings")
+def update_system_settings(data: schemas.SettingsUpdateRequest, db: Session = Depends(get_db), current_user: dict = Depends(get_optional_current_user)):
+    payload = data.dict(exclude_unset=True)
+    if not payload:
+        raise HTTPException(status_code=400, detail="No settings provided")
+
+    allowed_options = {
+        "attendance_threshold": lambda value: isinstance(value, (int, float)) and 0 <= value <= 100,
+        "cgpa_threshold": lambda value: isinstance(value, (int, float)) and 0 <= value <= 10,
+        "attendance_alert_enabled": lambda value: isinstance(value, bool),
+        "cgpa_alert_enabled": lambda value: isinstance(value, bool),
+        "alert_frequency": lambda value: isinstance(value, str) and value.strip() in {"immediate", "daily", "weekly"},
+        "report_retention_days": lambda value: isinstance(value, int) and value > 0,
+        "analytics_refresh_interval": lambda value: isinstance(value, str) and value.strip() in {"daily", "weekly", "monthly"},
+        "session_timeout": lambda value: isinstance(value, int) and value > 0,
+        "report_format": lambda value: value is None or (isinstance(value, str) and value.strip().lower() in {"pdf", "excel", "docx"}),
+        "marks_format": lambda value: value is None or (isinstance(value, str) and value.strip().lower() in {"pdf", "excel", "docx"}),
+        "attendance_format": lambda value: value is None or (isinstance(value, str) and value.strip().lower() in {"pdf", "excel", "docx"}),
+        "assignment_format": lambda value: value is None or (isinstance(value, str) and value.strip().lower() in {"pdf", "excel", "docx"}),
+        "resources_format": lambda value: value is None or (isinstance(value, str) and value.strip().lower() in {"pdf", "excel", "docx"})
+    }
+
+    audit_entries = []
+    user_label = "system"
+    if current_user and isinstance(current_user, dict):
+        user_label = str(current_user.get("user_id") or current_user.get("email") or "system")
+
+    for key, value in payload.items():
+        validator = allowed_options.get(key)
+        if validator is None:
+            raise HTTPException(status_code=400, detail=f"Invalid setting key: {key}")
+        if not validator(value):
+            raise HTTPException(status_code=400, detail=f"Invalid value for {key}")
+
+        setting = db.query(SystemSetting).filter(SystemSetting.key == key).first()
+        old_value = setting.value if setting else None
+
+        if setting is None:
+            setting = SystemSetting(key=key, value=value)
+            db.add(setting)
+        else:
+            setting.value = value
+
+        audit_entries.append(SettingsAuditLog(
+            key=key,
+            old_value=old_value,
+            new_value=value,
+            updated_by=user_label,
+            timestamp=datetime.utcnow()
+        ))
+
+    db.add_all(audit_entries)
+    db.commit()
+    refresh_settings_cache()
+    return {"message": "Settings updated successfully", "updated_at": datetime.utcnow().isoformat()}
+
 
 # -------------------------
 # LOGIN (Student / Teacher / Admin)
@@ -1219,6 +1755,57 @@ def download_report_pdf(
         (total_present / total_entries) * 100, 2  # type: ignore
     ) if total_entries > 0 else 0
 
+    report_format = get_report_format("attendance")
+    if report_format == "excel":
+        output = BytesIO()
+        df = pd.DataFrame(student_rows)
+        df.to_excel(output, index=False, engine="openpyxl")
+        output.seek(0)
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename=attendance_report_{subject_id}.xlsx"}
+        )
+
+    if report_format == "docx":
+        try:
+            from docx import Document
+        except ImportError:
+            raise HTTPException(status_code=500, detail="DOCX export support is unavailable")
+
+        document = Document()
+        document.add_heading("Attendance Performance Report", level=1)
+        document.add_paragraph(f"Subject: {subject.subject_name}")
+        document.add_paragraph(f"Date range: {start_date} to {end_date}")
+        document.add_paragraph(f"Class Average: {class_average}%")
+
+        table = document.add_table(rows=1, cols=6)
+        hdr_cells = table.rows[0].cells
+        hdr_cells[0].text = "Roll"
+        hdr_cells[1].text = "Name"
+        hdr_cells[2].text = "Total"
+        hdr_cells[3].text = "Present"
+        hdr_cells[4].text = "Absent"
+        hdr_cells[5].text = "Percentage"
+
+        for row in student_rows:
+            cells = table.add_row().cells
+            cells[0].text = str(row["roll"])
+            cells[1].text = str(row["name"])
+            cells[2].text = str(row["total_classes"])
+            cells[3].text = str(row["present"])
+            cells[4].text = str(row["absent"])
+            cells[5].text = f"{row['percentage']}%"
+
+        output = BytesIO()
+        document.save(output)
+        output.seek(0)
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": f"attachment; filename=attendance_report_{subject_id}.docx"}
+        )
+
     # ================= PDF BUILD =================
 
     file_path = f"attendance_report_{subject_id}.pdf"
@@ -1900,9 +2487,15 @@ def get_all_students(
         # -------------------------
         # RISK CLASSIFICATION
         # -------------------------
+        attendance_threshold = get_setting("attendance_threshold") or 75
+        cgpa_threshold = get_setting("cgpa_threshold") or 6.5
+        print("Using attendance threshold:", attendance_threshold, "CGPA threshold:", cgpa_threshold)
+
+        student_cgpa = float(student.cgpa) if student.cgpa is not None else 0.0
+
         if percentage < 60:
             risk = "Critical"
-        elif percentage < 75:
+        elif percentage < attendance_threshold or student_cgpa < cgpa_threshold:
             risk = "Warning"
         else:
             risk = "Safe"
@@ -1916,7 +2509,7 @@ def get_all_students(
             "section": student.section,
             "department": DEPARTMENT_MAP.get(user.department_id, "UNKNOWN"),
             "attendance": percentage,
-            "cgpa": float(student.cgpa),
+            "cgpa": student_cgpa,
             "risk": risk
         })
 
@@ -2099,7 +2692,7 @@ def download_risk_report(
 
         if percentage < 60:
             risk = "Critical"
-        elif percentage < 75:
+        elif percentage < (get_setting("attendance_threshold") or 75):
             risk = "Warning"
         else:
             continue  # Only include risk students
@@ -3671,14 +4264,71 @@ def download_marks_template(
             "Marks": ""  # Single marks column
         })
 
-    df = pd.DataFrame(data)
+    report_format = get_report_format("marks")
+    if report_format == "excel":
+        df = pd.DataFrame(data)
+        output = io.BytesIO()
+        df.to_excel(output, index=False, engine="openpyxl")
+        output.seek(0)
+        from fastapi.responses import StreamingResponse  # type: ignore
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": "attachment; filename=marks_template.xlsx"}
+        )
 
-    # Create Excel in memory
+    if report_format == "pdf":
+        buffer = BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4)
+        styles = getSampleStyleSheet()
+        elements = [Paragraph("Marks Template", styles["Heading1"]), Spacer(1, 0.2 * inch)]
+        table_data = [["Register Number", "Student Name", "Marks"]] + [[row["Register Number"], row["Student Name"], ""] for row in data]
+        table = Table(table_data, repeatRows=1)
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.grey),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+        ]))
+        elements.append(table)
+        doc.build(elements)
+        buffer.seek(0)
+        return StreamingResponse(
+            buffer,
+            media_type="application/pdf",
+            headers={"Content-Disposition": "attachment; filename=marks_template.pdf"}
+        )
+
+    if report_format == "docx":
+        try:
+            from docx import Document
+        except ImportError:
+            raise HTTPException(status_code=500, detail="DOCX export support is unavailable")
+        document = Document()
+        document.add_heading("Marks Template", level=1)
+        table_docx = document.add_table(rows=1, cols=3)
+        hdr_cells = table_docx.rows[0].cells
+        hdr_cells[0].text = "Register Number"
+        hdr_cells[1].text = "Student Name"
+        hdr_cells[2].text = "Marks"
+        for row in data:
+            cells = table_docx.add_row().cells
+            cells[0].text = str(row["Register Number"])
+            cells[1].text = str(row["Student Name"])
+            cells[2].text = ""
+        output = io.BytesIO()
+        document.save(output)
+        output.seek(0)
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": "attachment; filename=marks_template.docx"}
+        )
+
+    # fallback to excel
+    df = pd.DataFrame(data)
     output = io.BytesIO()
     df.to_excel(output, index=False, engine="openpyxl")
     output.seek(0)
-
-    # Return as file response
     from fastapi.responses import StreamingResponse  # type: ignore
     return StreamingResponse(
         output,
@@ -4343,6 +4993,59 @@ def download_weekly_pdf(
         (total_present / (unique_classes * total_students)) * 100, 2  # type: ignore
     ) if unique_classes > 0 and total_students > 0 else 0
 
+    report_format = get_report_format("attendance")
+    if report_format == "excel":
+        output = BytesIO()
+        df = pd.DataFrame(student_rows)
+        df.to_excel(output, index=False, engine="openpyxl")
+        output.seek(0)
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename=weekly_report_{subject_id}.xlsx"}
+        )
+
+    if report_format == "docx":
+        try:
+            from docx import Document
+        except ImportError:
+            raise HTTPException(status_code=500, detail="DOCX export support is unavailable")
+
+        document = Document()
+        document.add_heading("Weekly Attendance Report", level=1)
+        document.add_paragraph(f"Subject: {subject.subject_name}")
+        document.add_paragraph(f"Week Starting: {start_week}")
+        document.add_paragraph(f"Class Average: {class_average}%")
+
+        table_docx = document.add_table(rows=1, cols=7)
+        hdr_cells = table_docx.rows[0].cells
+        hdr_cells[0].text = "Rank"
+        hdr_cells[1].text = "Roll No"
+        hdr_cells[2].text = "Name"
+        hdr_cells[3].text = "Total"
+        hdr_cells[4].text = "Present"
+        hdr_cells[5].text = "Absent"
+        hdr_cells[6].text = "Percentage"
+
+        for index, row in enumerate(student_rows, start=1):
+            cells = table_docx.add_row().cells
+            cells[0].text = str(index)
+            cells[1].text = str(row["roll"])
+            cells[2].text = str(row["name"])
+            cells[3].text = str(row["total"])
+            cells[4].text = str(row["present"])
+            cells[5].text = str(row["absent"])
+            cells[6].text = f"{row['percentage']}%"
+
+        output = BytesIO()
+        document.save(output)
+        output.seek(0)
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": f"attachment; filename=weekly_report_{subject_id}.docx"}
+        )
+
     table = Table(table_data, repeatRows=1)
 
     style = TableStyle([
@@ -4351,11 +5054,14 @@ def download_weekly_pdf(
         ("ALIGN", (3, 1), (-1, -1), "CENTER"),
     ])
 
+    threshold = get_setting("attendance_threshold") or 75
+    print("Using attendance threshold:", threshold)
+
     # -----------------------------
-    # Highlight Defaulters (<75%)
+    # Highlight Defaulters (<threshold %)
     # -----------------------------
     for i, row in enumerate(student_rows, start=1):
-        if row["percentage"] < 75:
+        if row["percentage"] < threshold:
             style.add(
                 "BACKGROUND",
                 (0, i),      # from Rank column
@@ -4506,6 +5212,59 @@ def download_monthly_pdf(
         (total_present / (unique_classes * total_students)) * 100, 2  # type: ignore
     ) if unique_classes > 0 and total_students > 0 else 0
 
+    report_format = get_report_format("attendance")
+    if report_format == "excel":
+        output = BytesIO()
+        df = pd.DataFrame(student_rows)
+        df.to_excel(output, index=False, engine="openpyxl")
+        output.seek(0)
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename=monthly_report_{subject_id}.xlsx"}
+        )
+
+    if report_format == "docx":
+        try:
+            from docx import Document
+        except ImportError:
+            raise HTTPException(status_code=500, detail="DOCX export support is unavailable")
+
+        document = Document()
+        document.add_heading("Monthly Attendance Report", level=1)
+        document.add_paragraph(f"Subject: {subject.subject_name}")
+        document.add_paragraph(f"Month: {month}/{year}")
+        document.add_paragraph(f"Class Average: {class_average}%")
+
+        table_docx = document.add_table(rows=1, cols=7)
+        hdr_cells = table_docx.rows[0].cells
+        hdr_cells[0].text = "Rank"
+        hdr_cells[1].text = "Roll No"
+        hdr_cells[2].text = "Name"
+        hdr_cells[3].text = "Total"
+        hdr_cells[4].text = "Present"
+        hdr_cells[5].text = "Absent"
+        hdr_cells[6].text = "Percentage"
+
+        for index, row in enumerate(student_rows, start=1):
+            cells = table_docx.add_row().cells
+            cells[0].text = str(index)
+            cells[1].text = str(row["roll"])
+            cells[2].text = str(row["name"])
+            cells[3].text = str(row["total"])
+            cells[4].text = str(row["present"])
+            cells[5].text = str(row["absent"])
+            cells[6].text = f"{row['percentage']}%"
+
+        output = BytesIO()
+        document.save(output)
+        output.seek(0)
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": f"attachment; filename=monthly_report_{subject_id}.docx"}
+        )
+
     table = Table(
         table_data,
         colWidths=[0.7*inch, 1*inch, 1.5*inch, 0.7*inch, 0.7*inch, 0.7*inch, 0.8*inch],
@@ -4518,11 +5277,14 @@ def download_monthly_pdf(
         ("ALIGN", (3, 1), (-1, -1), "CENTER"),
     ])
 
+    threshold = get_setting("attendance_threshold") or 75
+    print("Using attendance threshold:", threshold)
+
     # -----------------------------
-    # Highlight Defaulters (<75%)
+    # Highlight Defaulters (<threshold %)
     # -----------------------------
     for i, row in enumerate(student_rows, start=1):
-        if row["percentage"] < 75:
+        if row["percentage"] < threshold:
             style.add(
                 "BACKGROUND",
                 (0, i),
@@ -4599,6 +5361,19 @@ def reset_password(
 def check_attendance_thresholds():
 
     db = SessionLocal()
+    attendance_enabled = get_setting("attendance_alert_enabled")
+    cgpa_enabled = get_setting("cgpa_alert_enabled")
+    attendance_enabled = attendance_enabled if attendance_enabled is not None else True
+    cgpa_enabled = cgpa_enabled if cgpa_enabled is not None else True
+    frequency = get_setting("alert_frequency") or "immediate"
+    threshold = get_setting("attendance_threshold") or 75
+
+    print("Alert settings:", {
+        "attendance": attendance_enabled,
+        "cgpa": cgpa_enabled,
+        "frequency": frequency
+    })
+    print("Using attendance threshold:", threshold)
 
     try:
         students = db.query(Student).all()
@@ -4638,7 +5413,7 @@ def check_attendance_thresholds():
                 # Determine current level
                 if percentage < 60:
                     current_level = "critical"
-                elif percentage < 75:
+                elif percentage < threshold:
                     current_level = "warning"
                 else:
                     current_level = "safe"
@@ -4688,6 +5463,31 @@ def check_attendance_thresholds():
                 if not send_alert:
                     continue
 
+                if not attendance_enabled:
+                    continue
+
+                if frequency == "daily":
+                    print(
+                        "Daily alert mode: queueing attendance alert for later processing",
+                        {"student_id": student.student_id, "subject": subject.subject_name, "percentage": round(percentage,2)}
+                    )
+
+                    if existing:
+                        existing.level = current_level
+                        existing.last_sent = now
+                    else:
+                        new_warning = AttendanceWarning(
+                            student_id=student.student_id,
+                            subject_id=subject.subject_id,
+                            semester=student.semester,
+                            level=current_level,
+                            last_sent=now
+                        )
+                        db.add(new_warning)
+
+                    db.commit()
+                    continue
+
                 # -----------------------------
                 # Build Alert Message
                 # -----------------------------
@@ -4702,7 +5502,7 @@ def check_attendance_thresholds():
                 message = (
                     f"Your attendance in {subject.subject_name} "
                     f"is {round(percentage,2)}%. "
-                    f"Minimum required is 75%."
+                    f"Minimum required is {threshold}%."
                 )
 
                 alert = Alert(
@@ -4744,6 +5544,71 @@ def check_attendance_thresholds():
 
     except Exception as e:
         print("Hybrid Scheduler Error:", e)
+
+    finally:
+        db.close()
+
+
+def check_cgpa_thresholds():
+    db = SessionLocal()
+    attendance_enabled = get_setting("attendance_alert_enabled")
+    cgpa_enabled = get_setting("cgpa_alert_enabled")
+    attendance_enabled = attendance_enabled if attendance_enabled is not None else True
+    cgpa_enabled = cgpa_enabled if cgpa_enabled is not None else True
+    frequency = get_setting("alert_frequency") or "immediate"
+    threshold = get_setting("cgpa_threshold") or 6.5
+
+    print("Alert settings:", {
+        "attendance": attendance_enabled,
+        "cgpa": cgpa_enabled,
+        "frequency": frequency
+    })
+    print("Using CGPA threshold:", threshold)
+
+    try:
+        if not cgpa_enabled:
+            return
+
+        students = db.query(Student).all()
+        for student in students:
+            cgpa_val = float(student.cgpa) if student.cgpa is not None else 0.0
+            if cgpa_val >= threshold:
+                continue
+
+            if frequency == "daily":
+                print(
+                    "Daily alert mode: queueing CGPA alert for later processing",
+                    {"student_id": student.student_id, "cgpa": cgpa_val}
+                )
+                continue
+
+            title = "⚠ CGPA Alert"
+            message = (
+                f"Your CGPA is {cgpa_val:.2f}. "
+                f"Minimum required is {threshold}."
+            )
+            alert = Alert(
+                title=title,
+                message=message,
+                type="cgpa-monitor",
+                target_role="student",
+                target_type="individual",
+                student_id=student.student_id
+            )
+            db.add(alert)
+            db.commit()
+            db.refresh(alert)
+
+            recipient = AlertRecipient(
+                alert_id=alert.id,
+                user_id=student.student_id,
+                is_read=False
+            )
+            db.add(recipient)
+            db.commit()
+
+    except Exception as e:
+        print("CGPA Alert Scheduler Error:", e)
 
     finally:
         db.close()
@@ -5583,6 +6448,12 @@ def start_scheduler():
         "cron",
         hour=20,
         minute=0
+    )
+    scheduler.add_job(
+        check_cgpa_thresholds,
+        "cron",
+        hour=20,
+        minute=5
     )
     scheduler.add_job(
         process_event_reminders,
@@ -7202,14 +8073,15 @@ def get_faculty_overview(
             att_counts[a.student_id]["present"] += 1
             
     attendance_data = []
-    ATTENDANCE_RISK_THRESHOLD = 75
+    threshold = get_setting("attendance_threshold") or 75
+    print("Using attendance threshold:", threshold)
     attendance_risk_students = []
     
     for sid, counts in att_counts.items():
         pct = round((counts["present"]/counts["total"])*100, 2) if counts["total"] > 0 else 100.0  # type: ignore
         attendance_data.append({"name": student_names[sid], "percentage": pct})
         
-        if pct < ATTENDANCE_RISK_THRESHOLD:
+        if pct < threshold:
             attendance_risk_students.append({
                 "name": student_names[sid],
                 "value": pct

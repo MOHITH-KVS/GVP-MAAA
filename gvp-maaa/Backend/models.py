@@ -135,8 +135,32 @@ class Timetable(Base):
 
 
 # =========================
+# SYSTEM SETTINGS
+class SystemSetting(Base):
+    __tablename__ = "system_settings"
+    __table_args__ = (UniqueConstraint("key"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    key = Column(String(255), unique=True, nullable=False)
+    value = Column(JSON, nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+# =========================
 # MARKS UPLOADS
 # =========================
+# SETTINGS AUDIT LOGS
+class SettingsAuditLog(Base):
+    __tablename__ = "settings_audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    key = Column(String(255), nullable=False)
+    old_value = Column(String, nullable=True)
+    new_value = Column(String, nullable=True)
+    updated_by = Column(String, default="admin")
+    timestamp = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
 class MarksUpload(Base):
     __tablename__ = "marks_uploads"
 

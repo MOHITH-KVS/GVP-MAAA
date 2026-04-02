@@ -1,6 +1,36 @@
+import { useEffect, useState } from "react";
+import api from "../../utils/api";
+
 /* ================= ADMIN INSIGHTS ================= */
 
 export default function Insights() {
+  const [settings, setSettings] = useState({
+    attendance_threshold: 75,
+    cgpa_threshold: 6.5,
+    attendance_alert_enabled: true,
+    cgpa_alert_enabled: true,
+    alert_frequency: "immediate",
+  });
+
+  useEffect(() => {
+    const fetchSettings = async () => {
+      try {
+        const response = await api.get("/api/settings");
+        setSettings({
+          attendance_threshold: response.data.attendance_threshold ?? 75,
+          cgpa_threshold: response.data.cgpa_threshold ?? 6.5,
+          attendance_alert_enabled: response.data.attendance_alert_enabled ?? true,
+          cgpa_alert_enabled: response.data.cgpa_alert_enabled ?? true,
+          alert_frequency: response.data.alert_frequency ?? "immediate",
+        });
+      } catch (error) {
+        console.error("Failed to load settings", error);
+      }
+    };
+
+    fetchSettings();
+  }, []);
+
   return (
     <div className="space-y-12">
 
@@ -44,15 +74,15 @@ export default function Insights() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           <ChartCard
             title="At-Risk vs Safe Students"
-            desc="Overall academic risk distribution across the institution"
+            desc={`Overall academic risk distribution across the institution using ${settings.attendance_threshold}% attendance and ${settings.cgpa_threshold} CGPA thresholds`}
           />
           <ChartCard
             title="Attendance Distribution"
-            desc="Attendance range analysis across students"
+            desc={`Attendance range analysis across students (threshold ${settings.attendance_threshold}%)`}
           />
           <ChartCard
             title="CGPA Distribution"
-            desc="Academic performance breakdown"
+            desc={`Academic performance breakdown (risk threshold ${settings.cgpa_threshold})`}
           />
           <ChartCard
             title="Section-wise Risk Analysis"
@@ -105,10 +135,24 @@ export default function Insights() {
 
       {/* ================= ALERT ANALYTICS ================= */}
       <Section title="Alert Effectiveness Analysis">
+        {!settings.attendance_alert_enabled && !settings.cgpa_alert_enabled ? (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700">
+            Attendance and CGPA alerts are currently disabled in system settings.
+          </div>
+        ) : !settings.attendance_alert_enabled ? (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700">
+            Attendance alerts are disabled in system settings.
+          </div>
+        ) : !settings.cgpa_alert_enabled ? (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700">
+            CGPA alerts are disabled in system settings.
+          </div>
+        ) : null}
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <ChartCard
             title="Risk Before vs After Alerts"
-            desc="Impact of early alerts on student risk"
+            desc={`Impact of early alerts on student risk when alert frequency is ${settings.alert_frequency || "immediate"}`}
           />
           <ChartCard
             title="Alert Frequency by Department"
