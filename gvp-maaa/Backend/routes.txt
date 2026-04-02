@@ -1,0 +1,249 @@
+84: def apply_student_filters(query, branch: Optional[str], year: Optional[int], semester: Optional[int], section: Optional[str]):
+104: def apply_alert_filters(query, branch: Optional[str], year: Optional[int], semester: Optional[int], section: Optional[str]):
+196: def refresh_settings_cache():
+210: def get_optional_current_user(request: Request):
+223: def get_current_setting(key: str):
+229: def process_event_reminders():
+274: @app.on_event("startup")
+275: def startup_event():
+328: def get_db():
+336: def get_setting(key: str):
+354: def get_settings():
+367: def get_default_format_for_module(module_name: str):
+377: def get_report_format(module_name: str):
+386: @app.get("/admin/overview/attendance-trend", response_model=List[schemas.AdminOverviewTrendPoint])
+387: def admin_overview_attendance_trend(
+427: @app.get("/admin/overview", response_model=AdminOverviewResponse)
+428: def admin_overview(
+683: def build_attendance_trend(records, view: str = "daily"):
+729: @app.get("/")
+730: def root():
+735: @app.get("/api/settings")
+736: def get_system_settings(db: Session = Depends(get_db)):
+758: @app.post("/api/settings/preview-impact")
+759: def preview_settings_impact(data: schemas.SettingsPreviewRequest, db: Session = Depends(get_db)):
+781: @app.get("/api/settings/logs")
+782: def get_settings_logs(db: Session = Depends(get_db)):
+797: @app.put("/api/settings")
+798: def update_system_settings(data: schemas.SettingsUpdateRequest, db: Session = Depends(get_db), current_user: dict = Depends(get_optional_current_user)):
+857: @app.post("/login")
+858: def login(data: LoginRequest, db: Session = Depends(get_db)):
+911: @app.post("/signup/student")
+912: def student_signup(data: StudentSignupRequest, db: Session = Depends(get_db)):
+967: @app.get("/student/profile")
+968: def get_student_profile(
+1004: @app.put("/student/profile")
+1005: def update_student_profile(
+1045: @app.post("/signup/teacher")
+1046: def teacher_signup(data: TeacherSignupRequest, db: Session = Depends(get_db)):
+1094: @app.get("/faculty/profile")
+1095: def get_faculty_profile(
+1151: @app.put("/faculty/profile")
+1152: def update_faculty_profile(
+1223: @app.post("/faculty/attendance")
+1224: def mark_attendance(
+1339: @app.get("/faculty/attendance/students")
+1340: def get_students_for_attendance(
+1465: @app.get("/faculty/attendance/last5")
+1466: def get_last_5_classes(
+1482: @app.get("/faculty/attendance/check")
+1483: def check_attendance_exists(
+1506: @app.get("/faculty/attendance/by-date")
+1507: def get_attendance_by_date(
+1533: @app.get("/faculty/attendance/semester/{subject_id}")
+1534: def get_semester_attendance(
+1580: @app.get("/faculty/attendance/report/{subject_id}")
+1581: def attendance_report(
+1699: @app.get("/faculty/attendance/report/{subject_id}/download")
+1700: def download_report_pdf(
+1973: def add_layout(canvas_obj, doc_obj):
+2008: @app.get("/faculty/attendance/class-summary")
+2009: def get_class_attendance_summary(
+2091: @app.get("/student/attendance")
+2092: def get_student_attendance(
+2181: @app.get("/student/attendance/monthly")
+2182: def get_monthly_attendance(
+2264: @app.get(
+2268: def get_attendance_analytics(
+2381: @app.post("/login/admin")
+2382: def admin_login(data: AdminLoginRequest, db: Session = Depends(get_db)):
+2437: @app.put("/admin/students/promote")
+2438: def promote_students(
+2472: @app.get("/admin/students")
+2473: def get_all_students(
+2562: @app.put("/admin/students/bulk-promote")
+2563: def bulk_promote_students(
+2600: @app.put("/admin/students/{student_id}")
+2601: def update_student(
+2633: @app.delete("/admin/students")
+2634: def delete_students(
+2668: @app.post("/admin/students/risk-report")
+2669: def download_risk_report(
+2779: @app.get("/admin/protected")
+2780: def admin_protected(user=Depends(get_current_user)):
+2793: @app.post("/admin/timetable/upload", response_model=TimetableResponse)
+2794: def upload_timetable(
+2954: @app.get("/timetables", response_model=list[TimetableResponse])
+2955: def get_timetables(
+3027: @app.delete("/admin/timetables/{timetable_id}")
+3028: def delete_timetable(
+3052: @app.get("/admin/teachers")
+3053: def get_all_teachers(
+3111: @app.put("/admin/teachers/{teacher_id}")
+3112: def update_teacher(
+3148: @app.delete("/admin/teachers")
+3149: def delete_teachers(
+3180: @app.post("/admin/alerts")
+3181: def create_alert(
+3317: @app.get("/admin/alerts")
+3318: def get_all_alerts(
+3357: @app.delete("/admin/alerts/{alert_id}")
+3358: def delete_alert(
+3386: @app.post("/faculty/alerts")
+3387: def create_faculty_alert(
+3503: @app.get("/faculty/alerts")
+3504: def get_faculty_alerts(
+3541: @app.get("/faculty/my-subjects")
+3542: def get_my_subjects(
+3580: @app.get("/debug-marks")
+3581: def debug_marks(db: Session = Depends(get_db)):
+3598: @app.get("/faculty/marks")
+3599: def get_faculty_marks(
+3699: def save_or_update_marks(db, student_id, subject_id, exam, data, value=None):
+3756: @app.post("/faculty/marks/preview")
+3757: async def preview_marks_excel(
+3822: def normalize_reg(val):
+3887: @app.post("/faculty/marks/validate-students")
+3888: def validate_students(req: ValidateStudentsRequest, current_user=Depends(get_current_user), db: Session=Depends(get_db)):
+3913: @app.post("/faculty/marks/analyze-upload")
+3914: def analyze_upload(req: AnalyzeUploadRequest, current_user=Depends(get_current_user), db: Session=Depends(get_db)):
+3937: @app.post("/faculty/marks/upload")
+3938: async def upload_marks_excel(
+4001: def get_col(name):
+4048: def normalize_reg(val):
+4056: def safe_get(row, col):
+4099: def safe(val):
+4266: @app.get("/faculty/marks/template")
+4267: def download_marks_template(
+4384: @app.get("/student/alerts")
+4385: def get_student_alerts(
+4418: @app.get("/student/my-marks")
+4419: def get_my_marks(
+4449: def get_raw(exam_name):
+4460: def get_scl(attr):
+4495: @app.patch("/alerts/{alert_id}/read")
+4496: @app.put("/alerts/{alert_id}/read")
+4497: def mark_read(alert_id: int, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+4515: @app.get("/admin/subjects")
+4516: def get_all_subjects(
+4539: @app.get("/admin/subject-performance")
+4540: def get_subject_performance(
+4700: @app.post("/admin/subjects")
+4701: def create_subject(
+4727: @app.delete("/admin/subjects/{subject_id}")
+4728: def delete_subject(
+4753: @app.post("/admin/assign-subject")
+4754: def assign_subject(
+4789: @app.get("/admin/faculty/{faculty_id}/subjects")
+4790: def get_faculty_subjects(
+4822: @app.get("/admin/faculty/{faculty_id}/subjects/history")
+4823: def get_faculty_subject_history(
+4855: @app.delete("/admin/remove-assignment/{assignment_id}")
+4856: def remove_assignment(
+4879: @app.put("/admin/update-assignment/{assignment_id}")
+4880: def update_assignment(
+4907: @app.get("/faculty/attendance/weekly/{subject_id}/download")
+4908: def download_weekly_pdf(
+5131: @app.get("/faculty/attendance/monthly/{subject_id}/download")
+5132: def download_monthly_pdf(
+5354: @app.post("/forgot-password")
+5355: def forgot_password(email: str, db: Session = Depends(get_db)):
+5374: @app.post("/reset-password")
+5375: def reset_password(
+5402: def check_attendance_thresholds():
+5593: def check_cgpa_thresholds():
+5661: def check_monthly_faculty_attendance():
+5789: @app.get("/teacher/my-subjects")
+5790: def get_teacher_subjects(
+5824: @app.post("/teacher/create-assignment")
+5825: def create_assignment(
+5956: @app.get("/teacher/assignments/{year}/{section}")
+5957: def get_teacher_assignments(
+6007: @app.get("/teacher/assignment-details/{assignment_id}")
+6008: def get_assignment_details(
+6080: @app.get("/student/assignments")
+6081: def get_student_assignments(
+6148: @app.post("/student/submit-assignment/{assignment_id}")
+6149: async def submit_assignment(
+6246: @app.get("/teacher/student-assignments-summary/{year}/{section}")
+6247: def get_student_assignments_summary(
+6326: @app.put("/teacher/assignment-submissions/{submission_id}/status")
+6327: def update_submission_status(
+6368: def check_assignment_deadlines():
+6485: @app.on_event("startup")
+6486: def start_scheduler():
+6511: @app.post("/faculty/upload-resource")
+6512: async def upload_resource(
+6596: @app.get("/student/resources")
+6597: def get_student_resources(
+6639: @app.post("/student/resource-access/{resource_id}")
+6640: def track_access(
+6666: @app.get("/faculty/resources/{subject_id}")
+6667: def faculty_resources(
+6721: @app.get("/faculty/subjects")
+6722: def get_faculty_subjects(
+6749: @app.get("/faculty/resource-access-details/{resource_id}")
+6750: def get_resource_access_details(
+6792: @app.get("/faculty/search-students", response_model=List[schemas.StudentSearchResponse])
+6793: def search_students(
+6822: @app.post("/faculty/send-alert")
+6823: def send_alert(
+6910: @app.post("/faculty/send-resource-reminder/{resource_id}")
+6911: def send_resource_reminder(
+6991: @app.post("/faculty/events", response_model=EventResponse)
+6992: def create_event(
+7097: @app.get("/faculty/events", response_model=List[EventResponse])
+7098: def get_events(
+7138: @app.get("/faculty/events/{event_id}/attendance", response_model=EventAttendanceResponse)
+7139: def get_event_attendance(
+7238: @app.patch("/faculty/events/{event_id}/attendance")
+7239: def update_event_attendance(
+7266: @app.patch("/faculty/events/{event_id}/attendance/bulk")
+7267: def bulk_update_event_attendance(
+7291: @app.patch("/faculty/events/result")
+7292: def update_event_result(
+7325: @app.get("/student/events", response_model=List[StudentEventResponse])
+7326: def get_student_events(
+7381: @app.post("/student/events/register")
+7382: def register_student_event(
+7421: @app.post("/faculty/events/{event_id}/alert")
+7422: def send_event_alert(
+7475: @app.post("/faculty/events/{event_id}/reminder")
+7476: def remind_absent_students(
+7534: @app.post("/student/events/external-submit", response_model=ExternalEventSubmissionResponse)
+7535: def submit_external_achievement(
+7583: @app.get("/faculty/external-submissions", response_model=List[FacultyExternalSubmissionDetail])
+7584: def get_external_submissions(
+7610: @app.patch("/faculty/external-submissions/{sub_id}/status")
+7611: def update_external_submission_status(
+7649: @app.post("/faculty/upload-marks")
+7650: def upload_marks(
+7690: @app.get("/faculty/marks")
+7691: def get_marks(
+7733: @app.get("/faculty/marks/template")
+7734: def download_marks_template(
+7782: @app.post("/faculty/marks/upload-excel")
+7783: async def upload_marks_excel(
+7838: def process_scaling(year, section, subject_id, faculty_id, db, action_type):
+7937: @app.get("/faculty/overview")
+7938: def get_faculty_overview(
+8152: @app.get("/faculty/insights-data")
+8153: def get_faculty_insights_data(
+8393: @app.post("/faculty/apply-scaling")
+8394: async def apply_scaling(
+8420: def find_col(keyword):
+8435: def safe(val):
+8500: @app.post("/faculty/undo-scaling")
+8501: def undo_scaling(
+8558: @app.get("/faculty/scaling-logs")
+8559: def get_scaling_logs(

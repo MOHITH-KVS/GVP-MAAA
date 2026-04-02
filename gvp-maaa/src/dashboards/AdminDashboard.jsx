@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate, useLocation, Outlet } from "react-router-dom";
 
 /* ===== ADMIN PAGES ===== */
 import Overview from "../pages/Admin/Overview";
@@ -28,19 +29,21 @@ import MenuIcon from "@mui/icons-material/Menu";
 
 export default function AdminDashboard() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [activePage, setActivePage] = useState("overview");
   const [showLogout, setShowLogout] = useState(false);
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  const activePage = location.pathname.replace(/\/$/, "").split("/")[2] || "overview";
 
   /* ===== LOGOUT FLOW ===== */
- if (showLogout) {
-  return (
-    <Logout
-      role="admin"
-      onBack={() => setShowLogout(false)}
-    />
-  );
-}
-
+  if (showLogout) {
+    return (
+      <Logout
+        role="admin"
+        onBack={() => setShowLogout(false)}
+      />
+    );
+  }
 
   return (
     <div className="h-screen w-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50">
@@ -74,7 +77,7 @@ export default function AdminDashboard() {
                   label="Overview"
                   open={sidebarOpen}
                   active={activePage === "overview"}
-                  onClick={() => setActivePage("overview")}
+                  onClick={() => navigate("/admin")}
                 />
 
                 <MenuItem
@@ -82,7 +85,7 @@ export default function AdminDashboard() {
                   label="Students"
                   open={sidebarOpen}
                   active={activePage === "students"}
-                  onClick={() => setActivePage("students")}
+                  onClick={() => navigate("/admin/students")}
                 />
 
                 <MenuItem
@@ -90,7 +93,7 @@ export default function AdminDashboard() {
                   label="Teachers"
                   open={sidebarOpen}
                   active={activePage === "teachers"}
-                  onClick={() => setActivePage("teachers")}
+                  onClick={() => navigate("/admin/teachers")}
                 />
               </SidebarSection>
 
@@ -100,7 +103,7 @@ export default function AdminDashboard() {
                   label="Academics"
                   open={sidebarOpen}
                   active={activePage === "academics"}
-                  onClick={() => setActivePage("academics")}
+                  onClick={() => navigate("/admin/academics")}
                 />
 
                 <MenuItem
@@ -108,7 +111,7 @@ export default function AdminDashboard() {
                   label="Timetable"
                   open={sidebarOpen}
                   active={activePage === "timetable"}
-                  onClick={() => setActivePage("timetable")}
+                  onClick={() => navigate("/admin/timetable")}
                 />
               </SidebarSection>
 
@@ -118,7 +121,7 @@ export default function AdminDashboard() {
                   label="Alerts"
                   open={sidebarOpen}
                   active={activePage === "alerts"}
-                  onClick={() => setActivePage("alerts")}
+                  onClick={() => navigate("/admin/alerts")}
                 />
 
                 <MenuItem
@@ -126,7 +129,7 @@ export default function AdminDashboard() {
                   label="Insights"
                   open={sidebarOpen}
                   active={activePage === "insights"}
-                  onClick={() => setActivePage("insights")}
+                  onClick={() => navigate("/admin/insights")}
                 />
               </SidebarSection>
 
@@ -136,7 +139,7 @@ export default function AdminDashboard() {
                   label="Settings"
                   open={sidebarOpen}
                   active={activePage === "settings"}
-                  onClick={() => setActivePage("settings")}
+                  onClick={() => navigate("/admin/settings")}
                 />
               </SidebarSection>
             </div>
@@ -157,20 +160,7 @@ export default function AdminDashboard() {
 
         {/* ================= MAIN ================= */}
         <main className="flex-1 p-8 overflow-y-auto">
-
-          {activePage === "overview" && <Overview />}
-          {activePage === "students" && <Students />}
-          {activePage === "teachers" && <Teachers />}
-          {activePage === "academics" && <Academics />}
-          {activePage === "timetable" && <Timetable />}
-          {activePage === "alerts" && <Alerts />}
-          {activePage === "insights" && <Insights />}
-          {activePage === "settings" && (
-            <ErrorBoundary>
-              <Settings />
-            </ErrorBoundary>
-          )}
-
+          <Outlet />
         </main>
       </div>
     </div>

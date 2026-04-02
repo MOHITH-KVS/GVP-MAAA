@@ -1,5 +1,14 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import {
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  CartesianGrid,
+  XAxis,
+  YAxis,
+  Tooltip,
+} from "recharts";
 import api from "../../utils/api";
 
 const BRANCH_OPTIONS = ["CSE", "CSM", "ECE", "MECH", "CIVIL"];
@@ -43,6 +52,9 @@ export default function AdminOverview() {
   const [overview, setOverview] = useState(defaultOverview);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [trendData, setTrendData] = useState([]);
+  const [trendLoading, setTrendLoading] = useState(true);
+  const [trendError, setTrendError] = useState(null);
   const [branch, setBranch] = useState("");
   const [year, setYear] = useState("");
   const [semester, setSemester] = useState("");
@@ -70,6 +82,32 @@ export default function AdminOverview() {
     };
 
     const timer = setTimeout(fetchOverview, 250);
+    return () => clearTimeout(timer);
+  }, [branch, year, semester, section]);
+
+  useEffect(() => {
+    const fetchTrend = async () => {
+      setTrendLoading(true);
+      try {
+        const params = {};
+        if (branch) params.branch = branch;
+        if (year) params.year = parseInt(year, 10);
+        if (semester) params.semester = parseInt(semester, 10);
+        if (section) params.section = section;
+
+        const response = await api.get("/admin/overview/attendance-trend", { params });
+        setTrendData(Array.isArray(response.data) ? response.data : []);
+        setTrendError(null);
+      } catch (err) {
+        console.error("Failed to load attendance trend", err);
+        setTrendData([]);
+        setTrendError("Unable to load attendance trend. Please adjust filters or refresh.");
+      } finally {
+        setTrendLoading(false);
+      }
+    };
+
+    const timer = setTimeout(fetchTrend, 250);
     return () => clearTimeout(timer);
   }, [branch, year, semester, section]);
 
@@ -204,28 +242,24 @@ export default function AdminOverview() {
               value={overview.metrics.at_risk_students}
               subtitle="Students below current thresholds"
               severity="high"
-              onClick={() => handleCardClick("/admin/students?risk=warning")}
             />
             <DashboardCard
               title="Attendance Risk"
               value={`${overview.metrics.attendance_risk_percent}%`}
               subtitle="Share of students at risk"
               severity={overview.metrics.attendance_risk_percent > 25 ? "high" : "medium"}
-              onClick={() => handleCardClick("/admin/attendance")}
             />
             <DashboardCard
               title="Active Events"
               value={overview.metrics.active_events}
               subtitle={overview.metrics.events_today || overview.metrics.events_this_week ? `${overview.metrics.events_today} today • ${overview.metrics.events_this_week} this week` : "Ongoing & upcoming events"}
               severity="info"
-              onClick={() => handleCardClick("/admin/events?status=active")}
             />
             <DashboardCard
               title="Active Alerts"
               value={overview.metrics.active_alerts}
               subtitle="Recent issues requiring attention"
               severity={overview.metrics.active_alerts > 5 ? "high" : "medium"}
-              onClick={() => handleCardClick("/admin/alerts")}
             />
           </div>
 
@@ -281,14 +315,8 @@ export default function AdminOverview() {
             </div>
           </div>
 
-          <div className="rounded-3xl border bg-white p-6">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h2 className="text-lg font-semibold text-slate-900">Student Attendance Trend</h2>
-                <p className="text-sm text-slate-500">Last 7 days student attendance performance.</p>
-              </div>
-            </div>
-            <TrendChart data={overview.trend} />
+          <div className="rounded-3xl border bg-white p-6 mt-5">
+            <TrendChart data={trendData} loading={trendLoading} error={trendError} />
           </div>
         </>
       )}
@@ -296,7 +324,7 @@ export default function AdminOverview() {
   );
 }
 
-function DashboardCard({ title, value, subtitle, severity, onClick }) {
+function DashboardCard({ title, value, subtitle, severity }) {
   const severityStyles = {
     high: "border-red-300 bg-red-50 text-red-900",
     medium: "border-amber-300 bg-amber-50 text-amber-900",
@@ -305,14 +333,13 @@ function DashboardCard({ title, value, subtitle, severity, onClick }) {
   };
 
   return (
-    <button
-      onClick={onClick}
-      className={`group rounded-3xl border p-6 text-left transition hover:-translate-y-1 hover:shadow-lg ${severityStyles[severity] || "border-slate-200 bg-white text-slate-900"}`}
+    <div
+      className={`rounded-3xl border p-6 text-left bg-white cursor-default ${severityStyles[severity] || "border-slate-200 text-slate-900"}`}
     >
       <p className="text-sm font-semibold uppercase tracking-[0.2em]">{title}</p>
       <p className="mt-4 text-4xl font-semibold">{value}</p>
       <p className="mt-3 text-sm text-slate-600">{subtitle}</p>
-    </button>
+    </div>
   );
 }
 
@@ -392,45 +419,56 @@ function ActionButton({ label, onClick }) {
   );
 }
 
-function TrendChart({ data }) {
-  const maxAttendance = Math.max(...data.map((item) => item.attendance), 100);
+function TrendChart({ data, loading, error }) {
+  const hasData = Array.isArray(data) && data.length > 0;
+
+  if (loading) {
+    return (
+      <div className="rounded-3xl border border-slate-200 bg-slate-50 p-8 text-center text-slate-600">
+        Loading attendance trend...
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-3xl border border-red-200 bg-red-50 p-6 text-center text-red-700">
+        {error}
+      </div>
+    );
+  }
+
+  if (!hasData) {
+    return (
+      <div className="rounded-3xl border border-slate-200 bg-slate-50 p-8 text-center text-slate-600">
+        No attendance data available for selected filters
+      </div>
+    );
+  }
+
   return (
-    <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
-      <div className="overflow-x-auto">
-        <svg viewBox="0 0 400 180" className="w-full h-48">
-          <polyline
-            fill="none"
-            stroke="#4338CA"
-            strokeWidth="4"
-            points={data
-              .map((point, index) => {
-                const x = 40 + (index * 52);
-                const y = 150 - (point.attendance / maxAttendance) * 120;
-                return `${x},${y}`;
-              })
-              .join(" ")}
-          />
-          {data.map((point, index) => {
-            const x = 40 + (index * 52);
-            const y = 150 - (point.attendance / maxAttendance) * 120;
-            return (
-              <g key={point.date}>
-                <circle cx={x} cy={y} r="5" fill="#4338CA" />
-                <text x={x} y={y - 12} textAnchor="middle" className="text-xs fill-slate-700">
-                  {point.attendance}%
-                </text>
-              </g>
-            );
-          })}
-          {data.map((point, index) => {
-            const x = 40 + (index * 52);
-            return (
-              <text key={point.date + "label"} x={x} y="170" textAnchor="middle" className="text-[11px] fill-slate-500">
-                {new Date(point.date).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
-              </text>
-            );
-          })}
-        </svg>
+    <div className="rounded-3xl border border-slate-200 bg-slate-50 p-6">
+      <div className="mb-4">
+        <h2 className="text-lg font-semibold text-slate-900">Student Attendance Trend (Last 7 Days)</h2>
+        <p className="text-sm text-slate-500 mt-1">Filtered by selected academic criteria</p>
+      </div>
+      <div className="min-h-[300px]">
+        <ResponsiveContainer width="100%" height={300}>
+          <LineChart data={data} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="date" tick={{ fill: "#64748b" }} axisLine={false} tickLine={false} />
+            <YAxis domain={[0, 100]} tickFormatter={(value) => `${value}%`} tick={{ fill: "#64748b" }} axisLine={false} tickLine={false} />
+            <Tooltip formatter={(value) => `${value}%`} />
+            <Line
+              type="monotone"
+              dataKey="attendance"
+              stroke="#4338CA"
+              strokeWidth={3}
+              dot={{ r: 4 }}
+              activeDot={{ r: 6 }}
+            />
+          </LineChart>
+        </ResponsiveContainer>
       </div>
     </div>
   );

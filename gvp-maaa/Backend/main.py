@@ -13,6 +13,14 @@ from schemas import  AlertCreate, AssignSubjectRequest, AttendanceCreate, ResetP
 import schemas  # type: ignore
 from datetime import datetime, timedelta
 from database import engine  # type: ignore
+try:
+    from ml.risk_engine import calculate_risk, predict_future_risk
+    from ml.prediction_engine import forecast_attendance, forecast_performance
+except ImportError:
+    def calculate_risk(*args, **kwargs): return {"score": 0, "level": "LOW", "reasons": []}
+    def predict_future_risk(*args, **kwargs): return 0
+    def forecast_attendance(*args, **kwargs): return 0.0
+    def forecast_performance(*args, **kwargs): return 0.0
 from models import (  # type: ignore
     Base,
     Alert,
@@ -381,6 +389,47 @@ def get_report_format(module_name: str):
     if isinstance(value, str) and value.strip().lower() in {"pdf", "excel", "docx"}:
         return value.strip().lower()
     return get_default_format_for_module(module_name)
+
+
+@app.get("/admin/overview/attendance-trend", response_model=List[schemas.AdminOverviewTrendPoint])
+def admin_overview_attendance_trend(
+    branch: Optional[str] = Query(None),
+    year: Optional[int] = Query(None),
+    semester: Optional[int] = Query(None),
+    section: Optional[str] = Query(None),
+):
+    db = SessionLocal()
+    try:
+        trend_points = []
+        today = date.today()
+        for i in range(6, -1, -1):
+            day = today - timedelta(days=i)
+            daily_query = db.query(Attendance).filter(Attendance.attendance_date == day)
+            if branch or year is not None or semester is not None or section:
+                daily_query = daily_query.join(Student, Student.student_id == Attendance.student_id)
+                if branch:
+                    dept_id = BRANCH_TO_DEPARTMENT.get(branch)
+                    if dept_id is not None:
+                        daily_query = daily_query.join(User, User.user_id == Student.student_id).filter(User.department_id == dept_id)
+                if year is not None:
+                    daily_query = daily_query.filter(Student.year == year)
+                if semester is not None:
+                    daily_query = daily_query.filter(Student.semester == semester)
+                if section:
+                    daily_query = daily_query.filter(Student.section == section)
+            total_day = daily_query.count()
+            if total_day > 0:
+                present_day = daily_query.filter(Attendance.status == True).count()
+                trend_points.append({
+                    "date": day.strftime("%b %d"),
+                    "attendance": round((present_day / total_day) * 100, 2)
+                })
+        return trend_points
+    except Exception as e:
+        print(f"Failed to build attendance trend: {e}")
+        return []
+    finally:
+        db.close()
 
 
 @app.get("/admin/overview", response_model=AdminOverviewResponse)
@@ -8106,6 +8155,343 @@ def get_faculty_overview(
         "attendance": attendance_data,
         "marks_risk_students": marks_risk_students,
         "attendance_risk_students": attendance_risk_students
+    }
+
+@app.get("/faculty/insights-data")
+def get_faculty_insights_data(
+    year: Optional[int] = Query(None),
+    section: Optional[str] = Query(None),
+    subject_id: Optional[int] = Query(None),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "faculty":
+        raise HTTPException(status_code=403, detail="Faculty only")
+
+    from models import Student, User, FacultySubject, Subject, Attendance, Assignment, AssignmentSubmission, Mark  # type: ignore
+
+    faculty_id = current_user["user_id"]
+
+    faculty_filters = [FacultySubject.faculty_id == faculty_id, FacultySubject.is_active == True]
+    if subject_id is not None:
+        faculty_filters.append(FacultySubject.subject_id == subject_id)
+    if year is not None:
+        faculty_filters.append(FacultySubject.year == year)
+    if section is not None:
+        faculty_filters.append(FacultySubject.section == section)
+
+    assigned_subjects = db.query(FacultySubject).filter(*faculty_filters).all()
+
+    if not assigned_subjects:
+        return {
+            "filters": {"year": year, "section": section, "subject_id": subject_id},
+            "faculty_scope": {"total_subjects": 0, "assigned_classes": 0, "total_students": 0},
+            "attendance_summary": {"overall_percentage": 0.0, "present_count": 0, "absent_count": 0, "total_records": 0, "by_subject": []},
+            "assignment_summary": {"total_assignments": 0, "submitted_count": 0, "late_submissions": 0, "submission_rate": 0.0},
+            "marks_summary": {"avg_mid1": 0.0, "avg_mid2": 0.0, "avg_assignment": 0.0, "avg_semester": 0.0, "avg_total": 0.0},
+            "risk_summary": {"attendance_risk_count": 0, "marks_risk_count": 0, "assignment_engagement_risk_count": 0},
+            "top_students": []
+        }
+
+    subject_ids = list({fs.subject_id for fs in assigned_subjects})
+    class_pairs = {(fs.year, fs.section) for fs in assigned_subjects}
+    year_options = sorted({fs.year for fs in assigned_subjects})
+    section_options = sorted({fs.section for fs in assigned_subjects})
+
+    student_query = db.query(Student.student_id, Student.year, Student.section, User.name).join(
+        User, Student.student_id == User.user_id
+    )
+
+    if year is not None and section is not None:
+        student_query = student_query.filter(Student.year == year, Student.section == section)
+    elif year is not None:
+        student_query = student_query.filter(Student.year == year, Student.section.in_(section_options))
+    elif section is not None:
+        student_query = student_query.filter(Student.section == section, Student.year.in_(year_options))
+    else:
+        student_query = student_query.filter(Student.year.in_(year_options), Student.section.in_(section_options))
+
+    students = student_query.all()
+    student_ids = [s.student_id for s in students]
+    student_names = {s.student_id: s.name for s in students}
+    total_students = len(student_ids)
+
+    subject_map = {
+        s.subject_id: s.subject_name
+        for s in db.query(Subject).filter(Subject.subject_id.in_(subject_ids)).all()
+    }
+    selected_subject_name = None
+    if subject_id is not None:
+        selected_subject_name = subject_map.get(subject_id, "Unknown Subject")
+
+    attendance_query = db.query(Attendance).filter(
+        Attendance.faculty_id == faculty_id,
+        Attendance.student_id.in_(student_ids)
+    )
+    if subject_id is not None:
+        attendance_query = attendance_query.filter(Attendance.subject_id == subject_id)
+
+    attendance_records = attendance_query.all()
+    present_count = sum(1 for a in attendance_records if a.status)
+    absent_count = len(attendance_records) - present_count
+    total_attendance = len(attendance_records)
+    overall_attendance_pct = round((present_count / total_attendance) * 100, 2) if total_attendance else 0.0
+
+    attendance_by_student = {sid: {"present": 0, "total": 0} for sid in student_ids}
+    attendance_by_subject = {}
+    for a in attendance_records:
+        attendance_by_student[a.student_id]["total"] += 1
+        if a.status:
+            attendance_by_student[a.student_id]["present"] += 1
+
+        subject_stats = attendance_by_subject.setdefault(a.subject_id, {"present": 0, "total": 0})
+        subject_stats["total"] += 1
+        if a.status:
+            subject_stats["present"] += 1
+
+    attendance_subject_breakdown = [
+        {
+            "subject_id": sid,
+            "subject_name": subject_map.get(sid, "Unknown Subject"),
+            "present": data["present"],
+            "total": data["total"],
+            "percentage": round((data["present"] / data["total"]) * 100, 2) if data["total"] else 0.0
+        }
+        for sid, data in attendance_by_subject.items()
+    ]
+
+    attendance_threshold = get_setting("attendance_threshold") or 75
+    attendance_risk_students = [
+        {
+            "student_id": sid,
+            "name": student_names.get(sid, "Unknown"),
+            "attendance_percentage": round((counts["present"] / counts["total"]) * 100, 2) if counts["total"] else 0.0
+        }
+        for sid, counts in attendance_by_student.items()
+        if counts["total"] and ((counts["present"] / counts["total"]) * 100) < attendance_threshold
+    ]
+
+    assignment_query = db.query(Assignment).filter(
+        Assignment.faculty_id == faculty_id,
+        Assignment.is_active == True
+    )
+    if subject_id is not None:
+        assignment_query = assignment_query.filter(Assignment.subject_id == subject_id)
+    if year is not None:
+        assignment_query = assignment_query.filter(Assignment.year == year)
+    if section is not None:
+        assignment_query = assignment_query.filter(Assignment.section == section)
+
+    assignments = assignment_query.all()
+    assignment_ids = [a.id for a in assignments]
+    total_assignments = len(assignments)
+
+    submission_count = 0
+    late_submissions = 0
+    submission_by_student = {sid: 0 for sid in student_ids}
+
+    if assignment_ids:
+        submission_records = db.query(AssignmentSubmission).filter(
+            AssignmentSubmission.assignment_id.in_(assignment_ids),
+            AssignmentSubmission.is_submitted == True
+        ).all()
+        submission_count = len(submission_records)
+        late_submissions = sum(1 for s in submission_records if s.is_late)
+        for sub in submission_records:
+            if sub.student_id in submission_by_student:
+                submission_by_student[sub.student_id] += 1
+
+    total_possible_submissions = total_assignments * total_students
+    submission_rate = round((submission_count / total_possible_submissions) * 100, 2) if total_possible_submissions else 0.0
+    assignment_engagement_risk_count = sum(
+        1 for sid in student_ids
+        if total_assignments and submission_by_student.get(sid, 0) < total_assignments
+    ) if total_assignments else 0
+
+    marks_query = db.query(Mark).filter(
+        Mark.faculty_id == faculty_id,
+        Mark.student_id.in_(student_ids)
+    )
+    if subject_id is not None:
+        marks_query = marks_query.filter(Mark.subject_id == subject_id)
+    if year is not None:
+        marks_query = marks_query.filter(Mark.year == year)
+    if section is not None:
+        marks_query = marks_query.filter(Mark.section == section)
+
+    mark_records = marks_query.all()
+    mark_totals = {"mid1": 0.0, "mid2": 0.0, "assignment": 0.0, "semester": 0.0, "total": 0.0}
+    mark_counts = {"mid1": 0, "mid2": 0, "assignment": 0, "semester": 0, "total": 0}
+    student_mark_aggregation = {sid: {"total": 0.0, "count": 0} for sid in student_ids}
+
+    for m in mark_records:
+        if m.marks is None:
+            continue
+        exam_name = str(m.exam or "").strip().lower()
+        value = float(m.marks)
+
+        if "mid-1" in exam_name or "mid1" in exam_name:
+            mark_totals["mid1"] += value
+            mark_counts["mid1"] += 1
+        elif "mid-2" in exam_name or "mid2" in exam_name:
+            mark_totals["mid2"] += value
+            mark_counts["mid2"] += 1
+        elif "assignment" in exam_name:
+            mark_totals["assignment"] += value
+            mark_counts["assignment"] += 1
+        elif "semester" in exam_name:
+            mark_totals["semester"] += value
+            mark_counts["semester"] += 1
+
+        mark_totals["total"] += value
+        mark_counts["total"] += 1
+        if m.student_id in student_mark_aggregation:
+            student_mark_aggregation[m.student_id]["total"] += value
+            student_mark_aggregation[m.student_id]["count"] += 1
+
+    marks_summary = {
+        "avg_mid1": round(mark_totals["mid1"] / mark_counts["mid1"], 2) if mark_counts["mid1"] else 0.0,
+        "avg_mid2": round(mark_totals["mid2"] / mark_counts["mid2"], 2) if mark_counts["mid2"] else 0.0,
+        "avg_assignment": round(mark_totals["assignment"] / mark_counts["assignment"], 2) if mark_counts["assignment"] else 0.0,
+        "avg_semester": round(mark_totals["semester"] / mark_counts["semester"], 2) if mark_counts["semester"] else 0.0,
+        "avg_total": round(mark_totals["total"] / mark_counts["total"], 2) if mark_counts["total"] else 0.0
+    }
+
+    student_averages = []
+    for sid, values in student_mark_aggregation.items():
+        if values["count"]:
+            student_averages.append({
+                "student_id": sid,
+                "name": student_names.get(sid, "Unknown"),
+                "average_marks": round(values["total"] / values["count"], 2)
+            })
+
+    top_students = sorted(student_averages, key=lambda item: item["average_marks"], reverse=True)[:5]
+    marks_risk_count = sum(1 for item in student_averages if item["average_marks"] < 15)
+
+    # === ML PREDICTION & RISK BLOCK ===
+    students_list = []
+    
+    for sid in student_ids:
+        att_data = attendance_by_student.get(sid, {"present": 0, "total": 0})
+        att_pct = round((att_data["present"] / att_data["total"]) * 100, 2) if att_data["total"] else 0.0
+        marks_data = student_mark_aggregation.get(sid, {"total": 0.0, "count": 0})
+        marks_avg = round(marks_data["total"] / marks_data["count"], 2) if marks_data["count"] else 0.0
+        subs = submission_by_student.get(sid, 0)
+        
+        stu_obj = {
+            "student_id": sid,
+            "name": student_names.get(sid, "Unknown"),
+            "attendance": att_pct,
+            "marks": marks_avg,
+            "assignments": subs
+        }
+        try:
+            stu_obj["risk"] = calculate_risk(stu_obj, {
+                "attendance": attendance_threshold,
+                "marks": 15,
+                "assignment": total_assignments
+            })
+        except Exception:
+            stu_obj["risk"] = {"score": 0, "level": "LOW", "reasons": []}
+            
+        students_list.append(stu_obj)
+        
+    try:
+        future_risk = predict_future_risk(students_list, {
+            "attendance": attendance_threshold,
+            "marks": 15,
+            "assignment": total_assignments
+        })
+    except Exception:
+        future_risk = 0
+        
+    try:
+        att_trend = attendance_subject_breakdown
+        expected_att = forecast_attendance(att_trend)
+    except Exception:
+        expected_att = 0.0
+        
+    try:
+        expected_marks = forecast_performance(students_list)
+    except Exception:
+        expected_marks = 0.0
+        
+    data_points = len(student_ids) + len(mark_records)
+    confidence = "LOW"
+    if data_points >= 10:
+        confidence = "HIGH"
+    elif data_points >= 5:
+        confidence = "MEDIUM"
+        
+    predictions = {
+        "future_risk_students": future_risk,
+        "expected_attendance": expected_att,
+        "expected_avg_marks": expected_marks,
+        "confidence": confidence
+    }
+
+    # Weakest subject tracking
+    subject_trends = {}
+    for m in mark_records:
+        if m.marks is None: continue
+        exam = str(m.exam or "").strip().lower()
+        if "mid-1" in exam or "mid1" in exam:
+            if m.subject_id not in subject_trends: subject_trends[m.subject_id] = {"mid1": [], "mid2": []}
+            subject_trends[m.subject_id]["mid1"].append(float(m.marks))
+        elif "mid-2" in exam or "mid2" in exam:
+            if m.subject_id not in subject_trends: subject_trends[m.subject_id] = {"mid1": [], "mid2": []}
+            subject_trends[m.subject_id]["mid2"].append(float(m.marks))
+
+    weakest_subj_name = "None"
+    weakest_trend = "stable"
+    worst_slope = 0.0
+
+    for sid_trend, exams in subject_trends.items():
+        m1 = sum(exams["mid1"]) / len(exams["mid1"]) if exams["mid1"] else 0
+        m2 = sum(exams["mid2"]) / len(exams["mid2"]) if exams["mid2"] else 0
+        if m1 and m2:
+            slope = m2 - m1
+            if slope < worst_slope:
+                worst_slope = slope
+                weakest_subj_name = subject_map.get(sid_trend, "Unknown")
+                weakest_trend = "declining"
+        
+    weakest_subject = {
+        "name": weakest_subj_name,
+        "trend": weakest_trend
+    }
+
+    return {
+        "students": students_list,
+        "predictions": predictions,
+        "weakest_subject": weakest_subject,
+        "filters": {"year": year, "section": section, "subject_id": subject_id, "subject_name": selected_subject_name},
+        "faculty_scope": {
+            "total_subjects": len(subject_ids),
+            "assigned_classes": len(class_pairs),
+            "total_students": total_students
+        },
+        "attendance_summary": {
+            "overall_percentage": overall_attendance_pct,
+            "present_count": present_count,
+            "absent_count": absent_count,
+            "total_records": total_attendance,
+            "by_subject": attendance_subject_breakdown
+        },
+        "assignment_summary": {
+            "total_assignments": total_assignments,
+            "submitted_count": submission_count,
+            "late_submissions": late_submissions,
+            "submission_rate": submission_rate
+        },
+        "marks_summary": marks_summary,
+        "risk_summary": {
+            "attendance_risk_count": len(attendance_risk_students),
+            "marks_risk_count": marks_risk_count,
+            "assignment_engagement_risk_count": assignment_engagement_risk_count
+        },
+        "top_students": top_students
     }
 
 @app.post("/faculty/apply-scaling")

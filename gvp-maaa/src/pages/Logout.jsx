@@ -6,20 +6,13 @@ export default function Logout({ onBack, role = "student" }) {
   const [visible, setVisible] = useState(false);
   const navigate = useNavigate();
 
-  // Animate IN
   useEffect(() => {
-  // 🔐 CLEAR AUTH DATA
-  localStorage.removeItem("access_token");
-  localStorage.removeItem("role");
-  localStorage.removeItem("user_role");
-  localStorage.removeItem("user");
+    // Hard replace history to stop back-button
+    window.history.pushState(null, "", window.location.href);
 
-  // Hard replace history to stop back-button
-  window.history.pushState(null, "", window.location.href);
-
-  // animate IN
-  setVisible(true);
- }, []);
+    // animate IN
+    setVisible(true);
+  }, []);
 
 
   /* ===== ROLE BASED SIGN-IN ROUTES ===== */
@@ -29,8 +22,23 @@ export default function Logout({ onBack, role = "student" }) {
     admin: "/auth/admin/signin",
   };
 
-  // Login Again → role-based redirect (NEW, CLEAN)
-  const handleLoginAgain = () => {
+  // Keep the user logged in and close modal
+  const handleKeepLoggedIn = () => {
+    setVisible(false);
+    setTimeout(() => {
+      if (typeof onBack === "function") {
+        onBack();
+      }
+    }, 300);
+  };
+
+  // Confirm logout and redirect to login
+  const handleConfirmLogout = () => {
+    localStorage.removeItem("access_token");
+    localStorage.removeItem("role");
+    localStorage.removeItem("user_role");
+    localStorage.removeItem("user");
+
     setVisible(false);
     setTimeout(() => {
       if (roleSignInRoute[role]) {
@@ -38,15 +46,6 @@ export default function Logout({ onBack, role = "student" }) {
       } else {
         navigate("/", { replace: true });
       }
-    }, 300);
-  };
-
-  // Exit app (UNCHANGED)
-  const handleExit = () => {
-    setVisible(false);
-    setTimeout(() => {
-      navigate("/", { replace: true });
-      window.location.reload();
     }, 300);
   };
 
@@ -110,19 +109,19 @@ export default function Logout({ onBack, role = "student" }) {
         {/* ACTIONS */}
         <div className="space-y-3">
           <button
-            onClick={handleLoginAgain}
-            className="w-full py-3 rounded-xl bg-indigo-600 text-white font-medium
-            hover:bg-indigo-700 transition"
-          >
-            🔁 Login Again
-          </button>
-
-          <button
-            onClick={handleExit}
+            onClick={handleKeepLoggedIn}
             className="w-full py-3 rounded-xl border border-slate-200
             text-slate-600 hover:bg-slate-50 transition"
           >
-            🚪 Exit
+            No, Keep Me Logged In
+          </button>
+
+          <button
+            onClick={handleConfirmLogout}
+            className="w-full py-3 rounded-xl bg-indigo-600 text-white font-medium
+            hover:bg-indigo-700 transition"
+          >
+            Yes, Log Me Out
           </button>
         </div>
 

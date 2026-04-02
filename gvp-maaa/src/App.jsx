@@ -27,6 +27,7 @@ import AdminAccountSuccess from "./pages/Authorization/AdminAccountSuccess";
 
 /* ================= PROTECTED ROUTE ================= */
 import ProtectedRoute from "./components/ProtectedRoute";
+import ErrorBoundary from "./components/ErrorBoundary";
 
 
 /* ================= DASHBOARDS ================= */
@@ -35,8 +36,14 @@ import TeacherDashboard from "./dashboards/TeacherDashboard";
 import AdminDashboard from "./dashboards/AdminDashboard";
 
 /* ================= ADMIN SUB-PAGES ================= */
+import Overview from "./pages/Admin/Overview";
 import Students from "./pages/Admin/Students";
 import Teachers from "./pages/Admin/Teachers";
+import Academics from "./pages/Admin/Academics";
+import Timetable from "./pages/Admin/Timetable";
+import Alerts from "./pages/Admin/Alerts";
+import Insights from "./pages/Admin/Insights";
+import Settings from "./pages/Admin/Settings";
 
 export default function App() {
   return (
@@ -82,8 +89,14 @@ export default function App() {
             </ProtectedRoute>
           }
         >
+          <Route index element={<Overview />} />
           <Route path="students" element={<Students />} />
           <Route path="teachers" element={<Teachers />} />
+          <Route path="academics" element={<Academics />} />
+          <Route path="timetable" element={<Timetable />} />
+          <Route path="alerts" element={<Alerts />} />
+          <Route path="insights" element={<Insights />} />
+          <Route path="settings" element={<ErrorBoundary><Settings /></ErrorBoundary>} />
         </Route>
 
         <Route
