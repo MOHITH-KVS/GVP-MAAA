@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, BarChart, Bar, Legend } from "recharts";
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, BarChart, Bar, Legend, PieChart, Pie, Cell } from "recharts";
 import api from "../../utils/api";
 
 /* ================= MAIN ================= */
@@ -9,7 +9,6 @@ export default function Insights() {
   const [selectedSubject, setSelectedSubject] = useState("");
   const [timeRange, setTimeRange] = useState("semester");
   const [trendView, setTrendView] = useState("days");
-  const [midChartMode, setMidChartMode] = useState("top5");
 
   const [insightsData, setInsightsData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -78,12 +77,15 @@ export default function Insights() {
   const midComparison = insightsData?.mid_comparison || [];
   const midComparisonSummary = insightsData?.mid_comparison_summary || "";
   const students = insightsData?.students || [];
+  const alerts = insightsData?.alerts || [];
   const attendanceSummary = insightsData?.attendance_summary || {};
+  const threshold = attendanceSummary.threshold ?? 75;
   const trendSummary = insightsData?.trend_summary || {};
   const attendanceAnnotation = insightsData?.attendance_chart_annotation || "";
   const midAnalysis = insightsData?.mid_analysis || {};
   const topRisks = insightsData?.top_risks || [];
   const marksSummary = insightsData?.marks_summary || {};
+  const riskDistribution = insightsData?.risk_distribution || {};
 
   const attendanceTrend = useMemo(() => {
     if (!insightsData?.attendance_trend) return [];
@@ -92,6 +94,48 @@ export default function Insights() {
       value: row.value ?? row.actual,
     }));
   }, [insightsData]);
+
+  const attendanceForecastData = useMemo(() => {
+    if (!attendanceTrend.length) return [];
+
+    const base = attendanceTrend.map((point, idx) => ({
+      key: `actual-${idx}`,
+      label: point.label,
+      actual: typeof point.value === "number" ? Number(point.value.toFixed(2)) : null,
+      predicted: null,
+      isFuture: false,
+    }));
+
+    const values = attendanceTrend
+      .map((p) => (typeof p.value === "number" ? p.value : null))
+      .filter((v) => v != null);
+
+    if (!values.length) return base;
+
+    const last = values[values.length - 1];
+    const prev = values.length >= 2 ? values[values.length - 2] : values[values.length - 1];
+    let slope = Number((last - prev).toFixed(2));
+
+    if (slope === 0 && values.length >= 3) {
+      const totalDelta = values[values.length - 1] - values[0];
+      slope = Number((totalDelta / (values.length - 1)).toFixed(2));
+    }
+
+    const futureLabels = ["Next 1", "Next 2"];
+    const future = futureLabels.map((label, i) => {
+      let prediction = Number((last + slope * (i + 1)).toFixed(2));
+      prediction = Math.max(1, Math.min(100, prediction));
+      return {
+        key: `future-${i}`,
+        label,
+        actual: null,
+        predicted: prediction,
+        isFuture: true,
+      };
+    });
+
+    return [...base, ...future];
+  }, [attendanceTrend]);
 
   const hasMidMarksData = useMemo(() => {
     const a1 = marksSummary.avg_mid1;
@@ -110,25 +154,94 @@ export default function Insights() {
     [students]
   );
 
-  const midBarData = useMemo(() => {
-    if (!midComparison.length) return [];
-    const scored = midComparison
-      .map((r) => {
-        const nums = [r.mid1, r.mid2].filter((x) => typeof x === "number");
-        const worst = nums.length ? Math.min(...nums) : 999;
-        return { ...r, _worst: worst };
+  const normalizedAlerts = useMemo(() => {
+    return alerts
+      .map((alert, idx) => {
+        const priority = String(alert?.priority || alert?.severity || "low").toLowerCase();
+        return {
+          id: `${idx}-${alert?.title || alert?.message || "alert"}`,
+          priority,
+          message: alert?.message || alert?.title || "Alert",
+          action: String(alert?.action || "Review").replace(/_/g, " "),
+        };
       })
-      .filter((r) => r.mid1 != null || r.mid2 != null);
-    scored.sort((a, b) => a._worst - b._worst);
-    if (midChartMode === "top5") {
-      return scored.slice(0, 5).map(({ _worst, ...rest }) => rest);
+      .filter((a) => a.priority === "high" || a.priority === "medium");
+  }, [alerts]);
+
+  const topRiskStudents = useMemo(() => {
+    return students.filter((s) => s?.risk?.level === "HIGH").slice(0, 5);
+  }, [students]);
+
+  const lowAttendanceCount = useMemo(() => {
+    return students.filter((s) => typeof s?.attendance === "number" && s.attendance < threshold).length;
+  }, [students, threshold]);
+
+  const lowMidCount = useMemo(() => {
+    return students.filter((s) => {
+      const m1 = s?.mid1;
+      const m2 = s?.mid2;
+      return (typeof m1 === "number" && m1 < 15) || (typeof m2 === "number" && m2 < 15);
+    }).length;
+  }, [students]);
+
+  const alertSummaryCards = useMemo(() => {
+    const cards = [];
+    if (lowAttendanceCount > 0) {
+      cards.push({
+        id: "att-low",
+        priority: "high",
+        message: `${lowAttendanceCount} students below ${threshold}% attendance`,
+        action: "Take attendance intervention",
+      });
     }
-    return scored.map(({ _worst, ...rest }) => rest);
-  }, [midComparison, midChartMode]);
+    if (lowMidCount > 0) {
+      cards.push({
+        id: "mid-low",
+        priority: "medium",
+        message: `${lowMidCount} students scored below 15`,
+        action: "Arrange remedial support",
+      });
+    }
+    return cards;
+  }, [lowAttendanceCount, lowMidCount, threshold]);
+
+  const mergedAlerts = useMemo(() => {
+    const seenMessages = new Set();
+    const merged = [];
+    [...alertSummaryCards, ...normalizedAlerts].forEach((a) => {
+      const key = (a.message || "").toLowerCase();
+      if (!key || seenMessages.has(key)) return;
+      seenMessages.add(key);
+      merged.push(a);
+    });
+    return merged;
+  }, [alertSummaryCards, normalizedAlerts]);
+
+  const studentWiseMidData = useMemo(() => {
+    return midComparison
+      .filter((row) => row.mid1 != null || row.mid2 != null)
+      .map((row) => ({
+        name: row.name,
+        mid1: row.mid1,
+        mid2: row.mid2,
+      }));
+  }, [midComparison]);
+
+  const showAverageMidChart = studentWiseMidData.length > 10;
+  const avgMidChartData = useMemo(() => ([{
+    name: "Class Average",
+    mid1: Number(marksSummary.avg_mid1 ?? 0),
+    mid2: Number(marksSummary.avg_mid2 ?? 0),
+  }]), [marksSummary]);
+
+  const riskDonutData = useMemo(() => ([
+    { name: "High", value: Number(riskDistribution.high ?? 0), color: "#ef4444" },
+    { name: "Medium", value: Number(riskDistribution.medium ?? 0), color: "#f59e0b" },
+    { name: "Low", value: Number(riskDistribution.low ?? 0), color: "#10b981" },
+  ]), [riskDistribution]);
 
   const avgAttendanceDisplay =
     attendanceSummary.average ?? attendanceSummary.overall_percentage ?? 0;
-  const threshold = attendanceSummary.threshold ?? 75;
 
   if (loading) return <div className="p-10 text-center">Loading insights...</div>;
   if (error) return <div className="p-10 text-center text-red-500">{error}</div>;
@@ -272,6 +385,61 @@ export default function Insights() {
       </div>
 
       <div className="space-y-4">
+        <h3 className="text-lg font-semibold">Alerts</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {mergedAlerts.length > 0 ? (
+            mergedAlerts.map((alert) => {
+              const isHigh = alert.priority === "high";
+              return (
+                <div
+                  key={alert.id}
+                  className={`rounded-2xl border p-4 ${isHigh ? "border-red-200 bg-red-50/70" : "border-amber-200 bg-amber-50/70"}`}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-semibold text-slate-900">{alert.message}</p>
+                    <span className={`px-2 py-1 rounded-full text-[11px] font-bold uppercase ${isHigh ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>
+                      {isHigh ? "High" : "Medium"}
+                    </span>
+                  </div>
+                  <div className="mt-3 pt-3 border-t border-black/5">
+                    <p className="text-xs font-semibold uppercase text-slate-500">Action</p>
+                    <p className="text-sm text-slate-700 mt-1">{alert.action}</p>
+                  </div>
+                </div>
+              );
+            })
+          ) : (
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-500">
+              No high or medium alerts for this cohort.
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        <h3 className="text-lg font-semibold">Top Risk Students</h3>
+        <div className="glass rounded-2xl p-5">
+          {topRiskStudents.length > 0 ? (
+            <div className="space-y-3">
+              {topRiskStudents.map((student) => (
+                <div key={student.student_id} className="rounded-xl border border-red-200 bg-red-50/60 px-4 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="font-semibold text-slate-900">{student.name}</p>
+                    <span className="px-2 py-1 rounded-full text-[11px] font-bold uppercase bg-red-100 text-red-700">High</span>
+                  </div>
+                  <p className="text-xs text-slate-600 mt-2">
+                    {(student?.risk?.reasons || []).length ? student.risk.reasons.join(", ") : "Multiple risk indicators detected"}
+                  </p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-slate-500">No high-risk students</p>
+          )}
+        </div>
+      </div>
+
+      <div className="space-y-4">
         <h3 className="text-lg font-semibold">Recommended next steps</h3>
         <div className="glass rounded-2xl p-5 space-y-3">
           {recommendedActions.length > 0 ? (
@@ -321,23 +489,37 @@ export default function Insights() {
                 <option value="months">Monthly</option>
               </select>
             </div>
-            {attendanceTrend.length > 0 ? (
+            {attendanceForecastData.length > 0 ? (
               <ResponsiveContainer width="100%" height={280}>
-                <LineChart data={attendanceTrend} margin={{ top: 20, right: 30, left: 0, bottom: 10 }}>
+                <LineChart data={attendanceForecastData} margin={{ top: 20, right: 30, left: 0, bottom: 10 }}>
                   <CartesianGrid strokeDasharray="3 3" opacity={0.3} vertical={false} />
                   <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fontSize: 12 }} />
                   <YAxis domain={[0, 100]} tick={{ fontSize: 12 }} />
                   <Tooltip
-                    formatter={(value) => [`${value}%`, "Attendance"]}
+                    formatter={(value, name) => {
+                      const label = name === "predicted" ? "Predicted" : "Actual";
+                      return [`${value}%`, `${label} attendance`];
+                    }}
                   />
                   <ReferenceLine y={threshold} stroke="#ef4444" strokeDasharray="4 4" label={{ value: `${threshold}%`, fill: "#64748b", fontSize: 11 }} />
                   <Line
                     type="monotone"
-                    dataKey="value"
+                    dataKey="actual"
                     stroke="#6366f1"
                     strokeWidth={3}
                     dot={{ r: 4 }}
-                    name="Attendance"
+                    name="actual"
+                    connectNulls={false}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="predicted"
+                    stroke="#0ea5e9"
+                    strokeWidth={2}
+                    strokeDasharray="6 6"
+                    dot={{ r: 3 }}
+                    name="predicted"
+                    connectNulls={false}
                   />
                 </LineChart>
               </ResponsiveContainer>
@@ -347,6 +529,36 @@ export default function Insights() {
           </div>
 
           <div className="space-y-4">
+            <div className="glass rounded-2xl p-5">
+              <h4 className="text-sm font-semibold text-slate-800 mb-4">Risk distribution</h4>
+              <div className="h-[220px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={riskDonutData}
+                      dataKey="value"
+                      nameKey="name"
+                      innerRadius={52}
+                      outerRadius={78}
+                      paddingAngle={2}
+                    >
+                      {riskDonutData.map((entry) => (
+                        <Cell key={entry.name} fill={entry.color} />
+                      ))}
+                    </Pie>
+                    <Tooltip formatter={(value, name) => [value, `${name} risk`]} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="grid grid-cols-3 gap-2 mt-2 text-xs">
+                {riskDonutData.map((entry) => (
+                  <div key={entry.name} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-center">
+                    <p className="font-semibold" style={{ color: entry.color }}>{entry.name}</p>
+                    <p className="text-slate-700 font-bold">{entry.value}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
             <div className="glass rounded-2xl p-5">
               <h4 className="text-sm font-semibold text-slate-800 mb-4">Top risks (counts)</h4>
               {topRisks.length ? (
@@ -382,32 +594,29 @@ export default function Insights() {
       <div className="space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <h3 className="text-lg font-semibold">Mid 1 vs Mid 2</h3>
-          <div className="flex rounded-xl border border-slate-200 overflow-hidden text-sm">
-            <button
-              type="button"
-              className={`px-4 py-2 font-medium ${midChartMode === "top5" ? "bg-slate-900 text-white" : "bg-white text-slate-700"}`}
-              onClick={() => setMidChartMode("top5")}
-            >
-              Top 5 weakest
-            </button>
-            <button
-              type="button"
-              className={`px-4 py-2 font-medium ${midChartMode === "all" ? "bg-slate-900 text-white" : "bg-white text-slate-700"}`}
-              onClick={() => setMidChartMode("all")}
-            >
-              All students
-            </button>
-          </div>
+          {showAverageMidChart && (
+            <span className="text-xs text-slate-500">Student count is high, showing average comparison to reduce clutter.</span>
+          )}
         </div>
-        {midComparisonSummary && midChartMode === "all" && (
+        {midComparisonSummary && !showAverageMidChart && (
           <p className="text-sm text-gray-500">{midComparisonSummary}</p>
         )}
         <div className="glass rounded-2xl p-5 h-[340px]">
-          {midBarData.length > 0 ? (
+          {(showAverageMidChart ? avgMidChartData.length > 0 : studentWiseMidData.length > 0) ? (
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={midBarData} margin={{ top: 10, right: 20, left: 0, bottom: midChartMode === "all" ? 48 : 24 }}>
+              <BarChart
+                data={showAverageMidChart ? avgMidChartData : studentWiseMidData}
+                margin={{ top: 10, right: 20, left: 0, bottom: showAverageMidChart ? 24 : 48 }}
+              >
                 <CartesianGrid strokeDasharray="3 3" opacity={0.3} vertical={false} />
-                <XAxis dataKey="name" tick={{ fontSize: midChartMode === "all" ? 9 : 11 }} interval={0} angle={midChartMode === "all" ? -35 : -12} textAnchor="end" height={midChartMode === "all" ? 70 : 56} />
+                <XAxis
+                  dataKey="name"
+                  tick={{ fontSize: showAverageMidChart ? 12 : 9 }}
+                  interval={0}
+                  angle={showAverageMidChart ? 0 : -35}
+                  textAnchor={showAverageMidChart ? "middle" : "end"}
+                  height={showAverageMidChart ? 40 : 70}
+                />
                 <YAxis tick={{ fontSize: 12 }} />
                 <Tooltip />
                 <Legend />
@@ -433,9 +642,9 @@ export default function Insights() {
                 <th className="px-6 py-4 font-semibold text-slate-800">Mid 1</th>
                 <th className="px-6 py-4 font-semibold text-slate-800">Mid 2</th>
                 <th className="px-6 py-4 font-semibold text-slate-800">Attendance</th>
-                <th className="px-6 py-4 font-semibold text-slate-800">Avg marks</th>
                 <th className="px-6 py-4 font-semibold text-slate-800">Risk</th>
                 <th className="px-6 py-4 font-semibold text-slate-800 w-full">Reasons</th>
+                <th className="px-6 py-4 font-semibold text-slate-800">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y text-slate-600">
@@ -443,17 +652,24 @@ export default function Insights() {
                 const m1 = student.mid1;
                 const m2 = student.mid2;
                 const lowMid = (typeof m1 === "number" && m1 < 15) || (typeof m2 === "number" && m2 < 15);
+                const attendanceDisplay = typeof student.attendance === "number" ? `${student.attendance.toFixed(1)}%` : "-";
+                const reasonList = Array.isArray(student.risk?.reasons) ? student.risk.reasons : [];
+                const actionText =
+                  student.risk?.level === "HIGH"
+                    ? "Immediate intervention"
+                    : student.risk?.level === "MEDIUM"
+                    ? "Mentor support"
+                    : "Monitor";
                 return (
                   <tr key={i} className={`hover:bg-slate-50 ${lowMid ? "bg-red-50/80" : ""}`}>
                     <td className="px-6 py-4 font-medium text-slate-900">{student.name}</td>
                     <td className={`px-6 py-4 ${typeof m1 === "number" && m1 < 15 ? "text-red-700 font-bold" : ""}`}>
-                      {m1 ?? "—"}
+                      {m1 ?? "-"}
                     </td>
                     <td className={`px-6 py-4 ${typeof m2 === "number" && m2 < 15 ? "text-red-700 font-bold" : ""}`}>
-                      {m2 ?? "—"}
+                      {m2 ?? "-"}
                     </td>
-                    <td className="px-6 py-4">{student.attendance}%</td>
-                    <td className="px-6 py-4">{student.marks}</td>
+                    <td className="px-6 py-4">{attendanceDisplay}</td>
                     <td className="px-6 py-4">
                       <span className={`px-2 py-1 rounded-full text-xs font-bold ${
                         student.risk?.level === "HIGH" ? "bg-red-100 text-red-700" :
@@ -464,7 +680,18 @@ export default function Insights() {
                       </span>
                     </td>
                     <td className="px-6 py-4 text-xs text-gray-500">
-                      {student.risk?.reasons?.join(", ") || "—"}
+                      {reasonList.length ? reasonList.join(", ") : "-"}
+                    </td>
+                    <td className="px-6 py-4 text-xs">
+                      <span className={`px-2 py-1 rounded-lg font-semibold ${
+                        student.risk?.level === "HIGH"
+                          ? "bg-red-100 text-red-700"
+                          : student.risk?.level === "MEDIUM"
+                          ? "bg-amber-100 text-amber-700"
+                          : "bg-slate-100 text-slate-700"
+                      }`}>
+                        {actionText}
+                      </span>
                     </td>
                   </tr>
                 );

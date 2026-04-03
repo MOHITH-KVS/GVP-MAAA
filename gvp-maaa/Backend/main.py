@@ -9067,7 +9067,19 @@ def get_faculty_insights_data(
     except Exception:
         alerts = []
 
-    response_data["alerts"] = alerts
+    normalized_alerts = []
+    for alert in alerts:
+        if not isinstance(alert, dict):
+            continue
+        priority = str(alert.get("priority") or alert.get("severity") or "low").lower()
+        normalized_alerts.append({
+            **alert,
+            "message": alert.get("message") or alert.get("title") or "Alert",
+            "action": alert.get("action") or "Review",
+            "priority": priority,
+        })
+
+    response_data["alerts"] = normalized_alerts
 
     return response_data
 
