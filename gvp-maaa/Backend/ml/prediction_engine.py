@@ -1,16 +1,43 @@
-def forecast_attendance(trend):
-    if not trend or len(trend) < 2:
-        return 0.0
-    
-    recent_vals = [t.get("percentage", 0) for t in trend[-3:]]
-    if len(recent_vals) < 2:
-        return 0.0
-        
-    diffs = [recent_vals[i] - recent_vals[i-1] for i in range(1, len(recent_vals))]
-    avg_diff = sum(diffs) / len(diffs)
-    
-    pred = recent_vals[-1] + avg_diff
-    return max(0.0, min(100.0, float(pred)))
+def forecast_attendance(attendance_values, labels=None):
+    # Validate input
+    if not attendance_values:
+        return []
+
+    # Slope-based prediction using the last 2 actual points.
+    # This avoids the "predicted == actual" issue and keeps predictions decision-useful.
+    last = float(attendance_values[-1])
+    prev = float(attendance_values[-2]) if len(attendance_values) > 1 else last
+    slope = last - prev
+
+    predicted = []
+    current = last
+
+    for _ in range(3):
+        next_val = current + slope
+        next_val = max(0, min(100, next_val))
+        next_val = round(next_val, 2)
+        predicted.append(next_val)
+        current = next_val
+
+    trend_data = []
+
+    # Actual points
+    for i, val in enumerate(attendance_values):
+        trend_data.append({
+            "label": (labels[i] if isinstance(labels, list) and i < len(labels) else f"Day {i + 1}"),
+            "actual": val,
+            "predicted": None
+        })
+
+    # Predicted future points
+    for i, val in enumerate(predicted):
+        trend_data.append({
+            "label": "Next " + str(i + 1),
+            "actual": None,
+            "predicted": val
+        })
+
+    return trend_data
 
 def forecast_performance(students):
     if not students:
