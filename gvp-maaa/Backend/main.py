@@ -14,10 +14,14 @@ import schemas  # type: ignore
 from datetime import datetime, timedelta
 from database import engine  # type: ignore
 try:
-    from ml.risk_engine import calculate_risk, predict_future_risk
+    from ml.risk_engine import calculate_risk, calculate_risk_movement, calculate_risk_score, get_attendance_trend_label, get_student_attendance_trend, predict_future_risk
     from ml.prediction_engine import forecast_performance
 except ImportError:
-    def calculate_risk(*args, **kwargs): return {"score": 0, "risk_score": 0, "level": "LOW", "reasons": []}
+    def calculate_risk(*args, **kwargs): return {"score": 0, "risk_score": 0, "level": "LOW", "reasons": [], "risk_breakdown": [], "actions": []}
+    def calculate_risk_movement(*args, **kwargs): return "stable"
+    def calculate_risk_score(*args, **kwargs): return (0.0, [])
+    def get_attendance_trend_label(*args, **kwargs): return "Fluctuating"
+    def get_student_attendance_trend(*args, **kwargs): return [None, None, None, None, None]
     def predict_future_risk(*args, **kwargs): return 0
     def forecast_performance(*args, **kwargs): return 0.0
 try:
@@ -222,6 +226,24 @@ def refresh_settings_cache():
         db.close()
 
 
+def ensure_student_insights_columns():
+    db = SessionLocal()
+    try:
+        db.execute(text("""
+            ALTER TABLE students
+            ADD COLUMN IF NOT EXISTS intervention_status VARCHAR DEFAULT 'none',
+            ADD COLUMN IF NOT EXISTS intervention_type VARCHAR,
+            ADD COLUMN IF NOT EXISTS intervention_last_updated TIMESTAMP,
+            ADD COLUMN IF NOT EXISTS previous_risk_score NUMERIC(5, 2);
+        """))
+        db.commit()
+    except Exception as e:
+        print("Student insights migration failed:", e)
+        db.rollback()
+    finally:
+        db.close()
+
+
 def get_optional_current_user(request: Request):
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.lower().startswith("bearer "):
@@ -289,6 +311,7 @@ def process_event_reminders():
 @app.on_event("startup")
 def startup_event():
     Base.metadata.create_all(bind=engine)
+    ensure_student_insights_columns()
     
     # Run automatic migrations for scaling_logs
     try:
@@ -8709,22 +8732,33 @@ def get_faculty_insights_data(
         # Keep latest 5 points to represent recent trend.
         student_attendance_trend[sid] = trend_vals[-5:]
 
+    student_rows = {}
+    if student_ids:
+        student_rows = {
+            row.student_id: row
+            for row in db.query(Student).filter(Student.student_id.in_(student_ids)).all()
+        }
+
     # === ML PREDICTION & RISK BLOCK ===
     students_list = []
     
     for sid in student_ids:
+        student_row = student_rows.get(sid)
         att_data = attendance_by_student.get(sid, {"present": 0, "total": 0})
         att_pct = round((att_data["present"] / att_data["total"]) * 100, 2) if att_data["total"] else 0.0
         marks_data = student_mark_aggregation.get(sid, {"total": 0.0, "count": 0})
         marks_avg = round(marks_data["total"] / marks_data["count"], 2) if marks_data["count"] else 0.0
         subs = submission_by_student.get(sid, 0)
+
+        attendance_history = get_student_attendance_trend({"attendance_history": student_attendance_trend.get(sid, [])})
         
         mm = student_mid_marks.get(sid, {"mid1": None, "mid2": None})
         stu_obj = {
             "student_id": sid,
             "name": student_names.get(sid, "Unknown"),
             "attendance": att_pct,
-            "attendance_trend": student_attendance_trend.get(sid, []),
+            "attendance_trend": attendance_history,
+            "attendance_history": attendance_history,
             "marks": marks_avg,
             "assignments": subs,
             "mid1": mm.get("mid1"),
@@ -8740,14 +8774,44 @@ def get_faculty_insights_data(
             # Keep existing risk object and expose normalized fields for downstream consumers.
             stu_obj["risk_level"] = risk_payload.get("level", "LOW")
             stu_obj["risk_score"] = float(risk_payload.get("risk_score", risk_payload.get("score", 0)) or 0)
+            stu_obj["risk_breakdown"] = risk_payload.get("risk_breakdown", [])
             stu_obj["reasons"] = risk_payload.get("reasons", [])
             stu_obj["actions"] = risk_payload.get("actions", [])
         except Exception:
-            stu_obj["risk"] = {"risk": "LOW", "score": 0, "risk_score": 0, "level": "LOW", "reasons": [], "actions": []}
+            stu_obj["risk"] = {"risk": "LOW", "score": 0, "risk_score": 0, "risk_breakdown": [], "level": "LOW", "reasons": [], "actions": []}
             stu_obj["risk_level"] = "LOW"
             stu_obj["risk_score"] = 0
+            stu_obj["risk_breakdown"] = []
             stu_obj["reasons"] = []
             stu_obj["actions"] = []
+
+        previous_risk_score = None
+        if student_row is not None:
+            stored_previous = getattr(student_row, "previous_risk_score", None)
+            if stored_previous is not None:
+                try:
+                    previous_risk_score = float(stored_previous)
+                except (TypeError, ValueError):
+                    previous_risk_score = None
+
+            if previous_risk_score is None:
+                numeric_history = [float(value) for value in attendance_history if isinstance(value, (int, float))]
+                if len(numeric_history) >= 2:
+                    previous_snapshot = dict(stu_obj)
+                    previous_snapshot["attendance"] = numeric_history[-2]
+                    try:
+                        previous_risk_score = float(calculate_risk_score(previous_snapshot)[0])
+                    except Exception:
+                        previous_risk_score = None
+
+        stu_obj["previous_risk_score"] = previous_risk_score
+        stu_obj["risk_movement"] = calculate_risk_movement(stu_obj)
+        stu_obj["attendance_trend_label"] = get_attendance_trend_label(attendance_history)
+        stu_obj["intervention"] = {
+            "status": getattr(student_row, "intervention_status", None) or "none",
+            "type": getattr(student_row, "intervention_type", None),
+            "last_updated": getattr(student_row, "intervention_last_updated", None).isoformat() if getattr(student_row, "intervention_last_updated", None) else None,
+        }
             
         students_list.append(stu_obj)
 
@@ -9169,6 +9233,55 @@ def get_faculty_insights_data(
     response_data["alerts"] = normalized_alerts
 
     return response_data
+
+
+@app.post("/intervention/update")
+def update_student_intervention(
+    payload: dict = Body(...),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "faculty":
+        raise HTTPException(status_code=403, detail="Faculty only")
+
+    student_id = payload.get("student_id")
+    status = str(payload.get("status") or "none").lower()
+    intervention_type = payload.get("type")
+
+    if student_id is None:
+        raise HTTPException(status_code=400, detail="student_id is required")
+
+    if status not in {"none", "planned", "done"}:
+        raise HTTPException(status_code=400, detail="Invalid intervention status")
+
+    if intervention_type is not None:
+        intervention_type = str(intervention_type).strip().lower() or None
+    if intervention_type not in {None, "call", "extra_class", "1on1"}:
+        raise HTTPException(status_code=400, detail="Invalid intervention type")
+
+    student = db.query(Student).filter(Student.student_id == student_id).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    if status == "none":
+        student.intervention_status = "none"
+        student.intervention_type = None
+    else:
+        student.intervention_status = status
+        student.intervention_type = intervention_type
+
+    student.intervention_last_updated = datetime.utcnow()
+    db.commit()
+    db.refresh(student)
+
+    return {
+        "student_id": student.student_id,
+        "intervention": {
+            "status": student.intervention_status or "none",
+            "type": student.intervention_type,
+            "last_updated": student.intervention_last_updated.isoformat() if student.intervention_last_updated else None,
+        },
+    }
 
 @app.post("/faculty/apply-scaling")
 async def apply_scaling(

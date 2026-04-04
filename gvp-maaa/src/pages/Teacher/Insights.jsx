@@ -31,6 +31,7 @@ export default function Insights() {
   const [insightsData, setInsightsData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [reviewedStudents, setReviewedStudents] = useState({});
 
   useEffect(() => {
     const token = localStorage.getItem("access_token");
@@ -200,26 +201,20 @@ export default function Insights() {
   const topRiskStudents = useMemo(() => {
     return (students || [])
       .filter((s) => {
-        const riskScore = Number(s?.risk_score ?? s?.risk?.risk_score ?? s?.risk?.score ?? 0);
         const lowAttendance = typeof s?.attendance === "number" && s.attendance < 75;
         const lowMid1 = typeof s?.mid1 === "number" && s.mid1 < 15;
         const lowMid2 = typeof s?.mid2 === "number" && s.mid2 < 15;
-        const inAlerts = alertedStudentIds.has(Number(s?.student_id));
-        return riskScore >= 40 || lowAttendance || lowMid1 || lowMid2 || inAlerts;
+        const attendanceTrend = String(s?.attendance_trend_label || "").toLowerCase();
+        const riskMovement = String(s?.risk_movement || "").toLowerCase();
+        return lowAttendance || lowMid1 || lowMid2 || attendanceTrend.includes("declin") || riskMovement === "increasing";
       })
       .sort((a, b) => {
-        const aScore = Number(a?.risk_score ?? a?.risk?.risk_score ?? a?.risk?.score ?? 0);
-        const bScore = Number(b?.risk_score ?? b?.risk?.risk_score ?? b?.risk?.score ?? 0);
-        const safeA = Number.isFinite(aScore) ? aScore : 0;
-        const safeB = Number.isFinite(bScore) ? bScore : 0;
-        const diff = safeB - safeA;
-        if (diff !== 0) return diff;
-        const aAlert = alertedStudentIds.has(Number(a?.student_id)) ? 1 : 0;
-        const bAlert = alertedStudentIds.has(Number(b?.student_id)) ? 1 : 0;
-        if (bAlert !== aAlert) return bAlert - aAlert;
-        return (a?.attendance ?? 9999) - (b?.attendance ?? 9999);
-      });
-  }, [students, alertedStudentIds]);
+        const aAttendance = typeof a?.attendance === "number" ? a.attendance : 9999;
+        const bAttendance = typeof b?.attendance === "number" ? b.attendance : 9999;
+        return aAttendance - bAttendance;
+      })
+      .slice(0, 5);
+  }, [students]);
 
   const noImmediateAttention = useMemo(() => {
     return (students || []).every((s) =>
@@ -639,112 +634,94 @@ export default function Insights() {
           {topRiskStudents.length > 0 ? (
             <div className="space-y-3">
               {topRiskStudents.map((student, idx) => {
-                const riskScoreRaw = Number(student?.risk_score ?? student?.risk?.risk_score ?? student?.risk?.score ?? 0);
-                const riskScore = Number.isFinite(riskScoreRaw) ? Math.max(0, Math.min(100, riskScoreRaw)) : 0;
-                if (riskScore < 40) return null;
-
                 const mid1 = student?.mid1;
                 const mid2 = student?.mid2;
                 const lowAttendance = typeof student?.attendance === "number" && student.attendance < 75;
                 const lowMarks =
                   (typeof mid1 === "number" && mid1 < 15) ||
                   (typeof mid2 === "number" && mid2 < 15);
+                const attendanceTrend = String(student?.attendance_trend_label || "").toLowerCase();
+                const riskMovement = String(student?.risk_movement || "").toLowerCase();
+                const isReviewed = Boolean(reviewedStudents[student.student_id]);
 
-                const issues = [];
-                if (lowAttendance) issues.push("Attendance below 75%");
-                if (lowMarks) issues.push("Low performance in Mid exams");
+                const reasons = [];
+                if (lowAttendance) reasons.push("Attendance below 75%");
+                if (lowMarks) reasons.push("Mid marks below 15");
+                if (attendanceTrend.includes("declin") || riskMovement === "increasing") reasons.push("Attendance declining");
 
-                const attendanceTrend = Array.isArray(student?.attendance_trend) ? student.attendance_trend : [];
-                let trend = "➡️ Stable attendance";
-                if (attendanceTrend.length >= 2) {
-                  const prev = Number(attendanceTrend[attendanceTrend.length - 2]);
-                  const last = Number(attendanceTrend[attendanceTrend.length - 1]);
-                  trend =
-                    last < prev
-                      ? "📉 Declining attendance"
-                      : last > prev
-                      ? "📈 Improving attendance"
-                      : "➡️ Stable attendance";
-                } else if (typeof mid1 === "number" && typeof mid2 === "number") {
-                  trend =
-                    mid2 < mid1
-                      ? "📉 Performance dropped from Mid1 to Mid2"
-                      : mid2 > mid1
-                      ? "📈 Performance improved from Mid1 to Mid2"
-                      : "➡️ Performance stable";
-                }
+                const actionLines = [];
+                if (lowAttendance) actionLines.push("Monitor attendance daily");
+                if (lowMarks) actionLines.push("Arrange extra class support");
+                if (attendanceTrend.includes("declin") || riskMovement === "increasing") actionLines.push("Call student and discuss issues");
+                if (actionLines.length === 0) actionLines.push("Check in with the student this week");
 
-                let action = "Monitor academic progress";
-                if (lowAttendance && lowMarks) {
-                  action = "Schedule 1-on-1 intervention";
-                } else if (lowAttendance) {
-                  action = "Monitor attendance daily and contact student";
-                } else if (lowMarks) {
-                  action = "Assign remedial practice / revision sessions";
-                }
+                const movementLabel =
+                  riskMovement === "increasing"
+                    ? "Declining"
+                    : riskMovement === "decreasing"
+                    ? "Improving"
+                    : "Stable";
 
-                const riskSource = lowAttendance && lowMarks ? "Both" : lowMarks ? "Marks" : "Attendance";
-                const severityTone = riskScore >= 70 ? "border-red-200 bg-red-50/60" : "border-amber-200 bg-amber-50/60";
-                const severityBadge = riskScore >= 70 ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700";
+                const severityTone = lowAttendance ? "bg-red-50/80" : "bg-amber-50/80";
+                const severityBadge = lowAttendance ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700";
+                const badgeLabel = lowAttendance ? "HIGH" : "MEDIUM";
 
                 return (
                   <div
                     key={student.student_id}
-                    className={`rounded-xl border px-4 py-3 ${severityTone}`}
+                    className={`rounded-xl px-4 py-3 ${severityTone}`}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex-1">
-                        <p className="text-xs font-bold uppercase tracking-wide text-slate-500">#{idx + 1} highest risk</p>
+                        <p className="text-xs font-bold uppercase tracking-wide text-slate-500">#{idx + 1}</p>
                         <p className="font-semibold text-slate-900 mt-1">{student.name}</p>
                       </div>
                       <span
                         className={`px-2 py-1 rounded-full text-[11px] font-bold uppercase whitespace-nowrap ${severityBadge}`}
                       >
-                        {riskScore >= 70 ? "🔴 High" : "🟡 Medium"}
+                        {badgeLabel}
                       </span>
                     </div>
 
-                    <div className="mt-3 text-xs text-slate-700 space-y-2">
+                    <div className="mt-3 space-y-3 text-sm text-slate-700">
                       <div>
-                        <p className="font-medium text-slate-900">Key issues</p>
-                        <ul className="list-disc pl-4 mt-1 space-y-0.5">
-                          {issues.slice(0, 2).map((issue, i) => (
-                            <li key={i}>{issue}</li>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Reason</p>
+                        <p className="mt-1 text-slate-800">{reasons.length > 0 ? reasons.join(" · ") : "Review needed"}</p>
+                      </div>
+
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Trend</p>
+                        <p className="mt-1 text-slate-800">{movementLabel}</p>
+                      </div>
+
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Action</p>
+                        <ul className="mt-1 space-y-1 text-slate-800">
+                          {actionLines.slice(0, 2).map((item, itemIndex) => (
+                            <li key={itemIndex}>• {item}</li>
                           ))}
                         </ul>
                       </div>
-                      <p>
-                        <span className="font-medium text-slate-900">Trend:</span> {trend}
-                      </p>
-                      <p>
-                        <span className="font-medium text-slate-900">Action:</span> {action}
-                      </p>
-                      <p>
-                        <span className="font-medium text-slate-900">Risk Score:</span>{" "}
-                        <span
-                          title="Calculated from attendance, marks, and performance trend"
-                          className={`font-semibold ${riskScore >= 70 ? "text-red-700" : "text-amber-700"}`}
-                        >
-                          {riskScore.toFixed(1)}/100
-                        </span>
-                      </p>
-                      <p>
-                        <span className="font-medium text-slate-900">Risk Source:</span> {riskSource}
-                      </p>
+
+                      <button
+                        type="button"
+                        onClick={() => setReviewedStudents((current) => ({ ...current, [student.student_id]: !current[student.student_id] }))}
+                        className={`inline-flex items-center rounded-lg px-3 py-2 text-xs font-semibold transition ${
+                          isReviewed
+                            ? "bg-slate-200 text-slate-700"
+                            : "bg-slate-900 text-white hover:bg-slate-800"
+                        }`}
+                      >
+                        {isReviewed ? "Reviewed" : "Mark as Reviewed"}
+                      </button>
                     </div>
                   </div>
                 );
               })}
             </div>
-          ) : noImmediateAttention ? (
-            <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-3">
-              <p className="font-semibold text-emerald-900">✅ No students require immediate attention</p>
-              <p className="text-sm text-emerald-800 mt-1">All students are performing within safe thresholds.</p>
-            </div>
           ) : (
-            <div className="rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-3">
-              <p className="font-semibold text-amber-900">⚠ Risk records are being recalculated</p>
-              <p className="text-sm text-amber-800 mt-1">Please refresh after latest insights are loaded.</p>
+            <div className="rounded-xl bg-emerald-50/70 px-4 py-3 text-emerald-900">
+              <p className="font-semibold">✅ No students require immediate attention</p>
             </div>
           )}
         </div>

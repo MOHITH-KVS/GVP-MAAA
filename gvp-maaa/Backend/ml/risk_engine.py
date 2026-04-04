@@ -17,38 +17,120 @@ def calculate_risk_score(student):
         mid2 = None
 
     score = 0.0
+    breakdown = []
 
     # Attendance contribution (strong)
     if attendance < 75:
-        score += (75 - attendance) * 3
+        val = (75 - attendance) * 3
+        score += val
+        breakdown.append({"factor": "Low Attendance", "value": round(val, 1)})
 
     # Marks contribution (max 40)
     if mid1 is not None and mid1 < 15:
-        score += (15 - mid1) * 2
+        val = (15 - mid1) * 2
+        score += val
+        breakdown.append({"factor": "Low Mid1 Marks", "value": round(val, 1)})
 
     if mid2 is not None and mid2 < 15:
-        score += (15 - mid2) * 2
+        val = (15 - mid2) * 2
+        score += val
+        breakdown.append({"factor": "Low Mid2 Marks", "value": round(val, 1)})
 
     # Trend penalty (max 10)
     if mid1 is not None and mid2 is not None and mid2 < mid1:
-        score += 10
+        val = 10
+        score += val
+        breakdown.append({"factor": "Performance Decline", "value": val})
 
     # Force minimum risk score for critical conditions
+    before_floor = score
     if attendance < 75:
         score = max(score, 40)
+        if score > before_floor:
+            breakdown.append({"factor": "Minimum Risk Floor (Attendance)", "value": round(score - before_floor, 1)})
+            before_floor = score
 
     if (mid1 is not None and mid1 < 15) or (mid2 is not None and mid2 < 15):
         score = max(score, 40)
+        if score > before_floor:
+            breakdown.append({"factor": "Minimum Risk Floor (Marks)", "value": round(score - before_floor, 1)})
+            before_floor = score
 
     # Never return NaN; clamp into 0..100
     if score != score:  # NaN check
         score = 0.0
-    return min(round(score, 1), 100)
+    score = min(round(score, 1), 100)
+    breakdown = sorted(breakdown, key=lambda x: float(x.get("value", 0) or 0), reverse=True)
+    return score, breakdown
+
+
+def get_student_attendance_trend(student):
+    """Return the latest 5 attendance trend values, padded when needed."""
+    history = student.get("attendance_history", []) or []
+    normalized = []
+
+    for value in history[-5:]:
+        try:
+            normalized.append(round(float(value), 2))
+        except (TypeError, ValueError):
+            normalized.append(None)
+
+    while len(normalized) < 5:
+        normalized.insert(0, None)
+
+    return normalized
+
+
+def get_attendance_trend_label(attendance_history):
+    values = []
+    for value in attendance_history or []:
+        if value is None:
+            continue
+        try:
+            values.append(float(value))
+        except (TypeError, ValueError):
+            continue
+
+    if len(values) < 2:
+        return "Fluctuating"
+
+    start = values[0]
+    end = values[-1]
+    variation = max(values) - min(values)
+
+    if end < start - 2:
+        return "Declining attendance"
+    if end > start + 2:
+        return "Improving attendance"
+    if variation > 8:
+        return "Fluctuating"
+    return "Fluctuating"
+
+
+def calculate_risk_movement(student):
+    prev_score = student.get("previous_risk_score")
+    current_score = student.get("risk_score")
+
+    if prev_score is None:
+        return "stable"
+
+    try:
+        prev_score = float(prev_score)
+        current_score = float(current_score)
+    except (TypeError, ValueError):
+        return "stable"
+
+    if current_score > prev_score + 5:
+        return "increasing"
+    elif current_score < prev_score - 5:
+        return "decreasing"
+    else:
+        return "stable"
 
 
 def calculate_risk(student, thresholds):
     """Returns label + numeric score + explainable reasons/actions."""
-    risk_score = calculate_risk_score(student)
+    risk_score, risk_breakdown = calculate_risk_score(student)
 
     if risk_score >= 70:
         risk = "HIGH"
@@ -101,6 +183,7 @@ def calculate_risk(student, thresholds):
         "risk": risk,
         "level": risk,
         "risk_score": risk_score,
+        "risk_breakdown": risk_breakdown,
         # Keep legacy key for backward compatibility where older code expects `score`.
         "score": risk_score,
         "reasons": reasons,

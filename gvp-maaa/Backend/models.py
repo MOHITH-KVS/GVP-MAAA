@@ -51,6 +51,11 @@ class Student(Base):
     portfolio = Column(String, nullable=True) 
     bio = Column(String, nullable=True)
 
+    intervention_status = Column(String, nullable=True, default="none")
+    intervention_type = Column(String, nullable=True)
+    intervention_last_updated = Column(DateTime, nullable=True)
+    previous_risk_score = Column(Numeric(5, 2), nullable=True)
+
      # ✅ NEW (SOFT DELETE)
     is_deleted = Column(Boolean, default=False)
     deleted_at = Column(DateTime, nullable=True)
