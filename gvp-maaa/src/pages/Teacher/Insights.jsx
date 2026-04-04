@@ -2,6 +2,24 @@ import { useState, useEffect, useMemo } from "react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, BarChart, Bar, Legend, PieChart, Pie, Cell } from "recharts";
 import api from "../../utils/api";
 
+/**
+ * Format percentage display - shows meaningful values only
+ */
+const formatPercent = (value) => {
+  if (typeof value !== "number" || isNaN(value)) return "—";
+  if (value === 0 && value !== 0.0) return "—"; // Exclude true 0
+  return `${value.toFixed(1)}%`;
+};
+
+/**
+ * Format marks display
+ */
+const formatMarks = (value) => {
+  if (typeof value !== "number" || isNaN(value)) return "—";
+  if (value === 0) return "—";
+  return `${value.toFixed(1)}`;
+};
+
 /* ================= MAIN ================= */
 export default function Insights() {
   /* CONTEXT FILTERS */
@@ -106,35 +124,8 @@ export default function Insights() {
       isFuture: false,
     }));
 
-    const values = attendanceTrend
-      .map((p) => (typeof p.value === "number" ? p.value : null))
-      .filter((v) => v != null);
-
-    if (!values.length) return base;
-
-    const last = values[values.length - 1];
-    const prev = values.length >= 2 ? values[values.length - 2] : values[values.length - 1];
-    let slope = Number((last - prev).toFixed(2));
-
-    if (slope === 0 && values.length >= 3) {
-      const totalDelta = values[values.length - 1] - values[0];
-      slope = Number((totalDelta / (values.length - 1)).toFixed(2));
-    }
-
-    const futureLabels = ["Next 1", "Next 2"];
-    const future = futureLabels.map((label, i) => {
-      let prediction = Number((last + slope * (i + 1)).toFixed(2));
-      prediction = Math.max(1, Math.min(100, prediction));
-      return {
-        key: `future-${i}`,
-        label,
-        actual: null,
-        predicted: prediction,
-        isFuture: true,
-      };
-    });
-
-    return [...base, ...future];
+    // Keep chart focused on real values; future direction is shown as text for clarity.
+    return base;
   }, [attendanceTrend]);
 
   const hasMidMarksData = useMemo(() => {
@@ -154,6 +145,34 @@ export default function Insights() {
     [students]
   );
 
+  const criticalScoreCount = useMemo(
+    () =>
+      students.filter((s) => {
+        const score = Number(s?.risk_score ?? s?.risk?.risk_score ?? s?.risk?.score ?? 0);
+        return Number.isFinite(score) && score >= 70;
+      }).length,
+    [students]
+  );
+
+  const mediumRiskCount = useMemo(
+    () => students.filter((s) => s.risk?.level === "MEDIUM").length,
+    [students]
+  );
+
+  const belowAttendanceThresholdCount = useMemo(
+    () => students.filter((s) => typeof s?.attendance === "number" && s.attendance < threshold).length,
+    [students, threshold]
+  );
+
+  const belowMarksThresholdCount = useMemo(
+    () => students.filter((s) => {
+      const m1 = s?.mid1;
+      const m2 = s?.mid2;
+      return (typeof m1 === "number" && m1 < 15) || (typeof m2 === "number" && m2 < 15);
+    }).length,
+    [students]
+  );
+
   const normalizedAlerts = useMemo(() => {
     return alerts
       .map((alert, idx) => {
@@ -163,13 +182,51 @@ export default function Insights() {
           priority,
           message: alert?.message || alert?.title || "Alert",
           action: String(alert?.action || "Review").replace(/_/g, " "),
+          student_id: alert?.student_id ?? alert?.studentId ?? null,
         };
       })
       .filter((a) => a.priority === "high" || a.priority === "medium");
   }, [alerts]);
 
+  const alertedStudentIds = useMemo(() => {
+    const ids = new Set();
+    normalizedAlerts.forEach((a) => {
+      const id = Number(a?.student_id);
+      if (Number.isFinite(id)) ids.add(id);
+    });
+    return ids;
+  }, [normalizedAlerts]);
+
   const topRiskStudents = useMemo(() => {
-    return students.filter((s) => s?.risk?.level === "HIGH").slice(0, 5);
+    return (students || [])
+      .filter((s) => {
+        const riskScore = Number(s?.risk_score ?? s?.risk?.risk_score ?? s?.risk?.score ?? 0);
+        const lowAttendance = typeof s?.attendance === "number" && s.attendance < 75;
+        const lowMid1 = typeof s?.mid1 === "number" && s.mid1 < 15;
+        const lowMid2 = typeof s?.mid2 === "number" && s.mid2 < 15;
+        const inAlerts = alertedStudentIds.has(Number(s?.student_id));
+        return riskScore >= 40 || lowAttendance || lowMid1 || lowMid2 || inAlerts;
+      })
+      .sort((a, b) => {
+        const aScore = Number(a?.risk_score ?? a?.risk?.risk_score ?? a?.risk?.score ?? 0);
+        const bScore = Number(b?.risk_score ?? b?.risk?.risk_score ?? b?.risk?.score ?? 0);
+        const safeA = Number.isFinite(aScore) ? aScore : 0;
+        const safeB = Number.isFinite(bScore) ? bScore : 0;
+        const diff = safeB - safeA;
+        if (diff !== 0) return diff;
+        const aAlert = alertedStudentIds.has(Number(a?.student_id)) ? 1 : 0;
+        const bAlert = alertedStudentIds.has(Number(b?.student_id)) ? 1 : 0;
+        if (bAlert !== aAlert) return bAlert - aAlert;
+        return (a?.attendance ?? 9999) - (b?.attendance ?? 9999);
+      });
+  }, [students, alertedStudentIds]);
+
+  const noImmediateAttention = useMemo(() => {
+    return (students || []).every((s) =>
+      (typeof s?.attendance === "number" && s.attendance >= 75) &&
+      (s?.mid1 == null || (typeof s.mid1 === "number" && s.mid1 >= 15)) &&
+      (s?.mid2 == null || (typeof s.mid2 === "number" && s.mid2 >= 15))
+    );
   }, [students]);
 
   const lowAttendanceCount = useMemo(() => {
@@ -243,6 +300,120 @@ export default function Insights() {
   const avgAttendanceDisplay =
     attendanceSummary.average ?? attendanceSummary.overall_percentage ?? 0;
 
+  const trendDirection = String(predictions?.trend_direction || trendSummary?.direction || "stable").toLowerCase();
+  const trendDirectionMessage =
+    trendDirection === "declining"
+      ? "📉 Attendance is declining based on recent trend"
+      : trendDirection === "improving"
+      ? "📈 Attendance is improving based on recent trend"
+      : "➡️ Attendance is stable based on recent trend";
+
+  const confidenceText = `${String(predictions?.confidence || "LOW").toUpperCase()}${predictions?.confidence_reason ? ` (${predictions.confidence_reason})` : ""}`;
+
+  const studentsByPriority = useMemo(() => {
+    return [...students].sort((a, b) => {
+      const as = Number(a?.risk_score ?? a?.risk?.risk_score ?? a?.risk?.score ?? 0);
+      const bs = Number(b?.risk_score ?? b?.risk?.risk_score ?? b?.risk?.score ?? 0);
+      const safeA = Number.isFinite(as) ? as : 0;
+      const safeB = Number.isFinite(bs) ? bs : 0;
+      if (safeB !== safeA) return safeB - safeA;
+      return (a?.marks ?? 9999) - (b?.marks ?? 9999);
+    });
+  }, [students]);
+
+  const primaryFocus = useMemo(() => {
+    if (!Array.isArray(students) || students.length === 0) {
+      return {
+        icon: "ℹ️",
+        title: "Primary Focus Unavailable",
+        message: "Insufficient data to generate focus insights",
+        action: "Upload attendance and marks data, then review this panel.",
+        priority: "INFO",
+        badgeClass: "bg-slate-100 text-slate-700",
+        cardClass: "border-slate-200 bg-slate-50",
+      };
+    }
+
+    const details = [];
+    if (belowAttendanceThresholdCount > 0) {
+      details.push(`${belowAttendanceThresholdCount} students below 75% attendance`);
+    }
+    if (belowMarksThresholdCount > 0) {
+      details.push(`${belowMarksThresholdCount} students below marks threshold`);
+    }
+
+    if (highRiskCount > 0) {
+      return {
+        icon: "🚨",
+        title: "Immediate Attention Required",
+        message: `${criticalScoreCount} students at critical risk score (>=70).`,
+        action: "Take immediate action: contact students, arrange support sessions.",
+        priority: "HIGH",
+        badgeClass: "bg-red-100 text-red-700",
+        cardClass: "border-red-200 bg-red-50/60",
+        details,
+      };
+    }
+
+    if (highRiskCount === 0 && mediumRiskCount > 0) {
+      return {
+        icon: "⚠️",
+        title: "Monitor At-Risk Students",
+        message: `${mediumRiskCount} students are showing early warning signs.`,
+        action: "Monitor trends and intervene early to prevent decline.",
+        priority: "MEDIUM",
+        badgeClass: "bg-amber-100 text-amber-700",
+        cardClass: "border-amber-200 bg-amber-50/60",
+        details,
+      };
+    }
+
+    return {
+      icon: "✅",
+      title: "Stable Class Performance",
+      message: "All students are currently within safe thresholds.",
+      action: "Continue regular monitoring.",
+      priority: "LOW",
+      badgeClass: "bg-emerald-100 text-emerald-700",
+      cardClass: "border-emerald-200 bg-emerald-50/60",
+      details,
+    };
+  }, [students, highRiskCount, mediumRiskCount, belowAttendanceThresholdCount, belowMarksThresholdCount, criticalScoreCount]);
+
+  /**
+   * Generate crisis/intervention banner based on data
+   * Returns { show: boolean, icon: string, message: string, severity: string }
+   */
+  const getCrisisBanner = useMemo(() => {
+    const criticalCount = students.filter((s) => s.risk?.level === "HIGH").length;
+    const attendanceDropped = trendSummary?.direction === "declining" && trendSummary?.change_percent > 0;
+    const dropPercent = Math.abs(trendSummary?.change_percent ?? 0);
+    
+    // Determine severity and message
+    let severity = "neutral";
+    let message = "";
+    
+    if (criticalCount > 3 && avgAttendanceDisplay < threshold) {
+      severity = "critical";
+      message = `⚠️ ${criticalCount} students at risk. Average attendance is ${avgAttendanceDisplay.toFixed(0)}% (${threshold}% target). Immediate intervention required.`;
+    } else if (criticalCount > 0 && attendanceDropped) {
+      severity = "high";
+      message = `⚠️ ${criticalCount} students at risk. Attendance dropped ${dropPercent.toFixed(0)}% in this window. Take action now.`;
+    } else if (criticalCount > 0) {
+      severity = "high";
+      message = `⚠️ ${criticalScoreCount} students at critical risk score (>=70). Review reasons and plan interventions immediately.`;
+    } else if (avgAttendanceDisplay < threshold || attendanceDropped) {
+      severity = "medium";
+      message = `📊 Class attendance is below target (${avgAttendanceDisplay.toFixed(0)}%). Monitor trends this week.`;
+    }
+    
+    return {
+      show: message.length > 0,
+      severity,
+      message
+    };
+  }, [students, avgAttendanceDisplay, threshold, trendSummary, criticalScoreCount]);
+
   if (loading) return <div className="p-10 text-center">Loading insights...</div>;
   if (error) return <div className="p-10 text-center text-red-500">{error}</div>;
   if (!insightsData || !predictions) return <div className="p-10 text-center">No insights available</div>;
@@ -255,6 +426,38 @@ export default function Insights() {
         <p className="text-sm text-gray-500 mt-1">
           Clear signals, risks, and next actions — not just charts
         </p>
+      </div>
+
+      {/* CRISIS/INTERVENTION BANNER */}
+      {getCrisisBanner.show && (
+        <div
+          className={`rounded-2xl border-l-4 px-6 py-4 ${
+            getCrisisBanner.severity === "critical"
+              ? "border-red-500 bg-red-50/80 text-red-900"
+              : getCrisisBanner.severity === "high"
+              ? "border-orange-500 bg-orange-50/80 text-orange-900"
+              : "border-amber-500 bg-amber-50/80 text-amber-900"
+          }`}
+        >
+          <p className="text-sm font-semibold leading-relaxed">{getCrisisBanner.message}</p>
+        </div>
+      )}
+
+      <div className={`rounded-2xl border px-6 py-4 ${primaryFocus.cardClass}`}>
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm font-bold text-slate-900">🎯 Primary Focus</p>
+          <span className={`px-2 py-1 rounded-full text-[11px] font-bold uppercase ${primaryFocus.badgeClass}`}>
+            {primaryFocus.priority}
+          </span>
+        </div>
+        <div className="mt-3">
+          <p className="font-semibold text-slate-900">{primaryFocus.icon} {primaryFocus.title}</p>
+          <p className="text-sm text-slate-700 mt-1">{primaryFocus.message}</p>
+          {Array.isArray(primaryFocus.details) && primaryFocus.details.length > 0 && (
+            <p className="text-xs text-slate-600 mt-2">{primaryFocus.details.join(", ")}.</p>
+          )}
+          <p className="text-sm font-medium text-slate-800 mt-3">Action: {primaryFocus.action}</p>
+        </div>
       </div>
 
       <div className="glass rounded-2xl px-6 py-4">
@@ -335,7 +538,7 @@ export default function Insights() {
         <SummaryTile
           title="High risk (model)"
           value={`${highRiskCount} high / ${students.length} student${students.length === 1 ? "" : "s"}`}
-          sub={`Improved Mid 1→2: ${midAnalysis.improved ?? 0} · Declined: ${midAnalysis.declined ?? 0}`}
+          sub={`Confidence: ${confidenceText}`}
           danger={highRiskCount > 0}
         />
       </div>
@@ -355,6 +558,7 @@ export default function Insights() {
                   priority={priority}
                   title={ins?.title || "Insight"}
                   message={ins?.message || ""}
+                  reason={ins?.reason || ""}
                   action={ins?.action || ""}
                 />
               );
@@ -389,28 +593,41 @@ export default function Insights() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {mergedAlerts.length > 0 ? (
             mergedAlerts.map((alert) => {
-              const isHigh = alert.priority === "high";
+              const level = String(alert?.priority || "low").toLowerCase();
+              const high = level === "high";
+              const medium = level === "medium";
               return (
                 <div
                   key={alert.id}
-                  className={`rounded-2xl border p-4 ${isHigh ? "border-red-200 bg-red-50/70" : "border-amber-200 bg-amber-50/70"}`}
+                  className={`rounded-2xl border p-4 ${
+                    high
+                      ? "border-red-200 bg-red-50/70"
+                      : medium
+                      ? "border-amber-200 bg-amber-50/70"
+                      : "border-slate-200 bg-slate-50/70"
+                  }`}
                 >
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-sm font-semibold text-slate-900">{alert.message}</p>
-                    <span className={`px-2 py-1 rounded-full text-[11px] font-bold uppercase ${isHigh ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>
-                      {isHigh ? "High" : "Medium"}
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="text-sm font-medium text-slate-800 leading-relaxed">{alert.message}</p>
+                    <span
+                      className={`px-2 py-1 rounded-full text-[11px] font-bold uppercase whitespace-nowrap ${
+                        high
+                          ? "bg-red-100 text-red-700"
+                          : medium
+                          ? "bg-amber-100 text-amber-700"
+                          : "bg-slate-200 text-slate-700"
+                      }`}
+                    >
+                      {high ? "High" : medium ? "Medium" : "Low"}
                     </span>
                   </div>
-                  <div className="mt-3 pt-3 border-t border-black/5">
-                    <p className="text-xs font-semibold uppercase text-slate-500">Action</p>
-                    <p className="text-sm text-slate-700 mt-1">{alert.action}</p>
-                  </div>
+                  <p className="text-xs text-slate-600 mt-2">Action: {alert.action}</p>
                 </div>
               );
             })
           ) : (
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-500">
-              No high or medium alerts for this cohort.
+            <div className="md:col-span-2 rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3 text-sm text-slate-600">
+              No active alerts at the moment.
             </div>
           )}
         </div>
@@ -421,20 +638,114 @@ export default function Insights() {
         <div className="glass rounded-2xl p-5">
           {topRiskStudents.length > 0 ? (
             <div className="space-y-3">
-              {topRiskStudents.map((student) => (
-                <div key={student.student_id} className="rounded-xl border border-red-200 bg-red-50/60 px-4 py-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="font-semibold text-slate-900">{student.name}</p>
-                    <span className="px-2 py-1 rounded-full text-[11px] font-bold uppercase bg-red-100 text-red-700">High</span>
+              {topRiskStudents.map((student, idx) => {
+                const riskScoreRaw = Number(student?.risk_score ?? student?.risk?.risk_score ?? student?.risk?.score ?? 0);
+                const riskScore = Number.isFinite(riskScoreRaw) ? Math.max(0, Math.min(100, riskScoreRaw)) : 0;
+                if (riskScore < 40) return null;
+
+                const mid1 = student?.mid1;
+                const mid2 = student?.mid2;
+                const lowAttendance = typeof student?.attendance === "number" && student.attendance < 75;
+                const lowMarks =
+                  (typeof mid1 === "number" && mid1 < 15) ||
+                  (typeof mid2 === "number" && mid2 < 15);
+
+                const issues = [];
+                if (lowAttendance) issues.push("Attendance below 75%");
+                if (lowMarks) issues.push("Low performance in Mid exams");
+
+                const attendanceTrend = Array.isArray(student?.attendance_trend) ? student.attendance_trend : [];
+                let trend = "➡️ Stable attendance";
+                if (attendanceTrend.length >= 2) {
+                  const prev = Number(attendanceTrend[attendanceTrend.length - 2]);
+                  const last = Number(attendanceTrend[attendanceTrend.length - 1]);
+                  trend =
+                    last < prev
+                      ? "📉 Declining attendance"
+                      : last > prev
+                      ? "📈 Improving attendance"
+                      : "➡️ Stable attendance";
+                } else if (typeof mid1 === "number" && typeof mid2 === "number") {
+                  trend =
+                    mid2 < mid1
+                      ? "📉 Performance dropped from Mid1 to Mid2"
+                      : mid2 > mid1
+                      ? "📈 Performance improved from Mid1 to Mid2"
+                      : "➡️ Performance stable";
+                }
+
+                let action = "Monitor academic progress";
+                if (lowAttendance && lowMarks) {
+                  action = "Schedule 1-on-1 intervention";
+                } else if (lowAttendance) {
+                  action = "Monitor attendance daily and contact student";
+                } else if (lowMarks) {
+                  action = "Assign remedial practice / revision sessions";
+                }
+
+                const riskSource = lowAttendance && lowMarks ? "Both" : lowMarks ? "Marks" : "Attendance";
+                const severityTone = riskScore >= 70 ? "border-red-200 bg-red-50/60" : "border-amber-200 bg-amber-50/60";
+                const severityBadge = riskScore >= 70 ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700";
+
+                return (
+                  <div
+                    key={student.student_id}
+                    className={`rounded-xl border px-4 py-3 ${severityTone}`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1">
+                        <p className="text-xs font-bold uppercase tracking-wide text-slate-500">#{idx + 1} highest risk</p>
+                        <p className="font-semibold text-slate-900 mt-1">{student.name}</p>
+                      </div>
+                      <span
+                        className={`px-2 py-1 rounded-full text-[11px] font-bold uppercase whitespace-nowrap ${severityBadge}`}
+                      >
+                        {riskScore >= 70 ? "🔴 High" : "🟡 Medium"}
+                      </span>
+                    </div>
+
+                    <div className="mt-3 text-xs text-slate-700 space-y-2">
+                      <div>
+                        <p className="font-medium text-slate-900">Key issues</p>
+                        <ul className="list-disc pl-4 mt-1 space-y-0.5">
+                          {issues.slice(0, 2).map((issue, i) => (
+                            <li key={i}>{issue}</li>
+                          ))}
+                        </ul>
+                      </div>
+                      <p>
+                        <span className="font-medium text-slate-900">Trend:</span> {trend}
+                      </p>
+                      <p>
+                        <span className="font-medium text-slate-900">Action:</span> {action}
+                      </p>
+                      <p>
+                        <span className="font-medium text-slate-900">Risk Score:</span>{" "}
+                        <span
+                          title="Calculated from attendance, marks, and performance trend"
+                          className={`font-semibold ${riskScore >= 70 ? "text-red-700" : "text-amber-700"}`}
+                        >
+                          {riskScore.toFixed(1)}/100
+                        </span>
+                      </p>
+                      <p>
+                        <span className="font-medium text-slate-900">Risk Source:</span> {riskSource}
+                      </p>
+                    </div>
                   </div>
-                  <p className="text-xs text-slate-600 mt-2">
-                    {(student?.risk?.reasons || []).length ? student.risk.reasons.join(", ") : "Multiple risk indicators detected"}
-                  </p>
-                </div>
-              ))}
+                );
+              })}
+            </div>
+          ) : noImmediateAttention ? (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 px-4 py-3">
+              <p className="font-semibold text-emerald-900">✅ No students require immediate attention</p>
+              <p className="text-sm text-emerald-800 mt-1">All students are performing within safe thresholds.</p>
             </div>
           ) : (
-            <p className="text-sm text-slate-500">No high-risk students</p>
+            <div className="rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-3">
+              <p className="font-semibold text-amber-900">⚠ Risk records are being recalculated</p>
+              <p className="text-sm text-amber-800 mt-1">Please refresh after latest insights are loaded.</p>
+            </div>
           )}
         </div>
       </div>
@@ -461,6 +772,9 @@ export default function Insights() {
           <div className="glass rounded-2xl p-5 flex flex-col gap-4">
             <div className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-900">
               <p className="font-semibold">⚠ {trendInsight || attendanceSummary.message}</p>
+              <p className="mt-1 text-amber-800/90">
+                {trendDirectionMessage}
+              </p>
               <p className="mt-1 text-amber-800/90">
                 Current: {Number(avgAttendanceDisplay).toFixed(1)}%
                 {avgAttendanceDisplay < threshold ? " · Below safe level" : " · At or above safe level"}
@@ -598,6 +912,15 @@ export default function Insights() {
             <span className="text-xs text-slate-500">Student count is high, showing average comparison to reduce clutter.</span>
           )}
         </div>
+        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+          <p className="text-sm font-semibold text-slate-800">📊 Performance Summary</p>
+          <p className="text-sm text-slate-700 mt-1">
+            Mid2 improved for {midAnalysis.improved ?? 0} out of {Math.max((midAnalysis.improved ?? 0) + (midAnalysis.declined ?? 0) + (midAnalysis.stable ?? 0), 1)} students
+            {typeof midAnalysis.avg_mid1 === "number" && typeof midAnalysis.avg_mid2 === "number" && midAnalysis.avg_mid1 > 0
+              ? ` (${(((midAnalysis.avg_mid2 - midAnalysis.avg_mid1) / midAnalysis.avg_mid1) * 100).toFixed(1)}% average change)`
+              : ""}
+          </p>
+        </div>
         {midComparisonSummary && !showAverageMidChart && (
           <p className="text-sm text-gray-500">{midComparisonSummary}</p>
         )}
@@ -648,7 +971,7 @@ export default function Insights() {
               </tr>
             </thead>
             <tbody className="divide-y text-slate-600">
-              {students.map((student, i) => {
+              {studentsByPriority.map((student, i) => {
                 const m1 = student.mid1;
                 const m2 = student.mid2;
                 const lowMid = (typeof m1 === "number" && m1 < 15) || (typeof m2 === "number" && m2 < 15);
@@ -661,7 +984,7 @@ export default function Insights() {
                     ? "Mentor support"
                     : "Monitor";
                 return (
-                  <tr key={i} className={`hover:bg-slate-50 ${lowMid ? "bg-red-50/80" : ""}`}>
+                  <tr key={i} className={`hover:bg-slate-50 ${student.risk?.level === "HIGH" ? "bg-red-50/80" : lowMid ? "bg-amber-50/70" : ""}`}>
                     <td className="px-6 py-4 font-medium text-slate-900">{student.name}</td>
                     <td className={`px-6 py-4 ${typeof m1 === "number" && m1 < 15 ? "text-red-700 font-bold" : ""}`}>
                       {m1 ?? "-"}
@@ -718,7 +1041,7 @@ function SummaryTile({ title, value, sub, danger, muted }) {
   );
 }
 
-function DecisionInsightCard({ title, message, action, tone, priority }) {
+function DecisionInsightCard({ title, message, action, reason, tone, priority }) {
   const border =
     tone === "danger"
       ? "border-red-300 bg-red-50"
@@ -738,6 +1061,11 @@ function DecisionInsightCard({ title, message, action, tone, priority }) {
       <span className="text-[11px] font-extrabold uppercase tracking-widest text-slate-600">{badge}</span>
       <h4 className="font-bold text-base text-slate-900 leading-snug">{title}</h4>
       <p className="text-sm text-slate-700 leading-relaxed">{message}</p>
+      {reason && (
+        <div className="text-xs text-slate-600 italic border-l-2 border-slate-300 pl-3 py-1">
+          <strong className="text-slate-700">Why:</strong> {reason}
+        </div>
+      )}
       {action && (
         <div className="pt-2 border-t border-black/5">
           <p className="text-xs font-bold text-slate-500 uppercase mb-1">Action</p>

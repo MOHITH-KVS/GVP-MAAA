@@ -17,7 +17,7 @@ try:
     from ml.risk_engine import calculate_risk, predict_future_risk
     from ml.prediction_engine import forecast_performance
 except ImportError:
-    def calculate_risk(*args, **kwargs): return {"score": 0, "level": "LOW", "reasons": []}
+    def calculate_risk(*args, **kwargs): return {"score": 0, "risk_score": 0, "level": "LOW", "reasons": []}
     def predict_future_risk(*args, **kwargs): return 0
     def forecast_performance(*args, **kwargs): return 0.0
 try:
@@ -8201,7 +8201,9 @@ def get_faculty_insights_data(
                 "future_risk_students": 0,
                 "expected_attendance": 0.0,
                 "expected_avg_marks": 0.0,
-                "confidence": "LOW"
+                "confidence": "LOW",
+                "trend_direction": "stable",
+                "confidence_reason": "based on 0 available academic data points"
             },
             "attendance_trend": [],
             "trend_summary": {"direction": "stable", "change_percent": 0.0, "status": "below_threshold"},
@@ -8229,6 +8231,10 @@ def get_faculty_insights_data(
                 "Contact admin to map your subjects, then reload this page.",
                 "Select subject and time range after assignment is complete."
             ],
+            "priority_summary": {
+                "count": 0,
+                "breakdown": {"low_attendance": 0, "low_marks": 0, "declining": 0}
+            },
             "attendance_summary": {
                 "overall_percentage": 0.0, "present_count": 0, "absent_count": 0, "total_records": 0, "by_subject": [],
                 "average": 0.0, "threshold": 75, "status": "critical", "trend": "stable",
@@ -8681,6 +8687,28 @@ def get_faculty_insights_data(
     top_students = sorted(student_averages, key=lambda item: item["average_marks"], reverse=True)[:5]
     marks_risk_count = sum(1 for item in student_averages if item["average_marks"] < 15)
 
+    # Build per-student attendance trend points (ordered recent percentages) for risk logic.
+    student_attendance_daily = {sid: {} for sid in student_ids}
+    for a in attendance_records:
+        sid = a.student_id
+        if sid not in student_attendance_daily:
+            continue
+        day_bucket = student_attendance_daily[sid].setdefault(a.attendance_date, {"present": 0, "total": 0})
+        day_bucket["total"] += 1
+        if a.status:
+            day_bucket["present"] += 1
+
+    student_attendance_trend = {}
+    for sid, daily in student_attendance_daily.items():
+        ordered_days = sorted(daily.keys())
+        trend_vals = []
+        for d in ordered_days:
+            totals = daily[d]
+            if totals["total"] > 0:
+                trend_vals.append(round((totals["present"] / totals["total"]) * 100, 2))
+        # Keep latest 5 points to represent recent trend.
+        student_attendance_trend[sid] = trend_vals[-5:]
+
     # === ML PREDICTION & RISK BLOCK ===
     students_list = []
     
@@ -8696,25 +8724,37 @@ def get_faculty_insights_data(
             "student_id": sid,
             "name": student_names.get(sid, "Unknown"),
             "attendance": att_pct,
+            "attendance_trend": student_attendance_trend.get(sid, []),
             "marks": marks_avg,
             "assignments": subs,
             "mid1": mm.get("mid1"),
             "mid2": mm.get("mid2"),
         }
         try:
-            stu_obj["risk"] = calculate_risk(stu_obj, {
+            risk_payload = calculate_risk(stu_obj, {
                 "attendance": attendance_threshold,
                 "marks": 15,
                 "assignment": total_assignments
             })
+            stu_obj["risk"] = risk_payload
+            # Keep existing risk object and expose normalized fields for downstream consumers.
+            stu_obj["risk_level"] = risk_payload.get("level", "LOW")
+            stu_obj["risk_score"] = float(risk_payload.get("risk_score", risk_payload.get("score", 0)) or 0)
+            stu_obj["reasons"] = risk_payload.get("reasons", [])
+            stu_obj["actions"] = risk_payload.get("actions", [])
         except Exception:
-            stu_obj["risk"] = {"score": 0, "level": "LOW", "reasons": []}
+            stu_obj["risk"] = {"risk": "LOW", "score": 0, "risk_score": 0, "level": "LOW", "reasons": [], "actions": []}
+            stu_obj["risk_level"] = "LOW"
+            stu_obj["risk_score"] = 0
+            stu_obj["reasons"] = []
+            stu_obj["actions"] = []
             
         students_list.append(stu_obj)
 
     _risk_order = {"HIGH": 3, "MEDIUM": 2, "LOW": 1}
     students_list.sort(
         key=lambda s: (
+            -(float(s.get("risk_score", 0) or 0)),
             -_risk_order.get(s.get("risk", {}).get("level"), 0),
             s.get("marks", 0) or 0,
         )
@@ -8735,18 +8775,26 @@ def get_faculty_insights_data(
         expected_marks = 0.0
         
     data_points = len(student_ids) + len(mark_records)
+    trend_data_points = len(attendance_values)
     confidence = "LOW"
     if data_points >= 10:
         confidence = "HIGH"
     elif data_points >= 5:
         confidence = "MEDIUM"
+
+    if trend_data_points > 0:
+        confidence_reason = f"based on {trend_data_points} days of consistent attendance data"
+    else:
+        confidence_reason = f"based on {data_points} available academic data points"
         
     predictions = {
         "future_risk_students": future_risk,
         # Kept for backward compatibility, but now derived from real aggregates.
         "expected_attendance": overall_attendance_pct,
         "expected_avg_marks": marks_summary.get("avg_mid2", 0.0),
-        "confidence": confidence
+        "confidence": confidence,
+        "trend_direction": attendance_trend_direction,
+        "confidence_reason": confidence_reason
     }
 
     # Weakest subject tracking (decision-support)
@@ -8803,22 +8851,22 @@ def get_faculty_insights_data(
         if weakest_trend == "declining":
             weakest_subject["reason_lines"].append("Declining performance from Mid 1 to Mid 2")
 
-    # Risk distribution (marks-based) using Mid rule (<15 high)
+    # Risk distribution based on the final per-student risk classification.
     risk_distribution = {"low": 0, "medium": 0, "high": 0}
-    for row in mid_comparison:
-        m1 = row.get("mid1")
-        m2 = row.get("mid2")
-        mins = [v for v in [m1, m2] if isinstance(v, (int, float))]
-        if not mins:
-            risk_distribution["low"] += 1
-            continue
-        min_mid = min(mins)
-        if min_mid < 15:
+    for s in students_list:
+        lvl = (s.get("risk") or {}).get("level", "LOW")
+        if lvl == "HIGH":
             risk_distribution["high"] += 1
-        elif min_mid < 18:
+        elif lvl == "MEDIUM":
             risk_distribution["medium"] += 1
         else:
             risk_distribution["low"] += 1
+
+    risk_counts = {
+        "HIGH": risk_distribution["high"],
+        "MEDIUM": risk_distribution["medium"],
+        "LOW": risk_distribution["low"],
+    }
 
     mid_analysis = {
         "improved": improved_count,
@@ -8851,14 +8899,23 @@ def get_faculty_insights_data(
 
     avg_for_narrative = chart_series_avg if attendance_values else overall_attendance_pct
     last_pct = round(float(attendance_values[-1]), 1) if attendance_values else round(overall_attendance_pct, 1)
+    trend_period_label = "days" if (trend_view or "days") == "days" else ("weeks" if (trend_view or "days") == "weeks" else "months")
 
-    # Decision-support insights: specific titles, concrete numbers, always >= 2 non-vague items
+    low_attendance_days = 0
+    for v in reversed(attendance_values):
+        if float(v) < _thr_ins:
+            low_attendance_days += 1
+        else:
+            break
+
+    # ========== STRUCTURED INSIGHTS ENGINE ==========
     insights = []
 
     if attendance_trend_direction == "declining" and attendance_change_percent > 0 and avg_for_narrative < _thr_ins:
         insights.append({
             "title": "Critical Attendance Drop",
             "message": f"Attendance dropped by {attendance_change_percent}% and is below {_thr_ins:.0f}% (chart avg {round(avg_for_narrative, 1)}%).",
+            "reason": f"Attendance fell from {round(float(attendance_values[0]), 1) if attendance_values else round(avg_for_narrative, 1)}% to {last_pct}% over the last {len(attendance_values) if attendance_values else 0} {trend_period_label}",
             "priority": "high",
             "action": "Schedule mandatory classes or send a clear attendance alert to the cohort.",
             "severity": "high"
@@ -8867,6 +8924,7 @@ def get_faculty_insights_data(
         insights.append({
             "title": "Attendance Below Safe Level",
             "message": f"Average attendance is {round(avg_for_narrative, 1)}%, under the {_thr_ins:.0f}% target ({attendance_trend_direction} trend in chart).",
+            "reason": f"{low_attendance_days} consecutive {trend_period_label} are below {_thr_ins:.0f}% and current attendance is {last_pct}%",
             "priority": "high",
             "action": "Notify low-attendance students and plan one catch-up session this week.",
             "severity": "high"
@@ -8878,6 +8936,7 @@ def get_faculty_insights_data(
         insights.append({
             "title": "Mixed Performance Trend",
             "message": f"Only {improved_count} out of {mid_tracked} students improved from Mid 1 to Mid 2.",
+            "reason": f"{declined_count} students scored lower in Mid 2 than Mid 1, while only {improved_count} improved in the same exam cycle",
             "priority": _prio,
             "action": "Focus on weak students individually; review Mid 1 gaps before the next exam.",
             "severity": "high" if _prio == "high" else "medium"
@@ -8886,6 +8945,7 @@ def get_faculty_insights_data(
         insights.append({
             "title": "Mid Exam Data Missing",
             "message": "No Mid 1/Mid 2 marks found for this cohort yet.",
+            "reason": f"0 Mid records were found for the selected {trend_period_label} window, so Mid 1 vs Mid 2 comparison cannot be computed",
             "priority": "medium",
             "action": "Upload or verify Mid marks so performance comparisons can drive actions.",
             "severity": "medium"
@@ -8895,6 +8955,7 @@ def get_faculty_insights_data(
         insights.append({
             "title": "Top Risk: Low Mid Scores",
             "message": f"{mid_risk_count} students have Mid marks under 15.",
+            "reason": f"{mid_risk_count} of {max(total_students, 1)} students are below 15 marks when comparing Mid 1 and Mid 2 results",
             "priority": "high",
             "action": "Run a short diagnostic quiz and assign targeted practice for those students.",
             "severity": "high"
@@ -8904,6 +8965,7 @@ def get_faculty_insights_data(
         insights.append({
             "title": "Top Risk: Weak Attendance",
             "message": f"{len(attendance_risk_students)} students are under the {_thr_ins:.0f}% attendance bar.",
+            "reason": f"{len(attendance_risk_students)} of {max(total_students, 1)} students are below {_thr_ins:.0f}% attendance across the selected time range",
             "priority": "medium",
             "action": "Send attendance nudges and offer optional office hours.",
             "severity": "medium"
@@ -8913,22 +8975,32 @@ def get_faculty_insights_data(
         insights.append({
             "title": "Class Mid Trend Declining",
             "message": f"Avg Mid 1 {round(avg_mid1, 1)} → Avg Mid 2 {round(avg_mid2, 1)}; cohort is slipping.",
+            "reason": f"Class average dropped by {round(avg_mid1 - avg_mid2, 1)} points between Mid 1 and Mid 2 in the current cycle",
             "priority": "high",
             "action": "Re-teach the weakest modules and add a short formative assessment.",
             "severity": "high"
         })
 
-    # Ensure every insight exposes severity for UI + dedupe by title
+    # Ensure every insight exposes severity + reason for UI + dedupe by title
     _seen_titles = set()
+    _seen_signatures = set()
     _deduped = []
     for ins in insights:
         t = ins.get("title") or ""
         if t in _seen_titles:
             continue
         _seen_titles.add(t)
+        _msg = str(ins.get("message") or "").lower()
+        _sig = " ".join(_msg.split()[:10])
+        if _sig and _sig in _seen_signatures:
+            continue
+        if _sig:
+            _seen_signatures.add(_sig)
         if not ins.get("severity"):
             p = (ins.get("priority") or "low").lower()
             ins["severity"] = "high" if p == "high" else ("medium" if p == "medium" else "low")
+        if not ins.get("reason"):
+            ins["reason"] = "Based on available class data"
         _deduped.append(ins)
     insights = _deduped
 
@@ -8937,6 +9009,7 @@ def get_faculty_insights_data(
             {
                 "title": "Maintain Momentum",
                 "message": marks_trend_summary or "No severe signals; keep monitoring attendance and Mid performance weekly.",
+                "reason": f"0 high-priority drops detected in the last {len(attendance_values) if attendance_values else 0} {trend_period_label} compared to threshold {_thr_ins:.0f}%",
                 "priority": "low",
                 "action": "Keep the current plan and revisit this dashboard before the next evaluation.",
                 "severity": "low"
@@ -8944,6 +9017,7 @@ def get_faculty_insights_data(
             {
                 "title": "Data hygiene",
                 "message": "Ensure attendance and Mid marks stay up to date so this view stays actionable.",
+                "reason": f"Current dataset includes {data_points} records; weekly updates improve comparison quality across future windows",
                 "priority": "low",
                 "action": "Schedule a weekly five-minute review of this screen.",
                 "severity": "low"
@@ -8953,12 +9027,23 @@ def get_faculty_insights_data(
         insights.append({
             "title": "Secondary check",
             "message": "Review cohort Mid spread and attendance outliers even when primary signals are calm.",
+            "reason": f"Only 1 primary signal was triggered in this {trend_period_label} window; additional comparison checks reduce blind spots",
             "priority": "low",
             "action": "Spot-check three borderline students this week.",
             "severity": "low"
         })
 
-    insights = insights[:6]
+    insights = insights[:4]
+
+    priority_students = [s for s in students_list if (s.get("risk") or {}).get("level") == "HIGH"]
+    priority_summary = {
+        "count": len(priority_students),
+        "breakdown": {
+            "low_attendance": sum(1 for s in priority_students if isinstance(s.get("attendance"), (int, float)) and float(s.get("attendance")) < _thr_ins),
+            "low_marks": sum(1 for s in priority_students if isinstance(s.get("marks"), (int, float)) and float(s.get("marks")) < 15),
+            "declining": sum(1 for s in priority_students if isinstance(s.get("mid1"), (int, float)) and isinstance(s.get("mid2"), (int, float)) and float(s.get("mid2")) < float(s.get("mid1"))),
+        },
+    }
 
     if avg_for_narrative < _thr_ins:
         att_sum_status = "critical"
@@ -9019,9 +9104,11 @@ def get_faculty_insights_data(
         "mid_comparison": mid_comparison,
         "top_risks": top_risks,
         "risk_distribution": risk_distribution,
+        "risk_counts": risk_counts,
         "insights": insights,
         "trendInsight": trendInsight,
         "recommended_actions": recommended_actions,
+        "priority_summary": priority_summary,
         "filters": {"year": year, "section": section, "subject_id": subject_id, "subject_name": selected_subject_name},
         "faculty_scope": {
             "total_subjects": len(subject_ids),
