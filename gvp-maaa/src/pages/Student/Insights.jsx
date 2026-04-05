@@ -12,154 +12,318 @@ import {
   Bar,
 } from "recharts";
 
+const SAFE_ATTENDANCE = 75;
+const SAFE_MARK = 15;
+
+function isValidNumber(value) {
+  return Number.isFinite(value);
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function avg(values) {
+  if (!Array.isArray(values) || values.length === 0) return null;
+  const nums = values.filter((v) => isValidNumber(v));
+  if (!nums.length) return null;
+  return nums.reduce((sum, v) => sum + v, 0) / nums.length;
+}
+
+function calculateSlopePrediction(series, min = 0, max = 100) {
+  const values = (series || []).filter((v) => isValidNumber(v));
+  if (values.length < 2) return null;
+
+  const firstWindow = values.slice(0, Math.min(2, values.length));
+  const lastWindow = values.slice(-Math.min(2, values.length));
+  const firstAvg = avg(firstWindow);
+  const lastAvg = avg(lastWindow);
+
+  if (!isValidNumber(firstAvg) || !isValidNumber(lastAvg)) return null;
+
+  const slopeDelta = lastAvg - firstAvg;
+  const predicted = clamp(values[values.length - 1] + slopeDelta, min, max);
+
+  return {
+    slopeDelta: Number(slopeDelta.toFixed(1)),
+    predicted: Number(predicted.toFixed(1)),
+  };
+}
+
+function getMetricStatus(score) {
+  if (!isValidNumber(score)) return "INSUFFICIENT DATA";
+  return score >= 75 ? "GOOD" : "NEEDS IMPROVEMENT";
+}
+
 export default function Insights() {
   const [activeTab, setActiveTab] = useState("future");
 
   const studentData = useMemo(
     () => ({
       attendance: 68,
-      attendanceLastWeek: 80,
-      attendanceTrend: [82, 79, 76, 72, 68],
-      missedClasses: 6,
+      attendanceLastWeek: 82,
+      attendanceTrend: [84, 82, 79, 76, 73, 70, 68],
       mid1: 17,
       mid2: 14,
       cgpa: 7.4,
-      cgpaPrevious: 7.6,
-      placementReadiness: 72,
-      targetReadiness: 80,
-      skills: {
-        communication: 58,
-        aptitude: 66,
-        technical: 74,
-      },
+      missedClasses: 6,
+      semesterClassDays: 42,
     }),
     []
   );
 
-  const attendanceDelta = Number((studentData.attendance - studentData.attendanceLastWeek).toFixed(1));
-  const cgpaDelta = Number((studentData.cgpa - studentData.cgpaPrevious).toFixed(2));
-  const midDelta = Number((studentData.mid2 - studentData.mid1).toFixed(1));
+  const hasAttendance = isValidNumber(studentData.attendance);
+  const hasMid1 = isValidNumber(studentData.mid1);
+  const hasMid2 = isValidNumber(studentData.mid2);
 
-  const riskLevel = useMemo(() => {
-    const attendanceRisk = studentData.attendance < 75;
-    const marksRisk = studentData.mid2 < 15;
-    if (attendanceRisk && marksRisk) return "CRITICAL";
-    if (attendanceRisk || marksRisk || studentData.placementReadiness < studentData.targetReadiness) return "WARNING";
-    return "SAFE";
-  }, [studentData]);
+  const attendanceDrop =
+    hasAttendance &&
+    isValidNumber(studentData.attendanceLastWeek) &&
+    studentData.attendance < studentData.attendanceLastWeek;
+
+  const lowAttendance = hasAttendance && studentData.attendance < SAFE_ATTENDANCE;
+  const lowMid1 = hasMid1 && studentData.mid1 < SAFE_MARK;
+  const lowMid2 = hasMid2 && studentData.mid2 < SAFE_MARK;
+  const lowMarks = lowMid1 || lowMid2;
+  const missingMid2 = !hasMid2;
+
+  const riskConditionCount = [lowAttendance, lowMid1, lowMid2].filter(Boolean).length;
+  const riskLevel = riskConditionCount >= 2 ? "HIGH" : riskConditionCount === 1 ? "MEDIUM" : "LOW";
 
   const riskTone =
-    riskLevel === "CRITICAL"
+    riskLevel === "HIGH"
       ? "from-red-600 via-red-500 to-rose-500"
-      : riskLevel === "WARNING"
+      : riskLevel === "MEDIUM"
       ? "from-amber-500 via-yellow-500 to-orange-400"
       : "from-emerald-600 via-green-500 to-teal-500";
 
-  const attendanceStatus = studentData.attendance < 75 ? "Below safe level" : "Within safe level";
-  const marksStatus = studentData.mid2 < 15 ? "Below safe level" : "Within safe level";
+  const marksTrendLabel = (() => {
+    if (!hasMid1 || !hasMid2) return "Insufficient data to analyze";
+    if (studentData.mid2 > studentData.mid1) return "Improving";
+    if (studentData.mid2 < studentData.mid1) return "Declining";
+    return "No significant change";
+  })();
 
-  const prediction =
-    studentData.attendance < 75
-      ? "At current trend, your attendance may stay below 75% eligibility threshold."
-      : studentData.mid2 < 15
-      ? "At current trend, your marks may remain below safe performance level."
-      : "At current trend, your academic path remains stable.";
+  const placementStatus =
+    hasAttendance && hasMid1 && hasMid2
+      ? studentData.attendance >= SAFE_ATTENDANCE && studentData.mid1 >= SAFE_MARK && studentData.mid2 >= SAFE_MARK
+        ? "Placement Ready"
+        : "Needs Improvement"
+      : "Insufficient data to analyze";
 
-  const biggestWeakArea = useMemo(() => {
-    if (studentData.attendance < 75) return "Attendance";
-    if (studentData.mid2 < 15) return "Marks";
-    const skillPairs = Object.entries(studentData.skills);
-    const weakestSkill = skillPairs.sort((a, b) => a[1] - b[1])[0]?.[0] || "Skills";
-    return weakestSkill[0].toUpperCase() + weakestSkill.slice(1);
-  }, [studentData]);
-
-  const priorityInsight = useMemo(() => {
-    if (studentData.attendance < 75) {
-      const drop = Math.abs(attendanceDelta);
+  const topSummary = useMemo(() => {
+    const primaryProblem = (() => {
+      if (lowAttendance && attendanceDrop) {
+        return {
+          title: "Attendance drop",
+          detail: `Your attendance dropped from ${studentData.attendanceLastWeek}% to ${studentData.attendance}% and is below ${SAFE_ATTENDANCE}%.`,
+        };
+      }
+      if (lowMarks) {
+        const weakestMark = Math.min(
+          hasMid1 ? studentData.mid1 : Number.POSITIVE_INFINITY,
+          hasMid2 ? studentData.mid2 : Number.POSITIVE_INFINITY
+        );
+        return {
+          title: "Low marks",
+          detail: `Your weakest mid score is ${weakestMark}/30, below the safe level of ${SAFE_MARK}/30.`,
+        };
+      }
+      if (lowAttendance) {
+        return {
+          title: "Attendance drop",
+          detail: `Your attendance is ${studentData.attendance}%, below the safe level of ${SAFE_ATTENDANCE}%.`,
+        };
+      }
+      if (missingMid2) {
+        return {
+          title: "Missing Mid2",
+          detail: "Mid2 mark is missing, so performance risk cannot be measured correctly.",
+        };
+      }
       return {
-        message: `Your attendance dropped ${drop}% this week. If this continues, you may fall below eligibility.`,
-        impact: "May affect CGPA and placement eligibility.",
-        action: "Attend the next 5 classes without absence.",
+        title: "No critical issue",
+        detail: `Attendance is ${studentData.attendance}% and mid scores are ${studentData.mid1}/30, ${studentData.mid2}/30.`,
       };
-    }
-    if (studentData.mid2 < 15) {
-      return {
-        message: "Your mid marks are below safe level. Improvement is required to avoid risk.",
-        impact: "May affect internal marks and semester CGPA.",
-        action: "Revise weak subjects and complete one daily practice test.",
-      };
-    }
+    })();
+
+    const prediction = (() => {
+      if (lowAttendance) return "Risk of low CGPA and placement eligibility issues due to attendance below 75%.";
+      if (lowMarks) return "You may struggle in final exams because current mid scores are below safe level.";
+      if (missingMid2) return "Without Mid2 data, final performance risk cannot be estimated accurately.";
+      return "Current numbers indicate stable progress if attendance and marks stay at this level.";
+    })();
+
+    const immediateAction = (() => {
+      if (lowAttendance) return "Attend next 5 classes without fail.";
+      if (lowMarks) return "Revise 2 weak subjects this week and solve 1 past-paper section daily.";
+      if (missingMid2) return "Submit Mid2 immediately or complete the retest to unlock accurate analysis.";
+      return "Maintain attendance above 80% and revise one core subject each day this week.";
+    })();
+
     return {
-      message: "Your current trend is stable.",
-      impact: "Consistent effort protects CGPA and placement readiness.",
-      action: "Maintain attendance above 80% and continue structured revision.",
+      primaryProblem,
+      prediction,
+      immediateAction,
     };
-  }, [studentData, attendanceDelta]);
+  }, [
+    attendanceDrop,
+    hasMid1,
+    hasMid2,
+    lowAttendance,
+    lowMarks,
+    missingMid2,
+    studentData.attendance,
+    studentData.attendanceLastWeek,
+    studentData.mid1,
+    studentData.mid2,
+  ]);
 
-  const attendancePattern = attendanceDelta < -3 ? "Attendance drops mid-week." : "Attendance pattern is mostly stable.";
-  const marksPattern = midDelta < 0 ? "Marks are declining across exams." : "Marks trend is stable across exams.";
-
-  const cgpaTrendLabel = cgpaDelta < -0.05 ? "Declining" : cgpaDelta > 0.05 ? "Improving" : "Stable";
-
-  const placementMissingAreas = Object.entries(studentData.skills)
-    .filter(([, score]) => score < 75)
-    .map(([label]) => label[0].toUpperCase() + label.slice(1));
-
-  const actionPlan = {
-    next7Days: studentData.attendance < 75
-      ? [
-          "Attend every scheduled class this week.",
-          "Call class mentor once and confirm attendance recovery plan.",
-          "Revise weakest mid topic for 30 minutes daily.",
-        ]
-      : [
-          "Continue full attendance this week.",
-          "Solve one mid-level aptitude set daily.",
-        ],
-    next30Days: [
-      "Attend 2 mock interviews each week.",
-      "Complete one communication practice session every day (15 min).",
-      "Improve Mid 2 weak topics with weekly revision targets.",
-    ],
-    semesterGoal: [
-      "CGPA \\u2265 8.0",
-      "Attendance \\u2265 80%",
-      "Placement readiness \\u2265 80%",
-    ],
-  };
-
-  const attendanceChartData = studentData.attendanceTrend.map((value, index) => ({
-    day: `D${index + 1}`,
+  const attendanceChartData = (studentData.attendanceTrend || []).slice(-14).map((value, index, arr) => ({
+    day: `D${arr.length - index}`,
     attendance: value,
   }));
 
-  const hasAttendanceChart = attendanceChartData.length > 1;
-  const hasMidChart = Number.isFinite(studentData.mid1) && Number.isFinite(studentData.mid2);
+  const attendancePrediction = calculateSlopePrediction(
+    attendanceChartData.map((item) => item.attendance),
+    0,
+    100
+  );
+
+  const marksTrendData = hasMid1 && hasMid2
+    ? [
+        { exam: "Mid1", marks: studentData.mid1 },
+        { exam: "Mid2", marks: studentData.mid2 },
+      ]
+    : [];
+
+  const marksPredictionRaw = calculateSlopePrediction(
+    marksTrendData.map((item) => (item.marks / 30) * 100),
+    0,
+    100
+  );
+
+  const marksPrediction = marksPredictionRaw
+    ? {
+        percent: marksPredictionRaw.predicted,
+        marksOutOf30: Number(((marksPredictionRaw.predicted / 100) * 30).toFixed(1)),
+        deltaPercent: marksPredictionRaw.slopeDelta,
+      }
+    : null;
+
+  const diagnosis = useMemo(() => {
+    if (lowAttendance && attendanceDrop) {
+      return {
+        cause: `Attendance dropped from ${studentData.attendanceLastWeek}% to ${studentData.attendance}% in the recent window.`,
+        effect: "Less class exposure leads to weaker topic retention and slower revision speed.",
+        impact: "May reduce CGPA and placement chances if attendance remains below 75%.",
+      };
+    }
+
+    if (lowMarks) {
+      return {
+        cause: `Mid performance is low (Mid1: ${hasMid1 ? studentData.mid1 : "N/A"}/30, Mid2: ${hasMid2 ? studentData.mid2 : "N/A"}/30).`,
+        effect: "Core concepts are not translating into test performance under exam conditions.",
+        impact: "May reduce semester-end marks and increase final exam pressure.",
+      };
+    }
+
+    if (missingMid2) {
+      return {
+        cause: "Mid2 score is missing in the records.",
+        effect: "Academic trend cannot be validated against the second assessment.",
+        impact: "Risk predictions can be inaccurate until Mid2 is available.",
+      };
+    }
+
+    return {
+      cause: `Attendance is ${studentData.attendance}% and mid scores are ${studentData.mid1}/30, ${studentData.mid2}/30.`,
+      effect: "Current consistency is acceptable but still below strong placement benchmark in attendance.",
+      impact: "Without improvement, final outcomes may remain average instead of competitive.",
+    };
+  }, [attendanceDrop, hasMid1, hasMid2, lowAttendance, lowMarks, missingMid2, studentData]);
+
+  const aptitudeReadiness = hasMid1 && hasMid2 ? Number((((studentData.mid1 + studentData.mid2) / 60) * 100).toFixed(1)) : null;
+  const attendanceDiscipline = hasAttendance ? Number(studentData.attendance.toFixed(1)) : null;
+
+  const attendanceVariation = (() => {
+    if (!attendanceChartData.length) return null;
+    const values = attendanceChartData.map((item) => item.attendance);
+    const mean = avg(values);
+    if (!isValidNumber(mean)) return null;
+    const variance = values.reduce((sum, v) => sum + (v - mean) ** 2, 0) / values.length;
+    return Math.sqrt(variance);
+  })();
+
+  const markGap = hasMid1 && hasMid2 ? Math.abs(studentData.mid2 - studentData.mid1) : null;
+
+  const consistencyScore =
+    isValidNumber(attendanceVariation) && isValidNumber(markGap)
+      ? Number(clamp(100 - attendanceVariation * 2 - markGap * 3, 0, 100).toFixed(1))
+      : null;
+
+  const actionPlan = {
+    next7Days: [
+      lowAttendance
+        ? `Attend all classes for the next 7 days to recover from ${studentData.attendance}% toward ${SAFE_ATTENDANCE}%+.`
+        : `Protect attendance above ${SAFE_ATTENDANCE}% by attending every scheduled class this week.`,
+      lowMarks
+        ? `Revise 2 weak units this week and solve 1 timed question set daily to recover from Mid2 ${hasMid2 ? studentData.mid2 : "N/A"}/30.`
+        : "Solve 1 revision test every two days to sustain current marks.",
+      `Meet your mentor once this week and review ${studentData.missedClasses} missed classes out of ${studentData.semesterClassDays}.`,
+    ],
+    next30Days: [
+      lowMarks
+        ? "Improve upcoming test score by +5 marks through weekly mock papers and error tracking."
+        : "Maintain current marks and target +2 marks in the next internal test.",
+      lowAttendance
+        ? "Raise attendance above 80% within 30 days by avoiding non-critical absences."
+        : "Maintain attendance above 80% for the full month.",
+      "Complete 4 aptitude practice sets per week to support placement preparation.",
+    ],
+    semesterGoal: [
+      "Achieve CGPA >= 8.0 by maintaining weekly revision targets.",
+      "Maintain attendance >= 85% by semester end.",
+      "Keep every major assessment at or above 20/30 for stronger placement readiness.",
+    ],
+  };
 
   return (
     <div className="space-y-10">
 
-      {/* ================= HERO ================= */}
       <div className={`rounded-3xl p-8 bg-gradient-to-br ${riskTone} text-white`}>
-        <h1 className="text-3xl font-semibold">🧠 Personal Insights</h1>
-        <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
-          <div className="rounded-xl bg-white/15 px-4 py-3">
-            <p className="text-white/80">Risk Level</p>
-            <p className="text-lg font-semibold">{riskLevel}</p>
-          </div>
-          <div className="rounded-xl bg-white/15 px-4 py-3">
-            <p className="text-white/80">Attendance</p>
-            <p className="text-lg font-semibold">{studentData.attendance}% ({attendanceStatus})</p>
-          </div>
-          <div className="rounded-xl bg-white/15 px-4 py-3">
-            <p className="text-white/80">Mid Marks</p>
-            <p className="text-lg font-semibold">{studentData.mid2} ({marksStatus})</p>
-          </div>
+        <h1 className="text-3xl font-semibold">Your Academic Status</h1>
+        <p className="mt-2 text-sm text-white/90">
+          AI Coach summary based on attendance, Mid1, Mid2, and recent trend data.
+        </p>
+
+        <div className="mt-5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 text-sm">
+          <SummaryCard
+            title="Current Risk"
+            value={riskLevel}
+            detail={`Triggered conditions: ${riskConditionCount}/3 (Attendance < ${SAFE_ATTENDANCE}%, Mid1 < ${SAFE_MARK}, Mid2 < ${SAFE_MARK}).`}
+          />
+
+          <SummaryCard
+            title="Primary Problem"
+            value={topSummary.primaryProblem.title}
+            detail={topSummary.primaryProblem.detail}
+          />
+
+          <SummaryCard
+            title="What Will Happen"
+            value="Prediction"
+            detail={topSummary.prediction}
+          />
+
+          <SummaryCard
+            title="What To Do Now"
+            value="Immediate Action"
+            detail={topSummary.immediateAction}
+          />
         </div>
-        <p className="mt-4 text-sm text-white/90">Prediction: {prediction}</p>
       </div>
 
-      {/* ================= NAV ================= */}
       <div className="flex gap-3 overflow-x-auto">
         {[
           { id: "future", label: "Future Snapshot" },
@@ -182,96 +346,101 @@ export default function Insights() {
         ))}
       </div>
 
-      {/* ================= FUTURE SNAPSHOT ================= */}
       {activeTab === "future" && (
         <FutureSnapshot
-          cgpaTrendLabel={cgpaTrendLabel}
+          marksTrendLabel={marksTrendLabel}
+          placementStatus={placementStatus}
+          riskLevel={riskLevel}
           attendance={studentData.attendance}
-          attendanceDelta={attendanceDelta}
-          placementReadiness={studentData.placementReadiness}
-          targetReadiness={studentData.targetReadiness}
-          biggestWeakArea={biggestWeakArea}
-          priorityInsight={priorityInsight}
+          mid1={studentData.mid1}
+          mid2={studentData.mid2}
+          riskConditionCount={riskConditionCount}
         />
       )}
 
-      {/* ================= WHY THIS IS HAPPENING ================= */}
       {activeTab === "trends" && (
-        <InsightBlock title="🧠 Why This Is Happening">
-          <CauseEffect
-            cause={`Missed ${studentData.missedClasses} classes and irregular attendance pattern.`}
-            effect={[
-              "CGPA growth is slowing.",
-              "Internal marks are entering a risk zone.",
-            ]}
-            pattern={[attendancePattern, marksPattern]}
+        <InsightBlock title="Why This Is Happening">
+          <CauseEffectImpact
+            cause={diagnosis.cause}
+            effect={diagnosis.effect}
+            impact={diagnosis.impact}
           />
 
-          {hasAttendanceChart && (
-            <AttendanceTrendChart data={attendanceChartData} />
-          )}
+          <AttendanceTrendChart
+            data={attendanceChartData}
+            prediction={attendancePrediction}
+          />
 
-          {hasMidChart && (
-            <MidComparisonChart mid1={studentData.mid1} mid2={studentData.mid2} />
-          )}
+          <MarksTrendChart
+            data={marksTrendData}
+            prediction={marksPrediction}
+          />
         </InsightBlock>
       )}
 
-      {/* ================= PLACEMENT INTELLIGENCE ================= */}
       {activeTab === "placements" && (
-        <InsightBlock title="🎯 Placement Intelligence">
-          <IntelligenceCard
-            title={`Placement Readiness: ${studentData.placementReadiness}%`}
-            points={[
-              studentData.placementReadiness < studentData.targetReadiness
-                ? `Below target (${studentData.targetReadiness}%).`
-                : "At or above target.",
-              `Missing Areas: ${placementMissingAreas.length ? placementMissingAreas.join(", ") : "None"}`,
-            ]}
+        <InsightBlock title="Placement Intelligence">
+          <MetricCard
+            title="Aptitude Readiness"
+            score={aptitudeReadiness}
+            status={getMetricStatus(aptitudeReadiness)}
+            reason={
+              hasMid1 && hasMid2
+                ? `Derived from Mid1 ${studentData.mid1}/30 and Mid2 ${studentData.mid2}/30.`
+                : "Insufficient data to analyze"
+            }
+            action={
+              hasMid1 && hasMid2
+                ? aptitudeReadiness >= 75
+                  ? "Maintain weekly aptitude practice with timed sets."
+                  : "Increase aptitude practice to 4 timed sets per week."
+                : "Upload missing marks to unlock this metric."
+            }
           />
 
-          <ActionCard
-            title="Priority Placement Actions"
-            actions={[
-              "Practice HR questions for 15 minutes daily.",
-              "Attend 2 mock interviews this week.",
-              "Solve one aptitude section every day.",
-            ]}
+          <MetricCard
+            title="Attendance Discipline"
+            score={attendanceDiscipline}
+            status={getMetricStatus(attendanceDiscipline)}
+            reason={
+              hasAttendance
+                ? `Current attendance is ${studentData.attendance}% against ${SAFE_ATTENDANCE}% safe threshold.`
+                : "Insufficient data to analyze"
+            }
+            action={
+              hasAttendance
+                ? attendanceDiscipline >= 75
+                  ? "Keep attendance above 80% for placement eligibility safety."
+                  : "Attend all upcoming classes until attendance crosses 75%."
+                : "Sync attendance records to calculate discipline score."
+            }
+          />
+
+          <MetricCard
+            title="Consistency Score"
+            score={consistencyScore}
+            status={getMetricStatus(consistencyScore)}
+            reason={
+              isValidNumber(consistencyScore)
+                ? `Based on attendance variability and Mid1-Mid2 gap (${isValidNumber(markGap) ? markGap : "N/A"} marks).`
+                : "Insufficient data to analyze"
+            }
+            action={
+              isValidNumber(consistencyScore)
+                ? consistencyScore >= 75
+                  ? "Maintain current study rhythm and attendance discipline."
+                  : "Use weekly review to reduce score fluctuations across tests and attendance."
+                : "Provide complete trend data for consistency analysis."
+            }
           />
         </InsightBlock>
       )}
 
-      {/* ================= ACTION PLAN ================= */}
       {activeTab === "actions" && (
         <div className="space-y-6">
-
-          <ActionCard
-            title="🔴 Next 7 Days"
-            actions={actionPlan.next7Days}
-          />
-
-          <ActionCard
-            title="🟡 Next 30 Days"
-            actions={actionPlan.next30Days}
-          />
-
-          <ActionCard
-            title="🟢 Semester Focus"
-            actions={actionPlan.semesterGoal}
-          />
-
-          <div className="rounded-3xl p-6 bg-white/85 border border-white/60">
-            <h3 className="font-semibold text-slate-900">Focus Now</h3>
-            <p className="mt-2 text-sm text-slate-700">Focus on {biggestWeakArea}</p>
-            <p className="mt-1 text-sm text-slate-600">
-              {biggestWeakArea === "Attendance"
-                ? "Low attendance has the highest impact on CGPA and placement eligibility."
-                : biggestWeakArea === "Marks"
-                ? "Low marks are the fastest indicator of academic risk."
-                : "Skill gaps are limiting placement readiness despite academic progress."}
-            </p>
-          </div>
-
+          <ActionCard title="Next 7 Days" actions={actionPlan.next7Days} />
+          <ActionCard title="Next 30 Days" actions={actionPlan.next30Days} />
+          <ActionCard title="Semester Goal" actions={actionPlan.semesterGoal} />
         </div>
       )}
 
@@ -279,40 +448,57 @@ export default function Insights() {
   );
 }
 
-/* ================= COMPONENTS ================= */
+function SummaryCard({ title, value, detail }) {
+  return (
+    <div className="rounded-xl bg-white/15 px-4 py-4 border border-white/20">
+      <p className="text-white/80 text-xs uppercase tracking-wide">{title}</p>
+      <p className="text-lg font-semibold mt-1">{value}</p>
+      <p className="text-sm text-white/90 mt-2">{detail}</p>
+    </div>
+  );
+}
 
 function FutureSnapshot({
-  cgpaTrendLabel,
+  marksTrendLabel,
+  placementStatus,
+  riskLevel,
   attendance,
-  attendanceDelta,
-  placementReadiness,
-  targetReadiness,
-  biggestWeakArea,
-  priorityInsight,
+  mid1,
+  mid2,
+  riskConditionCount,
 }) {
+  const hasMarks = isValidNumber(mid1) && isValidNumber(mid2);
+
   return (
     <div className="rounded-3xl p-8 bg-white/80 border border-white/50 space-y-6">
-      <h2 className="text-xl font-semibold">🔮 Your Future Snapshot</h2>
+      <h2 className="text-xl font-semibold">Your Future Snapshot</h2>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <SnapshotItem label="CGPA Trend" value={cgpaTrendLabel === "Improving" ? "↑ Improving" : cgpaTrendLabel === "Declining" ? "↓ Declining" : "→ Stable"} />
-        <SnapshotItem label="Attendance Trend" value={`${attendance}% (${attendanceDelta >= 0 ? "↑" : "↓"} ${Math.abs(attendanceDelta)}% this week)`} />
         <SnapshotItem
-          label="Placement Readiness"
-          value={`${placementReadiness}% ${placementReadiness < targetReadiness ? "(Below target)" : "(On target)"}`}
+          label="Academics"
+          value={marksTrendLabel}
+          whyThisMatters={
+            hasMarks
+              ? `Mid1 ${mid1}/30 to Mid2 ${mid2}/30 indicates your exam direction.`
+              : "Insufficient data to analyze"
+          }
         />
-      </div>
 
-      <div className="rounded-2xl bg-slate-50 p-5">
-        <p className="text-sm font-medium text-slate-700">Biggest Weak Area</p>
-        <p className="text-sm text-slate-600 mt-1">{biggestWeakArea}</p>
-      </div>
+        <SnapshotItem
+          label="Placement"
+          value={placementStatus}
+          whyThisMatters={
+            isValidNumber(attendance) && hasMarks
+              ? `Attendance ${attendance}% and marks decide shortlist readiness.`
+              : "Insufficient data to analyze"
+          }
+        />
 
-      <div className="rounded-2xl bg-indigo-50 p-5">
-        <p className="text-sm font-medium text-indigo-700">Priority Insight</p>
-        <p className="text-sm text-indigo-600 mt-1">{priorityInsight.message}</p>
-        <p className="text-sm text-indigo-700 mt-2">Impact: {priorityInsight.impact}</p>
-        <p className="text-sm font-medium text-indigo-800 mt-2">Action: {priorityInsight.action}</p>
+        <SnapshotItem
+          label="Risk Level"
+          value={riskLevel}
+          whyThisMatters={`Risk is computed from ${riskConditionCount}/3 trigger conditions.`}
+        />
       </div>
     </div>
   );
@@ -327,95 +513,112 @@ function InsightBlock({ title, children }) {
   );
 }
 
-function SnapshotItem({ label, value }) {
+function SnapshotItem({ label, value, whyThisMatters }) {
   return (
     <div className="rounded-2xl p-5 bg-gray-50 border border-gray-200">
       <p className="text-sm text-gray-500">{label}</p>
-      <p className="text-lg font-semibold text-gray-800">{value}</p>
+      <p className="text-lg font-semibold text-gray-800 mt-1">{value}</p>
+      <p className="text-xs text-gray-600 mt-2">Why this matters: {whyThisMatters}</p>
     </div>
   );
 }
 
-function CauseEffect({ cause, effect, pattern = [] }) {
+function CauseEffectImpact({ cause, effect, impact }) {
+  return (
+    <div className="rounded-2xl p-5 bg-gray-50 border border-gray-200 space-y-3">
+      <div>
+        <p className="text-sm font-medium text-gray-700">Cause</p>
+        <p className="text-sm text-gray-600">{cause}</p>
+      </div>
+      <div>
+        <p className="text-sm font-medium text-gray-700">Effect</p>
+        <p className="text-sm text-gray-600">{effect}</p>
+      </div>
+      <div>
+        <p className="text-sm font-medium text-gray-700">Impact</p>
+        <p className="text-sm text-gray-600">{impact}</p>
+      </div>
+    </div>
+  );
+}
+
+function AttendanceTrendChart({ data, prediction }) {
+  const hasData = Array.isArray(data) && data.length >= 2;
+
   return (
     <div className="rounded-2xl p-5 bg-gray-50 border border-gray-200">
-      <p className="text-sm font-medium text-gray-700">Cause</p>
-      <p className="text-sm text-gray-600">{cause}</p>
-      <p className="text-sm font-medium text-gray-700 mt-3">Effect</p>
-      <ul className="list-disc ml-5 text-sm text-gray-600">
-        {effect.map((e, i) => (
-          <li key={i}>{e}</li>
-        ))}
-      </ul>
-      {Array.isArray(pattern) && pattern.length > 0 && (
+      <p className="text-sm font-medium text-gray-700 mb-2">Attendance Trend (last {Math.min(data.length || 0, 14)} days)</p>
+
+      {!hasData ? (
+        <p className="text-sm text-gray-600">Not enough data to analyze trend</p>
+      ) : (
         <>
-          <p className="text-sm font-medium text-gray-700 mt-3">Pattern</p>
-          <ul className="list-disc ml-5 text-sm text-gray-600">
-            {pattern.map((p, i) => (
-              <li key={i}>{p}</li>
-            ))}
-          </ul>
+          <div className="h-64 bg-white rounded-xl p-3">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={data} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="day" />
+                <YAxis domain={[0, 100]} />
+                <Tooltip formatter={(value) => [`${value}%`, "Attendance"]} />
+                <ReferenceLine y={75} stroke="#ef4444" strokeDasharray="4 4" label={{ value: "75%", position: "insideTopRight", fill: "#ef4444" }} />
+                <Line type="monotone" dataKey="attendance" stroke="#2563eb" strokeWidth={3} dot={{ r: 4 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+
+          <p className="text-sm text-gray-700 mt-2">
+            Trend prediction: {prediction ? `${prediction.predicted}% (slope delta ${prediction.slopeDelta})` : "Insufficient data to analyze"}
+          </p>
         </>
       )}
     </div>
   );
 }
 
-function AttendanceTrendChart({ data }) {
+function MarksTrendChart({ data, prediction }) {
+  const hasData = Array.isArray(data) && data.length >= 2;
+
   return (
     <div className="rounded-2xl p-5 bg-gray-50 border border-gray-200">
-      <p className="text-sm font-medium text-gray-700 mb-2">Attendance Trend</p>
-      <div className="h-64 bg-white rounded-xl p-3">
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={data} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} />
-            <XAxis dataKey="day" />
-            <YAxis domain={[0, 100]} />
-            <Tooltip formatter={(value) => [`${value}%`, "Attendance"]} />
-            <ReferenceLine y={75} stroke="#ef4444" strokeDasharray="4 4" label={{ value: "75%", position: "insideTopRight", fill: "#ef4444" }} />
-            <Line type="monotone" dataKey="attendance" stroke="#2563eb" strokeWidth={3} dot={{ r: 4 }} />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
+      <p className="text-sm font-medium text-gray-700 mb-2">Marks Trend (Mid1 vs Mid2)</p>
+
+      {!hasData ? (
+        <p className="text-sm text-gray-600">Not enough data to analyze trend</p>
+      ) : (
+        <>
+          <div className="h-64 bg-white rounded-xl p-3">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={data} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="exam" />
+                <YAxis domain={[0, 30]} />
+                <Tooltip formatter={(value) => [value, "Marks"]} />
+                <Bar dataKey="marks" fill="#4f46e5" radius={[8, 8, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
+          <p className="text-sm text-gray-700 mt-2">
+            Trend prediction: {prediction ? `${prediction.marksOutOf30}/30 (~${prediction.percent}%)` : "Insufficient data to analyze"}
+          </p>
+        </>
+      )}
     </div>
   );
 }
 
-function MidComparisonChart({ mid1, mid2 }) {
-  const data = [
-    { name: "Mid 1", marks: mid1 },
-    { name: "Mid 2", marks: mid2 },
-  ];
-  const trendLabel = mid2 > mid1 ? "Improved" : mid2 < mid1 ? "Declined" : "Stable";
-
+function MetricCard({ title, score, status, reason, action }) {
   return (
     <div className="rounded-2xl p-5 bg-gray-50 border border-gray-200">
-      <p className="text-sm font-medium text-gray-700 mb-2">Mid 1 vs Mid 2 Comparison</p>
-      <div className="h-64 bg-white rounded-xl p-3">
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} />
-            <XAxis dataKey="name" />
-            <YAxis domain={[0, 30]} />
-            <Tooltip formatter={(value) => [value, "Marks"]} />
-            <Bar dataKey="marks" fill="#7c3aed" radius={[8, 8, 0, 0]} />
-          </BarChart>
-        </ResponsiveContainer>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm font-medium text-gray-700">{title}</p>
+        <p className="text-sm font-semibold text-gray-800">
+          {isValidNumber(score) ? `${score}/100` : "Insufficient data to analyze"}
+        </p>
       </div>
-      <p className="text-sm text-gray-700 mt-2">Result: {trendLabel}</p>
-    </div>
-  );
-}
-
-function IntelligenceCard({ title, points }) {
-  return (
-    <div className="rounded-2xl p-5 bg-gray-50 border border-gray-200">
-      <p className="text-sm font-medium text-gray-700">{title}</p>
-      <ul className="mt-2 list-disc ml-5 text-sm text-gray-600">
-        {points.map((p, i) => (
-          <li key={i}>{p}</li>
-        ))}
-      </ul>
+      <p className="text-xs font-semibold mt-2 text-gray-700">Status: {status}</p>
+      <p className="text-sm text-gray-600 mt-2">Reason: {reason}</p>
+      <p className="text-sm text-gray-700 mt-2">Action: {action}</p>
     </div>
   );
 }
@@ -425,8 +628,8 @@ function ActionCard({ title, actions }) {
     <div className="rounded-3xl p-6 bg-gradient-to-br from-indigo-50 to-purple-50 border border-white/50">
       <h3 className="font-semibold mb-3">{title}</h3>
       <ul className="space-y-2 text-sm text-gray-700">
-        {actions.map((a, i) => (
-          <li key={i}>✔ {a}</li>
+        {actions.map((action, index) => (
+          <li key={index}>- {action}</li>
         ))}
       </ul>
     </div>
