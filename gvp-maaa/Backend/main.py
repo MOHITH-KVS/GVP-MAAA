@@ -4528,6 +4528,322 @@ def get_my_marks(
 
 
 # =========================
+# STUDENT – INSIGHTS (DATA-DRIVEN)
+# =========================
+@app.get("/student/insights")
+def get_student_insights(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "student":
+        raise HTTPException(status_code=403, detail="Student only")
+
+    student_id = current_user["user_id"]
+
+    attendance_rows = (
+        db.query(Attendance.attendance_date, Attendance.status)
+        .filter(Attendance.student_id == student_id)
+        .order_by(Attendance.attendance_date.asc())
+        .all()
+    )
+
+    total_attendance = len(attendance_rows)
+    present_attendance = sum(1 for row in attendance_rows if bool(row.status))
+    attendance_percent = round((present_attendance / total_attendance) * 100, 2) if total_attendance > 0 else None
+
+    attendance_by_day = {}
+    for row in attendance_rows:
+        day = row.attendance_date.isoformat() if row.attendance_date else None
+        if not day:
+            continue
+        if day not in attendance_by_day:
+            attendance_by_day[day] = {"present": 0, "total": 0}
+
+        attendance_by_day[day]["total"] += 1
+        if bool(row.status):
+            attendance_by_day[day]["present"] += 1
+
+    ordered_days = sorted(attendance_by_day.keys())
+    attendance_trend_all = []
+    for day in ordered_days:
+        day_total = attendance_by_day[day]["total"]
+        day_present = attendance_by_day[day]["present"]
+        if day_total > 0:
+            attendance_trend_all.append(round((day_present / day_total) * 100, 2))
+
+    attendance_trend = attendance_trend_all[-7:]
+    previous_attendance_window = attendance_trend_all[-14:-7]
+
+    mark_rows = (
+        db.query(Mark)
+        .filter(Mark.student_id == student_id)
+        .order_by(Mark.created_at.asc())
+        .all()
+    )
+
+    def _normalize_exam_name(exam_name):
+        if not exam_name:
+            return ""
+        return str(exam_name).strip().lower().replace("-", "").replace(" ", "")
+
+    def _to_float(value):
+        try:
+            if value is None:
+                return None
+            return float(value)
+        except Exception:
+            return None
+
+    mid1_values = []
+    mid2_values = []
+    marks_trend_values = []
+
+    for row in mark_rows:
+        exam_key = _normalize_exam_name(row.exam)
+        marks_value = _to_float(row.marks)
+
+        if exam_key in ["mid1", "mid01"] and marks_value is not None:
+            mid1_values.append(marks_value)
+            marks_trend_values.append(marks_value)
+        elif exam_key in ["mid2", "mid02"] and marks_value is not None:
+            mid2_values.append(marks_value)
+            marks_trend_values.append(marks_value)
+
+    if not mid1_values:
+        for row in mark_rows:
+            val = _to_float(row.mid1)
+            if val is not None and val > 0:
+                mid1_values.append(val)
+
+    if not mid2_values:
+        for row in mark_rows:
+            val = _to_float(row.mid2)
+            if val is not None and val > 0:
+                mid2_values.append(val)
+
+    mid1 = round(sum(mid1_values) / len(mid1_values), 2) if mid1_values else None
+    mid2 = round(sum(mid2_values) / len(mid2_values), 2) if mid2_values else None
+
+    marks_trend = marks_trend_values[-7:]
+    if len(marks_trend) < 2:
+        marks_trend = []
+        if mid1 is not None:
+            marks_trend.append(mid1)
+        if mid2 is not None:
+            marks_trend.append(mid2)
+
+    high_risk = ((attendance_percent is not None and attendance_percent < 65) or (mid2 is not None and mid2 < 15))
+    medium_risk = ((attendance_percent is not None and attendance_percent < 75) or (mid1 is not None and mid1 < 15))
+
+    if high_risk:
+        risk_level = "HIGH"
+    elif medium_risk:
+        risk_level = "MEDIUM"
+    else:
+        risk_level = "LOW"
+
+    if attendance_percent is not None and attendance_percent < 75:
+        primary_issue = "Low attendance"
+    elif mid1 is not None and mid2 is not None and mid2 < mid1:
+        primary_issue = "Declining performance"
+    elif mid1 is not None and mid1 < 15:
+        primary_issue = "Low marks"
+    else:
+        primary_issue = "No major issues"
+
+    attendance_decreasing = False
+    if len(attendance_trend) >= 2:
+        first_span = attendance_trend[:2]
+        last_span = attendance_trend[-2:]
+        first_avg = sum(first_span) / len(first_span)
+        last_avg = sum(last_span) / len(last_span)
+        attendance_decreasing = last_avg < first_avg
+
+    marks_decreasing = (mid1 is not None and mid2 is not None and mid2 < mid1)
+
+    attendance_previous = round(sum(previous_attendance_window) / len(previous_attendance_window), 2) if previous_attendance_window else None
+    attendance_change = round(attendance_percent - attendance_previous, 2) if attendance_percent is not None and attendance_previous is not None else None
+    marks_progress = None
+    if mid1 is not None and mid2 is not None:
+        if mid2 > mid1:
+            marks_progress = "improved"
+        elif mid2 < mid1:
+            marks_progress = "declined"
+        else:
+            marks_progress = "stable"
+
+    focus_now = "Attendance" if attendance_percent is not None and attendance_percent < 75 else "Marks" if ((mid1 is not None and mid1 < 15) or (mid2 is not None and mid2 < 15) or marks_decreasing) else "Consistency"
+    focus_reason = (
+        "Improving attendance will have the highest impact on CGPA"
+        if focus_now == "Attendance"
+        else "Improving marks will have the highest impact on final performance"
+        if focus_now == "Marks"
+        else "Consistency will protect both CGPA and placement readiness"
+    )
+
+    weekly_goal = []
+    if attendance_percent is not None and attendance_percent < 75:
+        weekly_goal.append("Attend all classes this week")
+    if (mid1 is not None and mid1 < 15) or (mid2 is not None and mid2 < 15):
+        weekly_goal.append("Revise weak subjects")
+    if marks_decreasing:
+        weekly_goal.append("Practice previous exam questions")
+    if not weekly_goal:
+        weekly_goal = ["Keep attendance above 80% this week", "Solve one revision set before the next class"]
+    weekly_goal = weekly_goal[:3]
+
+    consequences = []
+    if attendance_percent is not None and attendance_percent < 75:
+        consequences.append("May lose internal marks")
+    if (mid1 is not None and mid1 < 15) or (mid2 is not None and mid2 < 15):
+        consequences.append("Risk of low CGPA")
+    if marks_decreasing:
+        consequences.append("Performance may worsen in finals")
+    if not consequences:
+        consequences.append("Readiness margin will shrink if attendance or marks drop")
+
+    if attendance_decreasing:
+        prediction = "Attendance likely to drop below 75%"
+    elif marks_decreasing:
+        prediction = "Performance may decline in next exams"
+    else:
+        prediction = "Performance is stable"
+
+    actions = []
+    if attendance_percent is not None and attendance_percent < 75:
+        actions.append("Attend all classes for next 5 days")
+
+    low_mid1 = mid1 is not None and mid1 < 15
+    low_mid2 = mid2 is not None and mid2 < 15
+    if low_mid1 or low_mid2:
+        actions.append("Revise weak subjects and practice questions")
+
+    if marks_decreasing:
+        actions.append("Focus on understanding concepts")
+
+    if not actions:
+        actions.append("Maintain current attendance and marks consistency")
+
+    average_mid = None
+    if mid1 is not None and mid2 is not None:
+        average_mid = (mid1 + mid2) / 2
+    elif mid1 is not None:
+        average_mid = mid1
+    elif mid2 is not None:
+        average_mid = mid2
+
+    readiness = round((attendance_percent + average_mid) / 2, 2) if attendance_percent is not None and average_mid is not None else None
+    aptitude = round((mid1 / 30) * 100, 2) if mid1 is not None else None
+
+    consistency = None
+    if len(attendance_trend) >= 2:
+        trend_mean = sum(attendance_trend) / len(attendance_trend)
+        variance = sum((value - trend_mean) ** 2 for value in attendance_trend) / len(attendance_trend)
+        consistency = round(max(0, min(100, 100 - variance)), 2)
+
+    if attendance_percent is None or mid1 is None or mid2 is None:
+        placement_status = "INSUFFICIENT DATA"
+        placement_reasons = ["Insufficient data to analyze"]
+        placement_gaps = []
+        placement_weekly = []
+        placement_monthly = []
+        placement_timeline = "Insufficient data to analyze"
+        placement_risk_if_ignored = []
+    else:
+        average_mid = round((mid1 + mid2) / 2, 2)
+
+        if attendance_percent >= 80 and average_mid >= 18:
+            placement_status = "READY"
+        elif attendance_percent >= 70 and average_mid >= 15:
+            placement_status = "BORDERLINE"
+        else:
+            placement_status = "NOT READY"
+
+        placement_reasons = []
+        if attendance_percent < 75:
+            placement_reasons.append("Attendance below required level")
+        if average_mid < 15:
+            placement_reasons.append("Low academic performance")
+        if mid2 < mid1:
+            placement_reasons.append("Declining performance trend")
+        if not placement_reasons:
+            placement_reasons.append("Attendance and marks are within placement thresholds")
+
+        placement_gaps = []
+        if attendance_percent < 80:
+            placement_gaps.append({"metric": "Attendance", "current": attendance_percent, "target": 80})
+        if average_mid < 18:
+            placement_gaps.append({"metric": "Marks", "current": average_mid, "target": 18})
+
+        placement_weekly = []
+        if attendance_percent < 75:
+            placement_weekly.append("Attend all classes this week")
+        if average_mid < 18:
+            placement_weekly.append("Revise weak subjects")
+        if mid2 < mid1:
+            placement_weekly.append("Focus on understanding concepts")
+        if not placement_weekly:
+            placement_weekly.append("Maintain current attendance and revision rhythm")
+
+        placement_monthly = ["Improve marks by +5", "Maintain attendance above 80%"]
+
+        if placement_status == "NOT READY":
+            placement_timeline = "4–6 weeks to reach placement readiness"
+        elif placement_status == "BORDERLINE":
+            placement_timeline = "2–3 weeks to become fully ready"
+        else:
+            placement_timeline = "Currently ready"
+
+        placement_risk_if_ignored = []
+        if attendance_percent < 75:
+            placement_risk_if_ignored.append("May lose internal marks")
+        if average_mid < 15:
+            placement_risk_if_ignored.append("Low CGPA risk")
+        if not placement_risk_if_ignored:
+            placement_risk_if_ignored.append("Could lose readiness margin if attendance or marks drop")
+
+    return {
+        "attendance": attendance_percent,
+        "attendance_trend": attendance_trend,
+        "mid1": mid1,
+        "mid2": mid2,
+        "marks_trend": marks_trend,
+        "risk_level": risk_level,
+        "primary_issue": primary_issue,
+        "prediction": prediction,
+        "weekly_goal": weekly_goal,
+        "progress_this_week": {
+            "attendance_current": attendance_percent,
+            "attendance_previous": attendance_previous,
+            "attendance_change": attendance_change,
+            "marks_status": marks_progress,
+        },
+        "focus_now": {
+            "metric": focus_now,
+            "reason": focus_reason,
+        },
+        "consequences": consequences,
+        "actions": actions,
+        "placement_analysis": {
+            "status": placement_status,
+            "reasons": placement_reasons,
+            "gaps": placement_gaps,
+            "roadmap": {
+                "weekly": placement_weekly,
+                "monthly": placement_monthly,
+            },
+            "timeline": placement_timeline,
+            "risk_if_ignored": placement_risk_if_ignored,
+        },
+        "placement": {
+            "readiness": readiness,
+            "aptitude": aptitude,
+            "consistency": consistency,
+        }
+    }
+
+
+# =========================
 # MARK ALERT AS READ
 # =========================
 @app.patch("/alerts/{alert_id}/read")
