@@ -658,3 +658,24 @@ class StudentMarkResponse(BaseModel):
     total: float
     sgpa: float
     cgpa: float
+
+
+class TaskCompleteRequest(BaseModel):
+    type: str
+    priority: str
+    verificationType: str
+
+
+class StudentXpResponse(BaseModel):
+    total_xp: int
+
+
+class StudentStreakResponse(BaseModel):
+    streak_days: int
+
+
+class LeaderboardItem(BaseModel):
+    student_id: int
+    name: str
+    xp: int
+    rank: int

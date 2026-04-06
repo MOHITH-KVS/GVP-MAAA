@@ -14,10 +14,9 @@ import schemas  # type: ignore
 from datetime import datetime, timedelta
 from database import engine  # type: ignore
 try:
-    from ml.risk_engine import calculate_risk, calculate_risk_movement, calculate_risk_score, get_attendance_trend_label, get_student_attendance_trend, predict_future_risk
+    from ml.risk_engine import calculate_risk_movement, calculate_risk_score, get_attendance_trend_label, get_student_attendance_trend, predict_future_risk
     from ml.prediction_engine import forecast_performance
 except ImportError:
-    def calculate_risk(*args, **kwargs): return {"score": 0, "risk_score": 0, "level": "LOW", "reasons": [], "risk_breakdown": [], "actions": []}
     def calculate_risk_movement(*args, **kwargs): return "stable"
     def calculate_risk_score(*args, **kwargs): return (0.0, [])
     def get_attendance_trend_label(*args, **kwargs): return "Fluctuating"
@@ -28,10 +27,6 @@ try:
     from ml.recommendation_engine import generate_recommendations
 except ImportError:
     def generate_recommendations(*args, **kwargs): return []
-try:
-    from ml.alert_engine import generate_alerts
-except ImportError:
-    def generate_alerts(*args, **kwargs): return []
 from models import (  # type: ignore
     Base,
     Alert,
@@ -54,7 +49,9 @@ from models import (  # type: ignore
     ExternalEventSubmission,
     SystemSetting,
     SettingsAuditLog,
-    Mark
+    Mark,
+    StudentProgress,
+    TaskLog
 
 )
 
@@ -80,6 +77,8 @@ from reportlab.pdfbase.pdfmetrics import stringWidth  # type: ignore
 from reportlab.pdfgen import canvas  # type: ignore
 from jose import JWTError, jwt  # type: ignore
 from datetime import date, timedelta
+from services.risk_engine import get_student_risk
+from services.alert_rules import generate_student_alerts, NO_DATA_MESSAGE
 
 
 
@@ -419,6 +418,472 @@ def get_report_format(module_name: str):
     if isinstance(value, str) and value.strip().lower() in {"pdf", "excel", "docx"}:
         return value.strip().lower()
     return get_default_format_for_module(module_name)
+
+
+def _normalize_exam_name(exam_name: Optional[str]) -> str:
+    if not exam_name:
+        return ""
+    return str(exam_name).strip().lower().replace("-", "").replace(" ", "")
+
+
+def _to_float(value) -> float:
+    try:
+        if value is None:
+            return 0.0
+        return float(value)
+    except Exception:
+        return 0.0
+
+
+def _compute_attendance_percentage(db: Session, student_id: int) -> float:
+    rows = db.query(Attendance.status).filter(Attendance.student_id == student_id).all()
+    total = len(rows)
+    if total == 0:
+        return 0.0
+    present = sum(1 for row in rows if bool(row.status))
+    return round((present / total) * 100, 2)
+
+
+def _compute_marks_score(db: Session, student_id: int) -> float:
+    rows = (
+        db.query(Mark.exam, Mark.marks)
+        .filter(Mark.student_id == student_id)
+        .order_by(Mark.created_at.asc())
+        .all()
+    )
+
+    mid1_values = []
+    mid2_values = []
+    assignment_values = []
+
+    for row in rows:
+        exam_key = _normalize_exam_name(row.exam)
+        marks_value = _to_float(row.marks)
+        if marks_value <= 0:
+            continue
+
+        if exam_key in ["mid1", "mid01"]:
+            mid1_values.append(marks_value)
+        elif exam_key in ["mid2", "mid02"]:
+            mid2_values.append(marks_value)
+        elif "assignment" in exam_key:
+            assignment_values.append(marks_value)
+
+    mid1_avg = sum(mid1_values) / len(mid1_values) if mid1_values else 0.0
+    mid2_avg = sum(mid2_values) / len(mid2_values) if mid2_values else 0.0
+    assignment_avg = sum(assignment_values) / len(assignment_values) if assignment_values else 0.0
+    return round(mid1_avg + mid2_avg + assignment_avg, 2)
+
+
+def _recent_attendance_improved(db: Session, student_id: int) -> bool:
+    rows = (
+        db.query(Attendance.attendance_date, Attendance.status)
+        .filter(Attendance.student_id == student_id)
+        .order_by(Attendance.attendance_date.asc())
+        .all()
+    )
+
+    daily_values = {}
+    for row in rows:
+        day = row.attendance_date.isoformat() if row.attendance_date else None
+        if not day:
+            continue
+        if day not in daily_values:
+            daily_values[day] = {"present": 0, "total": 0}
+        daily_values[day]["total"] += 1
+        if bool(row.status):
+            daily_values[day]["present"] += 1
+
+    series = []
+    for day in sorted(daily_values.keys()):
+        total = daily_values[day]["total"]
+        present = daily_values[day]["present"]
+        if total > 0:
+            series.append((present / total) * 100)
+
+    if len(series) < 8:
+        return False
+
+    recent = series[-7:]
+    previous = series[-14:-7] if len(series) >= 14 else series[:-7]
+    if not previous:
+        return False
+    return (sum(recent) / len(recent)) > (sum(previous) / len(previous))
+
+
+def _recent_marks_improved(db: Session, student_id: int) -> bool:
+    rows = (
+        db.query(Mark.created_at, Mark.marks)
+        .filter(Mark.student_id == student_id)
+        .order_by(Mark.created_at.asc())
+        .all()
+    )
+
+    values = [_to_float(row.marks) for row in rows if _to_float(row.marks) > 0]
+    if len(values) < 2:
+        return False
+
+    return values[-1] > values[-2]
+
+
+def _compute_streak_from_logs(log_dates: List[date]) -> int:
+    if not log_dates:
+        return 0
+
+    unique_dates = sorted(set(log_dates), reverse=True)
+    streak = 0
+    cursor = date.today()
+    date_set = set(unique_dates)
+
+    while cursor in date_set:
+        streak += 1
+        cursor = cursor - timedelta(days=1)
+
+    return streak
+
+
+def _sync_student_progress(db: Session, student_id: int) -> StudentProgress:
+    today = date.today()
+
+    attendance_bonus_exists = db.query(TaskLog).filter(
+        TaskLog.student_id == student_id,
+        TaskLog.task_id == "system-attendance-improvement"
+    ).first()
+    if not attendance_bonus_exists and _recent_attendance_improved(db, student_id):
+        db.add(TaskLog(
+            student_id=student_id,
+            task_id="system-attendance-improvement",
+            completed=True,
+            verified=True,
+            xp_earned=25,
+            date=today,
+        ))
+
+    marks_bonus_exists = db.query(TaskLog).filter(
+        TaskLog.student_id == student_id,
+        TaskLog.task_id == "system-marks-improvement"
+    ).first()
+    if not marks_bonus_exists and _recent_marks_improved(db, student_id):
+        db.add(TaskLog(
+            student_id=student_id,
+            task_id="system-marks-improvement",
+            completed=True,
+            verified=True,
+            xp_earned=40,
+            date=today,
+        ))
+
+    db.commit()
+
+    task_logs = db.query(TaskLog).filter(TaskLog.student_id == student_id).all()
+    total_xp = sum(int(log.xp_earned or 0) for log in task_logs)
+    completed_dates = [log.date for log in task_logs if log.completed and log.date]
+    streak_days = _compute_streak_from_logs(completed_dates)
+    last_active = max(completed_dates) if completed_dates else None
+
+    progress = db.query(StudentProgress).filter(StudentProgress.student_id == student_id).first()
+    if not progress:
+        progress = StudentProgress(student_id=student_id)
+        db.add(progress)
+
+    progress.total_xp = total_xp
+    progress.streak_days = streak_days
+    progress.last_active_date = last_active
+    db.commit()
+    db.refresh(progress)
+    return progress
+
+
+def _build_student_tasks(db: Session, student_id: int):
+    student = db.query(Student).filter(Student.student_id == student_id).first()
+    if not student:
+        return {"today": [], "this_week": []}
+
+    attendance_pct = _compute_attendance_percentage(db, student_id)
+    marks_score = _compute_marks_score(db, student_id)
+
+    submissions = db.query(AssignmentSubmission).filter(AssignmentSubmission.student_id == student_id).all()
+    submitted_assignment_ids = {
+        s.assignment_id for s in submissions if bool(s.is_submitted) or (s.status and s.status.lower() == "submitted")
+    }
+
+    assignments = (
+        db.query(Assignment, Subject)
+        .join(Subject, Subject.subject_id == Assignment.subject_id)
+        .filter(
+            Assignment.year == student.year,
+            Assignment.section == student.section,
+            Assignment.is_active == True,
+        )
+        .order_by(Assignment.due_date.asc())
+        .all()
+    )
+
+    pending_assignment_pairs = [
+        (assignment, subject)
+        for assignment, subject in assignments
+        if assignment.id not in submitted_assignment_ids
+    ]
+
+    today_tasks = []
+    week_tasks = []
+
+    if attendance_pct < 75:
+        today_tasks.append({
+            "id": "attendance-low",
+            "title": "Attend all classes today",
+            "type": "attendance",
+            "priority": "HIGH",
+            "verificationType": "system",
+            "reason": f"Attendance is {attendance_pct:.2f}%. Minimum safe level is 75%.",
+        })
+
+    if marks_score < 40:
+        week_tasks.append({
+            "id": "marks-low",
+            "title": "Prepare for next internal exam",
+            "type": "marks",
+            "priority": "HIGH",
+            "verificationType": "system",
+            "reason": "Current marks trend is below target range.",
+        })
+
+    for assignment, subject in pending_assignment_pairs[:3]:
+        days_left = (assignment.due_date.date() - date.today()).days if assignment.due_date else 999
+        task = {
+            "id": f"assignment-{assignment.id}",
+            "title": f"Complete assignment: {assignment.title}",
+            "type": "assignment",
+            "priority": "HIGH" if days_left <= 2 else "MEDIUM",
+            "verificationType": "system",
+            "reason": f"{subject.subject_name} assignment pending before deadline.",
+        }
+        if days_left <= 2:
+            today_tasks.append(task)
+        else:
+            week_tasks.append(task)
+
+    priority_rank = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
+    today_tasks = sorted(today_tasks, key=lambda x: priority_rank.get(x["priority"], 9))[:2]
+    week_tasks = sorted(week_tasks, key=lambda x: priority_rank.get(x["priority"], 9))[:3]
+
+    existing_logs = db.query(TaskLog).filter(TaskLog.student_id == student_id).all()
+    latest_by_task = {}
+    for log in existing_logs:
+        prev = latest_by_task.get(log.task_id)
+        if not prev or (log.date and prev.date and log.date >= prev.date):
+            latest_by_task[log.task_id] = log
+
+    def with_status(task):
+        log = latest_by_task.get(task["id"])
+        task["completed"] = bool(log.completed) if log else False
+        task["verified"] = bool(log.verified) if log else False
+        task["xpAwarded"] = int(log.xp_earned or 0) if log else 0
+        return task
+
+    return {
+        "today": [with_status(task) for task in today_tasks],
+        "this_week": [with_status(task) for task in week_tasks],
+    }
+
+
+@app.get("/student/tasks/today")
+def get_student_tasks_today(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "student":
+        raise HTTPException(status_code=403, detail="Student only")
+
+    student_id = int(current_user["user_id"])
+    return _build_student_tasks(db, student_id)
+
+
+@app.post("/student/tasks/complete/{task_id}")
+def complete_student_task(
+    task_id: str,
+    payload: schemas.TaskCompleteRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "student":
+        raise HTTPException(status_code=403, detail="Student only")
+
+    student_id = int(current_user["user_id"])
+    today = date.today()
+
+    existing = db.query(TaskLog).filter(
+        TaskLog.student_id == student_id,
+        TaskLog.task_id == task_id,
+        TaskLog.date == today,
+    ).first()
+    if existing:
+        return {
+            "task_id": task_id,
+            "completed": bool(existing.completed),
+            "verified": bool(existing.verified),
+            "xp_earned": int(existing.xp_earned or 0),
+        }
+
+    base_xp = 10
+    priority_bonus = 20 if str(payload.priority).upper() == "HIGH" else 0
+    verified = False
+    xp_earned = 0
+
+    if payload.type == "assignment" and task_id.startswith("assignment-"):
+        assignment_id = int(task_id.replace("assignment-", ""))
+        submission = db.query(AssignmentSubmission).filter(
+            AssignmentSubmission.student_id == student_id,
+            AssignmentSubmission.assignment_id == assignment_id,
+        ).first()
+        verified = bool(submission and (submission.is_submitted or (submission.status and submission.status.lower() == "submitted")))
+    elif payload.type == "attendance":
+        verified = _compute_attendance_percentage(db, student_id) >= 75
+    elif payload.type == "marks":
+        verified = _compute_marks_score(db, student_id) >= 40
+    elif payload.type == "event" and task_id.startswith("event-"):
+        event_id = int(task_id.replace("event-", ""))
+        reg = db.query(EventRegistration).filter(
+            EventRegistration.student_id == student_id,
+            EventRegistration.event_id == event_id,
+        ).first()
+        verified = bool(reg)
+    elif payload.type == "study":
+        verified = False
+
+    if verified:
+        xp_earned = base_xp + priority_bonus
+
+    log = TaskLog(
+        student_id=student_id,
+        task_id=task_id,
+        completed=True,
+        verified=verified,
+        xp_earned=xp_earned,
+        date=today,
+    )
+    db.add(log)
+    db.commit()
+
+    generated_tasks = _build_student_tasks(db, student_id)
+    today_task_ids = [task["id"] for task in generated_tasks.get("today", [])]
+    all_today_done = True
+    if today_task_ids:
+        for generated_task_id in today_task_ids:
+            item = db.query(TaskLog).filter(
+                TaskLog.student_id == student_id,
+                TaskLog.task_id == generated_task_id,
+                TaskLog.date == today,
+                TaskLog.completed == True,
+            ).first()
+            if not item:
+                all_today_done = False
+                break
+
+    daily_bonus_exists = db.query(TaskLog).filter(
+        TaskLog.student_id == student_id,
+        TaskLog.task_id == f"system-daily-complete-{today.isoformat()}"
+    ).first()
+
+    if all_today_done and today_task_ids and not daily_bonus_exists:
+        db.add(TaskLog(
+            student_id=student_id,
+            task_id=f"system-daily-complete-{today.isoformat()}",
+            completed=True,
+            verified=True,
+            xp_earned=30,
+            date=today,
+        ))
+        db.commit()
+
+    progress = _sync_student_progress(db, student_id)
+
+    return {
+        "task_id": task_id,
+        "completed": True,
+        "verified": verified,
+        "xp_earned": xp_earned,
+        "total_xp": progress.total_xp,
+    }
+
+
+@app.get("/student/xp/{student_id}", response_model=schemas.StudentXpResponse)
+def get_student_xp(
+    student_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] == "student" and int(current_user["user_id"]) != student_id:
+        raise HTTPException(status_code=403, detail="Cannot access another student progress")
+
+    progress = _sync_student_progress(db, student_id)
+    return {"total_xp": int(progress.total_xp or 0)}
+
+
+@app.get("/student/streak/{student_id}", response_model=schemas.StudentStreakResponse)
+def get_student_streak(
+    student_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] == "student" and int(current_user["user_id"]) != student_id:
+        raise HTTPException(status_code=403, detail="Cannot access another student progress")
+
+    progress = _sync_student_progress(db, student_id)
+    return {"streak_days": int(progress.streak_days or 0)}
+
+
+@app.get("/class/leaderboard/{class_id}", response_model=List[schemas.LeaderboardItem])
+def get_class_leaderboard(
+    class_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    parts = class_id.split("-", 1)
+    if len(parts) != 2:
+        raise HTTPException(status_code=400, detail="Invalid class_id. Use '<year>-<section>'")
+
+    try:
+        class_year = int(parts[0])
+    except ValueError as ex:
+        raise HTTPException(status_code=400, detail="Invalid class year") from ex
+
+    class_section = parts[1]
+
+    class_students = (
+        db.query(Student.student_id, User.name)
+        .join(User, User.user_id == Student.student_id)
+        .filter(Student.year == class_year, Student.section == class_section)
+        .all()
+    )
+
+    if not class_students:
+        return []
+
+    student_ids = [row.student_id for row in class_students]
+    xp_rows = (
+        db.query(TaskLog.student_id, func.coalesce(func.sum(TaskLog.xp_earned), 0).label("xp"))
+        .filter(TaskLog.student_id.in_(student_ids), TaskLog.verified == True)
+        .group_by(TaskLog.student_id)
+        .all()
+    )
+
+    xp_map = {row.student_id: int(row.xp or 0) for row in xp_rows}
+    ranking = [
+        {
+            "student_id": row.student_id,
+            "name": row.name,
+            "xp": xp_map.get(row.student_id, 0),
+        }
+        for row in class_students
+    ]
+
+    ranking.sort(key=lambda item: item["xp"], reverse=True)
+
+    for index, item in enumerate(ranking):
+        item["rank"] = index + 1
+
+    return ranking
 
 
 @app.get("/admin/overview/attendance-trend", response_model=List[schemas.AdminOverviewTrendPoint])
@@ -1028,6 +1493,8 @@ def get_student_profile(
     "roll_no": student_data.roll_no,
     "year": student_data.year,
     "semester": student_data.semester,
+    "section": student_data.section,
+    "class_id": f"{student_data.year}-{student_data.section}" if student_data.year and student_data.section else None,
     "skills": student_data.skills.split(",") if student_data.skills else [],
     "certificates": json.loads(student_data.certificates)
         if student_data.certificates else [],
@@ -4435,9 +4902,27 @@ def get_student_alerts(
         .all()
     )
 
+    risk_data = get_student_risk(
+        student_id=current_user["user_id"],
+        db=db,
+        attendance_threshold=float(get_setting("attendance_threshold") or 75),
+        cgpa_threshold=float(get_setting("cgpa_threshold") or 6.5),
+    )
+
     result = []
 
     for alert, recipient in alerts:
+        monitoring_type = alert.type in {"cgpa-monitor", "marks-monitor", "attendance-monitor"}
+        if monitoring_type and not risk_data.get("has_valid_data"):
+            continue
+
+        if (
+            alert.type == "cgpa-monitor"
+            and "cgpa is 0.00" in str(alert.message or "").lower()
+            and not risk_data.get("cgpa")
+        ):
+            continue
+
         result.append({
             "id": alert.id,
             "title": alert.title,
@@ -4465,7 +4950,7 @@ def get_my_marks(
     student_id = current_user["user_id"]
     student = db.query(Student).filter_by(student_id=student_id).first()
     if not student:
-        return {"sgpa": 0, "cgpa": 0, "subjects": []}
+        return {"sgpa": None, "cgpa": None, "subjects": []}
 
     scaled_marks = db.query(ScaledMark).filter_by(student_id=student_id).all()
     raw_marks = db.query(Mark).filter_by(student_id=student_id).all()
@@ -4474,7 +4959,8 @@ def get_my_marks(
     subjects_info = db.query(Subject).filter(Subject.subject_id.in_(list(subject_ids))).all()
     subject_map = {s.subject_id: s.subject_name for s in subjects_info}
 
-    cgpa_val = float(student.cgpa) if student.cgpa else 0.0
+    cgpa_raw = float(student.cgpa) if student.cgpa is not None else None
+    cgpa_val = cgpa_raw if (cgpa_raw is not None and cgpa_raw > 0) else None
     sgpas = [float(m.sgpa) for m in raw_marks if m.sgpa]
     sgpa_val = sum(sgpas)/len(sgpas) if sgpas else cgpa_val
 
@@ -4521,8 +5007,8 @@ def get_my_marks(
         })
 
     return {
-        "sgpa": round(sgpa_val, 2),  # type: ignore
-        "cgpa": round(cgpa_val, 2),  # type: ignore
+        "sgpa": round(sgpa_val, 2) if sgpa_val is not None else None,
+        "cgpa": round(cgpa_val, 2) if cgpa_val is not None else None,
         "subjects": result_subjects
     }
 
@@ -4539,6 +5025,55 @@ def get_student_insights(
         raise HTTPException(status_code=403, detail="Student only")
 
     student_id = current_user["user_id"]
+    student_profile = db.query(Student).filter(Student.student_id == student_id).first()
+
+    if not student_profile:
+        raise HTTPException(status_code=404, detail="Student profile not found")
+
+    attendance_threshold = float(get_setting("attendance_threshold") or 75)
+    cgpa_threshold = float(get_setting("cgpa_threshold") or 6.5)
+    risk_data = get_student_risk(
+        student_id=student_id,
+        db=db,
+        attendance_threshold=attendance_threshold,
+        cgpa_threshold=cgpa_threshold,
+    )
+
+    if not risk_data.get("has_valid_data"):
+        return {
+            "student_id": student_id,
+            "has_valid_data": False,
+            "no_data_message": NO_DATA_MESSAGE,
+            "attendance": None,
+            "attendance_trend": [],
+            "mid1": None,
+            "mid2": None,
+            "cgpa": None,
+            "risk_level": "INSUFFICIENT DATA",
+            "primary_issue": "Insufficient data to analyze",
+            "prediction": "Insufficient data to analyze",
+            "actions": [],
+            "daily_tasks": [],
+            "warnings": [],
+            "patterns": [],
+            "early_warning_signals": [],
+            "subject_intelligence": {"subjects": [], "weakest_subjects": [], "strongest_subject": None, "priority_subject": None},
+            "placement_analysis": {
+                "status": "INSUFFICIENT DATA",
+                "reasons": ["Insufficient data to analyze"],
+                "gaps": [],
+                "roadmap": {"weekly": [], "monthly": []},
+                "timeline": "Insufficient data to analyze",
+                "risk_if_ignored": [],
+            },
+            "placement_readiness": "INSUFFICIENT DATA",
+            "placement": {
+                "readiness": None,
+                "aptitude": None,
+                "consistency": None,
+                "consistency_interpretation": "Insufficient data",
+            },
+        }
 
     attendance_rows = (
         db.query(Attendance.subject_id, Attendance.attendance_date, Attendance.status)
@@ -4641,6 +5176,7 @@ def get_student_insights(
     # Dynamic CGPA Prediction Engine
     # -----------------------------
     assignments = []
+    excluded_assignments_without_max = 0
 
     def _extract_assignment_max(extra_data, exam_name, exam_key):
         if not isinstance(extra_data, dict):
@@ -4690,7 +5226,8 @@ def get_student_insights(
                 max_value = cohort_max
 
         if max_value is None or max_value <= 0:
-            max_value = score_value
+            excluded_assignments_without_max += 1
+            continue
 
         assignments.append({"score": score_value, "max": max_value})
 
@@ -4712,7 +5249,8 @@ def get_student_insights(
                 max_key = f"{key}_max"
                 max_value = _to_float(lowered.get(max_key))
                 if max_value is None or max_value <= 0:
-                    max_value = score_value
+                    excluded_assignments_without_max += 1
+                    continue
 
                 assignments.append({"score": score_value, "max": max_value})
 
@@ -4724,10 +5262,18 @@ def get_student_insights(
     else:
         scaled_assignment = round((assignment_total / assignment_max_total) * 10, 2)
 
+    assignment_confidence = "HIGH"
+    if excluded_assignments_without_max > 0 and assignments:
+        assignment_confidence = "MEDIUM"
+    elif excluded_assignments_without_max > 0 and not assignments:
+        assignment_confidence = "LOW"
+
     if mid1 is not None and mid2 is not None:
         mid_avg = (mid1 + mid2) / 2
     elif mid1 is not None:
         mid_avg = mid1
+    elif mid2 is not None:
+        mid_avg = mid2
     else:
         mid_avg = None
 
@@ -4787,6 +5333,7 @@ def get_student_insights(
             required_mid2_targets.append(
                 {
                     "target": target,
+                    "required_mid2_raw": round(required_mid2_raw, 2),
                     "required_mid2": required_mid2,
                     "status": status,
                 }
@@ -4806,14 +5353,16 @@ def get_student_insights(
                 }
             )
 
-    if cgpa is not None and attendance_percent is not None and cgpa >= 8 and attendance_percent >= 80:
-        placement_readiness = "READY"
-    elif cgpa is not None and cgpa >= 7:
-        placement_readiness = "BORDERLINE"
-    elif cgpa is not None:
-        placement_readiness = "NOT READY"
-    else:
-        placement_readiness = "INSUFFICIENT DATA"
+    def _compute_placement_status(cgpa_value, attendance_value):
+        if cgpa_value is None or attendance_value is None:
+            return "INSUFFICIENT DATA"
+        if cgpa_value >= 8 and attendance_value >= 80:
+            return "READY"
+        if cgpa_value >= 7 and attendance_value >= 70:
+            return "BORDERLINE"
+        return "NOT READY"
+
+    placement_readiness = _compute_placement_status(cgpa, attendance_percent)
 
     # -----------------------------
     # Subject-Level Intelligence
@@ -4922,7 +5471,7 @@ def get_student_insights(
 
                     max_value = _to_float(lowered.get(f"{key}_max"))
                     if max_value is None or max_value <= 0:
-                        max_value = score_value
+                        continue
 
                     subject_assignments.append({"score": score_value, "max": max_value})
 
@@ -4940,15 +5489,35 @@ def get_student_insights(
             subject_mid_avg = (subject_mid1 + subject_mid2) / 2
         elif subject_mid1 is not None:
             subject_mid_avg = subject_mid1
+        elif subject_mid2 is not None:
+            subject_mid_avg = subject_mid2
         else:
             subject_mid_avg = None
 
-        subject_external_estimate = 50.0
+        subject_external_candidates = []
+        for row in subject_rows:
+            sem_val = _to_float(row.semester)
+            if sem_val is not None and sem_val > 0:
+                subject_external_candidates.append(sem_val)
+
+            exam_key = _normalize_exam_name(row.exam)
+            if exam_key == "semester":
+                exam_mark = _to_float(row.marks)
+                if exam_mark is not None and exam_mark > 0:
+                    subject_external_candidates.append(exam_mark)
+
+        subject_external_estimate = (
+            round(sum(subject_external_candidates) / len(subject_external_candidates), 2)
+            if subject_external_candidates
+            else 50.0
+        )
         subject_internal = None
         subject_scaled_mid = None
         subject_cgpa = None
         required_mid2 = None
+        required_mid2_raw = None
         required_mid2_for_8 = None
+        required_mid2_for_8_raw = None
         status = "INSUFFICIENT DATA"
 
         if subject_mid_avg is not None:
@@ -4969,6 +5538,7 @@ def get_student_insights(
                 required_mid2_raw = required_mid_avg
 
             status = _required_mid2_status(required_mid2_raw)
+            required_mid2_raw = round(required_mid2_raw, 2)
             required_mid2 = round(_clamp(required_mid2_raw, 0, 30), 2)
 
             target_cgpa_8 = 8.0
@@ -4982,6 +5552,7 @@ def get_student_insights(
             else:
                 required_mid2_raw_8 = required_mid_avg_8
 
+            required_mid2_for_8_raw = round(required_mid2_raw_8, 2)
             required_mid2_for_8 = round(_clamp(required_mid2_raw_8, 0, 30), 2)
 
         reasons = []
@@ -5028,36 +5599,45 @@ def get_student_insights(
                 2,
             )
 
-        if subject_attendance is None:
-            time_allocation = f"Spend more time on {subject_name}"
-        elif priority_score >= 75:
-            time_allocation = f"Spend 60% time on {subject_name}"
-        elif priority_score >= 50:
-            time_allocation = f"Spend 40% time on {subject_name}"
-        elif priority_score >= 25:
-            time_allocation = f"Spend 25% time on {subject_name}"
-        else:
-            time_allocation = f"Spend 15% time on {subject_name}"
+        priority_breakdown = {
+            "cgpa_gap_component": round((cgpa_gap_to_8 or 0) * 35, 2) if cgpa_gap_to_8 is not None else 0,
+            "attendance_gap_component": round((max(0, 80 - subject_attendance) if subject_attendance is not None else 0) * 0.6, 2),
+            "marks_gap_component": round(
+                (
+                    (max(0, 15 - subject_mid1) if subject_mid1 is not None else 0)
+                    + (max(0, 15 - subject_mid2) if subject_mid2 is not None else 0)
+                )
+                * 1.5,
+                2,
+            ),
+            "formula": "(cgpa_gap*35) + (attendance_gap*0.6) + (marks_gap*1.5)",
+        }
+
+        time_allocation = "Time allocation will be normalized after scoring"
 
         if subject_cgpa is None:
             faculty_feedback = {
                 "summary": "Not enough subject data",
                 "action": "Collect more marks and attendance records before final feedback",
+                "source": "SYSTEM_GENERATED",
             }
         elif risk == "HIGH":
             faculty_feedback = {
                 "summary": "Subject is below safe academic level",
                 "action": "Teacher should review basics, check attendance, and assign focused practice",
+                "source": "SYSTEM_GENERATED",
             }
         elif risk == "MEDIUM":
             faculty_feedback = {
                 "summary": "Subject is near the warning zone",
                 "action": "Teacher should reinforce weak units and monitor the next assessment closely",
+                "source": "SYSTEM_GENERATED",
             }
         else:
             faculty_feedback = {
                 "summary": "Subject is performing well",
                 "action": "Teacher should maintain current pace and give advanced practice",
+                "source": "SYSTEM_GENERATED",
             }
 
         subject_items.append(
@@ -5080,12 +5660,35 @@ def get_student_insights(
                 "time_allocation": time_allocation,
                 "faculty_feedback": faculty_feedback,
                 "required_mid2": required_mid2,
+                "required_mid2_raw": required_mid2_raw,
                 "required_mid2_for_8": required_mid2_for_8,
+                "required_mid2_for_8_raw": required_mid2_for_8_raw,
                 "status": status,
                 "reason": reason_text,
                 "impact": impact,
+                "priority_breakdown": priority_breakdown,
             }
         )
+
+    # Normalize time allocation percentages so recommendations are bounded and auditable.
+    if subject_items:
+        positive_weights = [max(0.0, float(item.get("priority_score") or 0.0)) for item in subject_items]
+        total_weight = sum(positive_weights)
+
+        if total_weight <= 0:
+            base_percent = round(100 / len(subject_items))
+            allocated = [base_percent for _ in subject_items]
+        else:
+            allocated = [int(round((weight / total_weight) * 100)) for weight in positive_weights]
+
+        drift = 100 - sum(allocated)
+        if allocated:
+            allocated[0] += drift
+
+        for index, item in enumerate(subject_items):
+            allocation_percent = max(0, allocated[index])
+            item["time_allocation_percent"] = allocation_percent
+            item["time_allocation"] = f"Spend {allocation_percent}% time on {item['name']}"
 
     subjects_with_cgpa = [item for item in subject_items if item.get("cgpa") is not None]
     subjects_with_cgpa.sort(key=lambda item: item["cgpa"])  # type: ignore
@@ -5126,6 +5729,8 @@ def get_student_insights(
             "cgpa": priority_subject_item["cgpa"],
             "reason": priority_subject_item["reason"],
             "time_allocation": priority_subject_item["time_allocation"],
+            "time_allocation_percent": priority_subject_item.get("time_allocation_percent", 0),
+            "priority_breakdown": priority_subject_item.get("priority_breakdown", {}),
         }
 
     subject_intelligence = {
@@ -5143,22 +5748,15 @@ def get_student_insights(
         if mid2 is not None:
             marks_trend.append(mid2)
 
-    high_risk = ((attendance_percent is not None and attendance_percent < 65) or (mid2 is not None and mid2 < 15))
-    medium_risk = ((attendance_percent is not None and attendance_percent < 75) or (mid1 is not None and mid1 < 15))
+    engine_risk = str(risk_data.get("overall_risk") or "NO_DATA").upper()
+    risk_level = "INSUFFICIENT DATA" if engine_risk == "NO_DATA" else engine_risk
 
-    if high_risk:
-        risk_level = "HIGH"
-    elif medium_risk:
-        risk_level = "MEDIUM"
-    else:
-        risk_level = "LOW"
-
-    if attendance_percent is not None and attendance_percent < 75:
+    if risk_data.get("attendance_status") == "LOW":
         primary_issue = "Low attendance"
-    elif mid1 is not None and mid2 is not None and mid2 < mid1:
-        primary_issue = "Declining performance"
-    elif mid1 is not None and mid1 < 15:
+    elif risk_data.get("marks_status") == "LOW":
         primary_issue = "Low marks"
+    elif risk_data.get("cgpa_status") == "LOW":
+        primary_issue = "Low CGPA"
     else:
         primary_issue = "No major issues"
 
@@ -5220,20 +5818,9 @@ def get_student_insights(
     else:
         prediction = "Performance is stable"
 
-    actions = []
-    if attendance_percent is not None and attendance_percent < 75:
-        actions.append("Attend all classes for next 5 days")
-
-    low_mid1 = mid1 is not None and mid1 < 15
-    low_mid2 = mid2 is not None and mid2 < 15
-    if low_mid1 or low_mid2:
-        actions.append("Revise weak subjects and practice questions")
-
-    if marks_decreasing:
-        actions.append("Focus on understanding concepts")
-
+    actions = list(risk_data.get("actions") or [])
     if not actions:
-        actions.append("Maintain current attendance and marks consistency")
+        actions = ["Maintain current attendance and marks consistency"]
 
     average_mid = None
     if mid1 is not None and mid2 is not None:
@@ -5298,9 +5885,16 @@ def get_student_insights(
     # EARLY WARNING SYSTEM
     warnings = []
     
-    if attendance_percent is not None and attendance_percent < 75:
-        classes_allowed_to_miss = max(0, int((attendance_percent * total_attendance - 0.75 * total_attendance) / 0.25))
-        warnings.append(f"Critical: If you miss 2 more classes, you fall below 75%")
+    if attendance_percent is not None and attendance_percent < 75 and total_attendance > 0:
+        classes_allowed_to_miss = max(0, int((present_attendance / 0.75) - total_attendance))
+        if classes_allowed_to_miss <= 0:
+            warnings.append("Critical: Missing even 1 more class can keep you below the 75% safe level")
+        elif classes_allowed_to_miss == 1:
+            warnings.append("Critical: You can miss only 1 more class before dropping below 75%")
+        else:
+            warnings.append(
+                f"Critical: You can miss only {classes_allowed_to_miss} more classes before dropping below 75%"
+            )
     
     if attendance_percent is not None and attendance_percent < 65:
         warnings.append(f"URGENT: Attendance at {attendance_percent}% is critically low")
@@ -5317,56 +5911,80 @@ def get_student_insights(
         if recent_avg < older_avg - 5:
             warnings.append("Attendance trend is declining sharply")
 
-    # DAILY TASK GENERATION
+    # DAILY TASK GENERATION (strictly from real data only)
+    now_dt = datetime.utcnow()
+    today_date = now_dt.date()
     daily_tasks = []
-    
+
     if attendance_percent is not None and attendance_percent < 75:
         daily_tasks.append({
-            "task": "Attend all classes today",
+            "id": "attendance_safe_threshold",
+            "title": "Attend all classes this week",
+            "task": "Attend all classes this week",
+            "reason": f"Attendance is {attendance_percent}% and below the 75% safe threshold",
             "priority": "HIGH",
-            "reason": f"Current attendance is {attendance_percent}% - need every class",
-            "status": False
+            "status": False,
         })
-    
+
+    assignment_candidates = (
+        db.query(Assignment)
+        .filter(
+            Assignment.year == student_profile.year,
+            Assignment.section == student_profile.section,
+            Assignment.is_active == True,
+        )
+        .order_by(Assignment.due_date.asc())
+        .all()
+    )
+
+    assignment_ids = [item.id for item in assignment_candidates]
+    submission_map = {}
+    if assignment_ids:
+        submission_rows = (
+            db.query(AssignmentSubmission)
+            .filter(
+                AssignmentSubmission.student_id == student_id,
+                AssignmentSubmission.assignment_id.in_(assignment_ids),
+            )
+            .all()
+        )
+        submission_map = {row.assignment_id: row for row in submission_rows}
+
+    pending_assignment = None
+    for assignment in assignment_candidates:
+        submission = submission_map.get(assignment.id)
+        is_submitted = bool(submission and submission.is_submitted)
+        if is_submitted:
+            continue
+        if assignment.due_date and assignment.due_date < now_dt:
+            continue
+        pending_assignment = assignment
+        break
+
+    if pending_assignment is not None:
+        due_text = pending_assignment.due_date.date().isoformat() if pending_assignment.due_date else "upcoming"
+        daily_tasks.append({
+            "id": "assignment_pending",
+            "title": "Complete pending assignment",
+            "task": "Complete pending assignment",
+            "reason": f"Pending assignment '{pending_assignment.title}' due on {due_text}",
+            "priority": "HIGH",
+            "status": False,
+        })
+
     if (mid1 is not None and mid1 < 15) or (mid2 is not None and mid2 < 15):
         daily_tasks.append({
-            "task": "Revise 1 weak subject for 30 mins",
+            "id": "marks_low",
+            "title": "Prepare for next internal exam",
+            "task": "Prepare for next internal exam",
+            "reason": "Mid marks are below the safe threshold",
             "priority": "HIGH",
-            "reason": "Marks need improvement",
-            "status": False
+            "status": False,
         })
-    
-    if marks_decreasing:
-        daily_tasks.append({
-            "task": "Practice 10 previous exam questions",
-            "priority": "MEDIUM",
-            "reason": "Performance is declining",
-            "status": False
-        })
-    
-    if attendance_percent is not None and attendance_percent < 65:
-        daily_tasks.append({
-            "task": "Meet instructor to discuss attendance",
-            "priority": "HIGH",
-            "reason": "Critical attendance level requires intervention",
-            "status": False
-        })
-    
-    if consistency is not None and consistency < 50:
-        daily_tasks.append({
-            "task": "Plan tomorrow's class schedule now",
-            "priority": "MEDIUM",
-            "reason": "Inconsistent attendance pattern detected",
-            "status": False
-        })
-    
-    if not daily_tasks:
-        daily_tasks.append({
-            "task": "Review one advanced topic in your weak subject",
-            "priority": "LOW",
-            "reason": "Maintain current performance level",
-            "status": False
-        })
+
+    # Keep output compact and deterministic.
+    priority_rank = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
+    daily_tasks = sorted(daily_tasks, key=lambda item: priority_rank.get(item["priority"], 9))[:3]
 
     # BEHAVIOR PATTERN DETECTION
     patterns = []
@@ -5429,7 +6047,7 @@ def get_student_insights(
             "action": "Schedule meeting with mentor"
         })
 
-    if attendance_percent is None or mid1 is None or mid2 is None:
+    if placement_readiness == "INSUFFICIENT DATA":
         placement_status = "INSUFFICIENT DATA"
         placement_reasons = ["Insufficient data to analyze"]
         placement_gaps = []
@@ -5438,37 +6056,30 @@ def get_student_insights(
         placement_timeline = "Insufficient data to analyze"
         placement_risk_if_ignored = []
     else:
-        average_mid = round((mid1 + mid2) / 2, 2)
-
-        if attendance_percent >= 80 and average_mid >= 18:
-            placement_status = "READY"
-        elif attendance_percent >= 70 and average_mid >= 15:
-            placement_status = "BORDERLINE"
-        else:
-            placement_status = "NOT READY"
+        placement_status = placement_readiness
 
         placement_reasons = []
         if attendance_percent < 75:
             placement_reasons.append("Attendance below required level")
-        if average_mid < 15:
-            placement_reasons.append("Low academic performance")
-        if mid2 < mid1:
+        if cgpa is not None and cgpa < 7:
+            placement_reasons.append("Predicted CGPA is below safe placement range")
+        if mid1 is not None and mid2 is not None and mid2 < mid1:
             placement_reasons.append("Declining performance trend")
         if not placement_reasons:
-            placement_reasons.append("Attendance and marks are within placement thresholds")
+            placement_reasons.append("CGPA and attendance are within placement thresholds")
 
         placement_gaps = []
         if attendance_percent < 80:
             placement_gaps.append({"metric": "Attendance", "current": attendance_percent, "target": 80})
-        if average_mid < 18:
-            placement_gaps.append({"metric": "Marks", "current": average_mid, "target": 18})
+        if cgpa is not None and cgpa < 8:
+            placement_gaps.append({"metric": "CGPA", "current": cgpa, "target": 8.0})
 
         placement_weekly = []
         if attendance_percent < 75:
             placement_weekly.append("Attend all classes this week")
-        if average_mid < 18:
+        if cgpa is not None and cgpa < 8:
             placement_weekly.append("Revise weak subjects")
-        if mid2 < mid1:
+        if mid1 is not None and mid2 is not None and mid2 < mid1:
             placement_weekly.append("Focus on understanding concepts")
         if not placement_weekly:
             placement_weekly.append("Maintain current attendance and revision rhythm")
@@ -5485,12 +6096,15 @@ def get_student_insights(
         placement_risk_if_ignored = []
         if attendance_percent < 75:
             placement_risk_if_ignored.append("May lose internal marks")
-        if average_mid < 15:
+        if cgpa is not None and cgpa < 7:
             placement_risk_if_ignored.append("Low CGPA risk")
         if not placement_risk_if_ignored:
             placement_risk_if_ignored.append("Could lose readiness margin if attendance or marks drop")
 
     return {
+        "student_id": student_id,
+        "has_valid_data": True,
+        "no_data_message": None,
         "attendance": attendance_percent,
         "attendance_trend": attendance_trend,
         "mid1": mid1,
@@ -5502,6 +6116,8 @@ def get_student_insights(
         "scaled_assignment": scaled_assignment,
         "assignment_total": assignment_total,
         "assignment_max_total": assignment_max_total,
+        "assignment_confidence": assignment_confidence,
+        "excluded_assignments_without_max": excluded_assignments_without_max,
         "required_mid2_targets": required_mid2_targets,
         "simulation": simulation,
         "placement_readiness": placement_readiness,
@@ -5509,6 +6125,7 @@ def get_student_insights(
         "subject_intelligence": subject_intelligence,
         "marks_trend": marks_trend,
         "risk_level": risk_level,
+        "risk_reasons": list(risk_data.get("reasons") or []),
         "primary_issue": primary_issue,
         "prediction": prediction,
         "weekly_goal": weekly_goal,
@@ -6460,191 +7077,55 @@ def reset_password(
 # scheduler to check attendance thresholds and send alerts (students)
 # -------------------------
 def check_attendance_thresholds():
-
     db = SessionLocal()
     attendance_enabled = get_setting("attendance_alert_enabled")
-    cgpa_enabled = get_setting("cgpa_alert_enabled")
     attendance_enabled = attendance_enabled if attendance_enabled is not None else True
-    cgpa_enabled = cgpa_enabled if cgpa_enabled is not None else True
-    frequency = get_setting("alert_frequency") or "immediate"
-    threshold = get_setting("attendance_threshold") or 75
-
-    print("Alert settings:", {
-        "attendance": attendance_enabled,
-        "cgpa": cgpa_enabled,
-        "frequency": frequency
-    })
-    print("Using attendance threshold:", threshold)
+    threshold = float(get_setting("attendance_threshold") or 75)
+    cgpa_threshold = float(get_setting("cgpa_threshold") or 6.5)
 
     try:
+        if not attendance_enabled:
+            return
+
         students = db.query(Student).all()
-
         for student in students:
+            alerts = generate_student_alerts(
+                student_id=student.student_id,
+                db=db,
+                attendance_threshold=threshold,
+                cgpa_threshold=cgpa_threshold,
+            )
 
-            user = db.query(User).filter(
-                User.user_id == student.student_id
-            ).first()
+            for alert_payload in alerts:
+                if alert_payload.get("type") not in {"attendance-monitor", "marks-monitor"}:
+                    continue
 
-            if not user:
-                continue
-
-            subjects = db.query(Subject).filter(
-                Subject.semester == student.semester,
-                Subject.department_id == user.department_id
-            ).all()
-
-            for subject in subjects:
-
-                total = db.query(Attendance).filter(
-                    Attendance.student_id == student.student_id,
-                    Attendance.subject_id == subject.subject_id
-                ).count()
-
-                if total < 5:
-                    continue  # avoid noise
-
-                present = db.query(Attendance).filter(
-                    Attendance.student_id == student.student_id,
-                    Attendance.subject_id == subject.subject_id,
-                    Attendance.status == True
-                ).count()
-
-                percentage = (present / total) * 100
-
-                # Determine current level
-                if percentage < 60:
-                    current_level = "critical"
-                elif percentage < threshold:
-                    current_level = "warning"
-                else:
-                    current_level = "safe"
-
-                existing = db.query(AttendanceWarning).filter(
-                    AttendanceWarning.student_id == student.student_id,
-                    AttendanceWarning.subject_id == subject.subject_id,
-                    AttendanceWarning.semester == student.semester
+                duplicate = db.query(Alert).filter(
+                    Alert.student_id == student.student_id,
+                    Alert.type == alert_payload.get("type"),
+                    Alert.message == alert_payload.get("message"),
+                    Alert.created_at >= datetime.utcnow() - timedelta(hours=24),
                 ).first()
-
-                now = datetime.utcnow()
-
-                # -----------------------------
-                # CASE 1: Student is SAFE
-                # -----------------------------
-                if current_level == "safe":
-                    if existing:
-                        db.delete(existing)
-                        db.commit()
+                if duplicate:
                     continue
-
-                # -----------------------------
-                # CASE 2: First time crossing
-                # -----------------------------
-                if not existing:
-                    send_alert = True
-                    reminder = False
-
-                # -----------------------------
-                # CASE 3: Level Changed Down
-                # -----------------------------
-                elif existing.level != current_level:
-                    send_alert = True
-                    reminder = False
-
-                # -----------------------------
-                # CASE 4: Still Same Level → Reminder check
-                # -----------------------------
-                else:
-                    days_passed = (now - existing.last_sent).days
-                    if days_passed >= 14:
-                        send_alert = True
-                        reminder = True
-                    else:
-                        send_alert = False
-
-                if not send_alert:
-                    continue
-
-                if not attendance_enabled:
-                    continue
-
-                if frequency == "daily":
-                    print(
-                        "Daily alert mode: queueing attendance alert for later processing",
-                        {"student_id": student.student_id, "subject": subject.subject_name, "percentage": round(percentage,2)}
-                    )
-
-                    if existing:
-                        existing.level = current_level
-                        existing.last_sent = now
-                    else:
-                        new_warning = AttendanceWarning(
-                            student_id=student.student_id,
-                            subject_id=subject.subject_id,
-                            semester=student.semester,
-                            level=current_level,
-                            last_sent=now
-                        )
-                        db.add(new_warning)
-
-                    db.commit()
-                    continue
-
-                # -----------------------------
-                # Build Alert Message
-                # -----------------------------
-                if current_level == "warning":
-                    title = "⚠ Attendance Warning"
-                else:
-                    title = "🚨 Critical Attendance Alert"
-
-                if reminder:
-                    title = "🔔 Reminder: " + title
-
-                message = (
-                    f"Your attendance in {subject.subject_name} "
-                    f"is {round(percentage,2)}%. "
-                    f"Minimum required is {threshold}%."
-                )
 
                 alert = Alert(
-                    title=title,
-                    message=message,
-                    type="attendance-monitor",
+                    title=alert_payload.get("title") or "Alert",
+                    message=alert_payload.get("message") or "",
+                    type=alert_payload.get("type") or "academic-monitor",
                     target_role="student",
                     target_type="individual",
-                    student_id=student.student_id
+                    student_id=student.student_id,
                 )
-
                 db.add(alert)
                 db.commit()
                 db.refresh(alert)
 
-                recipient = AlertRecipient(
-                    alert_id=alert.id,
-                    user_id=student.student_id,
-                    is_read=False
-                )
-
-                db.add(recipient)
-
-                # Update tracking record
-                if existing:
-                    existing.level = current_level
-                    existing.last_sent = now
-                else:
-                    new_warning = AttendanceWarning(
-                        student_id=student.student_id,
-                        subject_id=subject.subject_id,
-                        semester=student.semester,
-                        level=current_level,
-                        last_sent=now
-                    )
-                    db.add(new_warning)
-
+                db.add(AlertRecipient(alert_id=alert.id, user_id=student.student_id, is_read=False))
                 db.commit()
 
     except Exception as e:
-        print("Hybrid Scheduler Error:", e)
+        print("Attendance/Marks scheduler error:", e)
 
     finally:
         db.close()
@@ -6652,19 +7133,10 @@ def check_attendance_thresholds():
 
 def check_cgpa_thresholds():
     db = SessionLocal()
-    attendance_enabled = get_setting("attendance_alert_enabled")
     cgpa_enabled = get_setting("cgpa_alert_enabled")
-    attendance_enabled = attendance_enabled if attendance_enabled is not None else True
     cgpa_enabled = cgpa_enabled if cgpa_enabled is not None else True
-    frequency = get_setting("alert_frequency") or "immediate"
-    threshold = get_setting("cgpa_threshold") or 6.5
-
-    print("Alert settings:", {
-        "attendance": attendance_enabled,
-        "cgpa": cgpa_enabled,
-        "frequency": frequency
-    })
-    print("Using CGPA threshold:", threshold)
+    threshold = float(get_setting("cgpa_threshold") or 6.5)
+    attendance_threshold = float(get_setting("attendance_threshold") or 75)
 
     try:
         if not cgpa_enabled:
@@ -6672,41 +7144,40 @@ def check_cgpa_thresholds():
 
         students = db.query(Student).all()
         for student in students:
-            cgpa_val = float(student.cgpa) if student.cgpa is not None else 0.0
-            if cgpa_val >= threshold:
-                continue
+            alerts = generate_student_alerts(
+                student_id=student.student_id,
+                db=db,
+                attendance_threshold=attendance_threshold,
+                cgpa_threshold=threshold,
+            )
 
-            if frequency == "daily":
-                print(
-                    "Daily alert mode: queueing CGPA alert for later processing",
-                    {"student_id": student.student_id, "cgpa": cgpa_val}
+            for alert_payload in alerts:
+                if alert_payload.get("type") != "cgpa-monitor":
+                    continue
+
+                duplicate = db.query(Alert).filter(
+                    Alert.student_id == student.student_id,
+                    Alert.type == "cgpa-monitor",
+                    Alert.message == alert_payload.get("message"),
+                    Alert.created_at >= datetime.utcnow() - timedelta(hours=24),
+                ).first()
+                if duplicate:
+                    continue
+
+                alert = Alert(
+                    title=alert_payload.get("title") or "⚠ CGPA Alert",
+                    message=alert_payload.get("message") or NO_DATA_MESSAGE,
+                    type="cgpa-monitor",
+                    target_role="student",
+                    target_type="individual",
+                    student_id=student.student_id,
                 )
-                continue
+                db.add(alert)
+                db.commit()
+                db.refresh(alert)
 
-            title = "⚠ CGPA Alert"
-            message = (
-                f"Your CGPA is {cgpa_val:.2f}. "
-                f"Minimum required is {threshold}."
-            )
-            alert = Alert(
-                title=title,
-                message=message,
-                type="cgpa-monitor",
-                target_role="student",
-                target_type="individual",
-                student_id=student.student_id
-            )
-            db.add(alert)
-            db.commit()
-            db.refresh(alert)
-
-            recipient = AlertRecipient(
-                alert_id=alert.id,
-                user_id=student.student_id,
-                is_read=False
-            )
-            db.add(recipient)
-            db.commit()
+                db.add(AlertRecipient(alert_id=alert.id, user_id=student.student_id, is_read=False))
+                db.commit()
 
     except Exception as e:
         print("CGPA Alert Scheduler Error:", e)
@@ -9469,19 +9940,8 @@ def get_faculty_insights_data(
                         pass
 
         if not attendance_values:
-            view = (trend_view or "").strip().lower()
-            if view not in {"days", "weeks", "months"}:
-                view = "days"
-            today = datetime.utcnow().date()
-            if view == "days":
-                trend_labels = [(today - timedelta(days=6) + timedelta(days=i)).strftime("%a") for i in range(7)]
-            elif view == "weeks":
-                trend_labels = [f"Week {i + 1}" for i in range(4)]
-            else:
-                trend_labels = ["Jan", "Feb", "Mar"]
-            fallback_base = [75, 78, 80, 77, 76]
-            n = len(trend_labels)
-            attendance_values = [fallback_base[i] if i < len(fallback_base) else fallback_base[-1] for i in range(n)]
+            trend_labels = []
+            attendance_values = []
 
         attendance_trend = [
             {"label": trend_labels[i] if i < len(trend_labels) else f"P{i + 1}", "value": attendance_values[i]}
@@ -9557,6 +10017,7 @@ def get_faculty_insights_data(
     ]
 
     attendance_threshold = get_setting("attendance_threshold") or 75
+    cgpa_threshold = get_setting("cgpa_threshold") or 6.5
     try:
         _thr = float(attendance_threshold)
     except Exception:
@@ -9786,26 +10247,36 @@ def get_faculty_insights_data(
             "mid1": mm.get("mid1"),
             "mid2": mm.get("mid2"),
         }
-        try:
-            risk_payload = calculate_risk(stu_obj, {
-                "attendance": attendance_threshold,
-                "marks": 15,
-                "assignment": total_assignments
-            })
-            stu_obj["risk"] = risk_payload
-            # Keep existing risk object and expose normalized fields for downstream consumers.
-            stu_obj["risk_level"] = risk_payload.get("level", "LOW")
-            stu_obj["risk_score"] = float(risk_payload.get("risk_score", risk_payload.get("score", 0)) or 0)
-            stu_obj["risk_breakdown"] = risk_payload.get("risk_breakdown", [])
-            stu_obj["reasons"] = risk_payload.get("reasons", [])
-            stu_obj["actions"] = risk_payload.get("actions", [])
-        except Exception:
-            stu_obj["risk"] = {"risk": "LOW", "score": 0, "risk_score": 0, "risk_breakdown": [], "level": "LOW", "reasons": [], "actions": []}
-            stu_obj["risk_level"] = "LOW"
-            stu_obj["risk_score"] = 0
-            stu_obj["risk_breakdown"] = []
-            stu_obj["reasons"] = []
-            stu_obj["actions"] = []
+        risk_payload = get_student_risk(
+            student_id=sid,
+            db=db,
+            attendance_threshold=float(attendance_threshold),
+            cgpa_threshold=float(cgpa_threshold),
+        )
+        risk_level = str(risk_payload.get("overall_risk") or "NO_DATA").upper()
+        if risk_level == "NO_DATA":
+            risk_level = "LOW"
+
+        risk_score = 0.0
+        if risk_payload.get("overall_risk") == "HIGH":
+            risk_score = 85.0
+        elif risk_payload.get("overall_risk") == "MEDIUM":
+            risk_score = 60.0
+        elif risk_payload.get("overall_risk") == "LOW":
+            risk_score = 25.0
+
+        stu_obj["risk"] = {
+            "level": risk_level,
+            "risk_score": risk_score,
+            "reasons": risk_payload.get("reasons", []),
+            "actions": risk_payload.get("actions", []),
+            "has_valid_data": bool(risk_payload.get("has_valid_data")),
+        }
+        stu_obj["risk_level"] = risk_level
+        stu_obj["risk_score"] = risk_score
+        stu_obj["risk_breakdown"] = []
+        stu_obj["reasons"] = risk_payload.get("reasons", [])
+        stu_obj["actions"] = risk_payload.get("actions", [])
 
         previous_risk_score = None
         if student_row is not None:
@@ -10235,24 +10706,38 @@ def get_faculty_insights_data(
 
     response_data["recommendations"] = recommendations
 
-    try:
-        alerts = generate_alerts(response_data)
-    except Exception:
-        alerts = []
-
     normalized_alerts = []
-    for alert in alerts:
-        if not isinstance(alert, dict):
-            continue
-        priority = str(alert.get("priority") or alert.get("severity") or "low").lower()
+    high_risk_students = [s for s in students_list if str((s.get("risk") or {}).get("level") or "").upper() == "HIGH"]
+    medium_risk_students = [s for s in students_list if str((s.get("risk") or {}).get("level") or "").upper() == "MEDIUM"]
+
+    if high_risk_students:
         normalized_alerts.append({
-            **alert,
-            "message": alert.get("message") or alert.get("title") or "Alert",
-            "action": alert.get("action") or "Review",
-            "priority": priority,
+            "title": "High risk students detected",
+            "message": f"{len(high_risk_students)} students are in HIGH risk category.",
+            "action": "Review high-risk students",
+            "priority": "high",
+            "type": "academic",
         })
 
-    response_data["alerts"] = normalized_alerts
+    if medium_risk_students:
+        normalized_alerts.append({
+            "title": "Medium risk students need monitoring",
+            "message": f"{len(medium_risk_students)} students are in MEDIUM risk category.",
+            "action": "Track medium-risk students",
+            "priority": "medium",
+            "type": "academic",
+        })
+
+    if not normalized_alerts and students_list:
+        normalized_alerts.append({
+            "title": "No active academic alerts",
+            "message": "No validated risk alerts were generated for the selected filters.",
+            "action": "Continue monitoring",
+            "priority": "low",
+            "type": "academic",
+        })
+
+    response_data["alerts"] = normalized_alerts[:5]
 
     return response_data
 

@@ -1,0 +1,549 @@
+/* ===============================================
+   SMART TASK MANAGER STYLES
+   Minimal, clear, motivating UI
+   =============================================== */
+
+.smart-task-manager {
+  background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+  border-radius: 16px;
+  padding: 28px;
+  max-width: 900px;
+  margin: 0 auto;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen,
+    Ubuntu, Cantarell, sans-serif;
+}
+
+/* ===============================================
+   HEADER
+   =============================================== */
+
+.stm-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 28px;
+  padding-bottom: 20px;
+  border-bottom: 2px solid #f0f0f0;
+}
+
+.stm-header.minimal {
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+}
+
+.top-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.top-stat-item {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.badges-strip {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  margin-bottom: 12px;
+  padding-bottom: 4px;
+}
+
+.badge-chip {
+  border: 1px solid #d1d5db;
+  background: #f9fafb;
+  color: #111827;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.stm-header-left h2 {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 700;
+  color: #1a1a1a;
+  letter-spacing: -0.5px;
+}
+
+.stm-subtitle {
+  margin: 6px 0 0 0;
+  font-size: 14px;
+  color: #666;
+  font-weight: 400;
+}
+
+.stm-header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* STREAK BADGE */
+
+.streak-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+  padding: 10px 16px;
+  border-radius: 50px;
+  font-weight: 600;
+  color: #92400e;
+  box-shadow: 0 2px 8px rgba(217, 119, 6, 0.15);
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+.streak-icon {
+  font-size: 20px;
+  animation: flame-flicker 0.8s ease-in-out infinite;
+}
+
+.streak-text {
+  font-size: 14px;
+}
+
+@keyframes pulse-glow {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.02);
+  }
+}
+
+@keyframes flame-flicker {
+  0%,
+  100% {
+    transform: rotate(-2deg) scale(1);
+  }
+  50% {
+    transform: rotate(2deg) scale(1.05);
+  }
+}
+
+/* ===============================================
+   FEEDBACK MESSAGE
+   =============================================== */
+
+.feedback-message {
+  padding: 12px 16px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+  font-size: 14px;
+  font-weight: 500;
+  animation: slideInDown 0.4s ease-out;
+}
+
+.feedback-message.success {
+  background-color: #d1fae5;
+  color: #065f46;
+  border-left: 4px solid #10b981;
+}
+
+.feedback-message.info {
+  background-color: #dbeafe;
+  color: #0c4a6e;
+  border-left: 4px solid #3b82f6;
+}
+
+@keyframes slideInDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ===============================================
+   METRICS SECTION
+   =============================================== */
+
+.stm-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+  margin-bottom: 32px;
+}
+
+.metric-box {
+  background: white;
+  border: 2px solid #f0f0f0;
+  border-radius: 12px;
+  padding: 16px;
+  text-align: center;
+  transition: all 0.3s ease;
+  cursor: pointer;
+}
+
+.metric-box:hover {
+  border-color: #3b82f6;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.1);
+}
+
+.metric-box.predictive {
+  background: linear-gradient(135deg, #e0f2fe 0%, #f0f9ff 100%);
+  border-color: #0284c7;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.metric-label {
+  font-size: 12px;
+  color: #666;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+
+.metric-value {
+  font-size: 24px;
+  font-weight: 700;
+  color: #1a1a1a;
+}
+
+.predictive-icon {
+  font-size: 20px;
+  color: #0284c7;
+}
+
+/* ===============================================
+   TASK SECTIONS
+   =============================================== */
+
+.task-section {
+  margin-bottom: 28px;
+}
+
+.section-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #1a1a1a;
+  margin: 0 0 12px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.section-icon {
+  font-size: 18px;
+}
+
+.tasks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ===============================================
+   TASK ITEM
+   =============================================== */
+
+.task-item {
+  display: flex;
+  gap: 12px;
+  padding: 14px 16px;
+  background: white;
+  border: 2px solid #f0f0f0;
+  border-left: 4px solid #9ca3af;
+  border-radius: 10px;
+  transition: all 0.3s ease;
+  cursor: pointer;
+  animation: slideInLeft 0.4s ease-out;
+}
+
+.task-item:hover {
+  border-color: #d1d5db;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  transform: translateX(4px);
+}
+
+.task-item.completed {
+  background: #f0fdf4;
+  border-color: #86efac;
+  border-left-color: #22c55e;
+  opacity: 0.85;
+}
+
+.task-item.completed .task-title {
+  text-decoration: line-through;
+  color: #666;
+}
+
+@keyframes slideInLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* CHECKBOX */
+
+.task-checkbox-wrapper {
+  display: flex;
+  align-items: flex-start;
+  margin-top: 2px;
+}
+
+.task-checkbox {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  color: #d1d5db;
+  transition: all 0.3s ease;
+  flex-shrink: 0;
+}
+
+.task-checkbox:disabled {
+  cursor: not-allowed;
+  opacity: 0.8;
+}
+
+.task-checkbox:hover {
+  color: #9ca3af;
+  transform: scale(1.1);
+}
+
+.task-checkbox .checked-icon {
+  color: #22c55e;
+  font-size: 24px;
+}
+
+.task-checkbox .unchecked-icon {
+  font-size: 24px;
+}
+
+/* TASK CONTENT */
+
+.task-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.task-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.task-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1a1a1a;
+  word-break: break-word;
+  flex: 1;
+}
+
+.task-priority {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: white;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.task-reason {
+  margin: 0;
+  font-size: 13px;
+  color: #666;
+  line-height: 1.4;
+  margin-bottom: 4px;
+}
+
+.task-meta {
+  display: inline-block;
+  font-size: 12px;
+  color: #999;
+  font-weight: 500;
+}
+
+.task-verification-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.verification-tag {
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 2px 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.verification-tag.verified {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.verification-tag.pending {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.verification-tag.neutral {
+  background: #e5e7eb;
+  color: #374151;
+}
+
+.leaderboard-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  margin-top: 8px;
+}
+
+.leaderboard-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #374151;
+  border-bottom: 1px dashed #e5e7eb;
+  padding-bottom: 4px;
+}
+
+.leaderboard-row.current-user {
+  color: #0f172a;
+  font-weight: 700;
+}
+
+/* ===============================================
+   EMPTY STATE
+   =============================================== */
+
+.empty-state {
+  text-align: center;
+  padding: 40px 20px;
+  background: linear-gradient(135deg, #f0f9ff 0%, #f0fdf4 100%);
+  border-radius: 12px;
+  border: 2px dashed #cbd5e1;
+}
+
+.empty-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+}
+
+.empty-state h3 {
+  margin: 0 0 8px 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+.empty-state p {
+  margin: 0;
+  font-size: 14px;
+  color: #666;
+}
+
+/* ===============================================
+   RESPONSIVE DESIGN
+   =============================================== */
+
+@media (max-width: 768px) {
+  .smart-task-manager {
+    padding: 20px;
+  }
+
+  .stm-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .top-stats {
+    width: 100%;
+  }
+
+  .stm-header-left h2 {
+    font-size: 24px;
+  }
+
+  .stm-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .task-item {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .task-checkbox-wrapper {
+    align-items: center;
+  }
+
+  .task-header {
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .task-priority {
+    align-self: flex-start;
+  }
+}
+
+@media (max-width: 480px) {
+  .smart-task-manager {
+    padding: 16px;
+    border-radius: 12px;
+  }
+
+  .stm-header-left h2 {
+    font-size: 20px;
+  }
+
+  .streak-badge {
+    padding: 8px 12px;
+    font-size: 12px;
+  }
+
+  .section-title {
+    font-size: 14px;
+  }
+
+  .task-title {
+    font-size: 13px;
+  }
+
+  .metric-value {
+    font-size: 20px;
+  }
+}

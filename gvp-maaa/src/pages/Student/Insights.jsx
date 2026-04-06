@@ -50,6 +50,11 @@ function getConsistencyColor(score) {
   return "text-red-600";
 }
 
+function getTasksStorageKey(studentId) {
+  if (!studentId) return "dailyTasksState";
+  return `dailyTasksState:${studentId}`;
+}
+
 export default function Insights() {
   const [activeTab, setActiveTab] = useState("future");
   const [insights, setInsights] = useState(null);
@@ -66,10 +71,12 @@ export default function Insights() {
         setError("");
         const response = await api.get("/student/insights");
         if (mounted) {
-          setInsights(response.data || null);
-          
-          // Load saved task states from localStorage
-          const saved = localStorage.getItem("dailyTasksState");
+          const data = response.data || null;
+          setInsights(data);
+
+          // Scope task state per student account to avoid cross-user leakage.
+          const key = getTasksStorageKey(data?.student_id);
+          const saved = localStorage.getItem(key);
           if (saved) {
             setDailyTasksState(JSON.parse(saved));
           }
@@ -98,13 +105,13 @@ export default function Insights() {
       [index]: !dailyTasksState[index],
     };
     setDailyTasksState(updated);
-    localStorage.setItem("dailyTasksState", JSON.stringify(updated));
+    localStorage.setItem(getTasksStorageKey(insights?.student_id), JSON.stringify(updated));
   };
 
   const attendance = insights?.attendance;
   const mid1 = insights?.mid1;
   const mid2 = insights?.mid2;
-  const riskLevel = insights?.risk_level || "LOW";
+  const riskLevel = insights?.risk_level || "INSUFFICIENT DATA";
   const primaryIssue = insights?.primary_issue || "Insufficient data to analyze";
   const prediction = insights?.prediction || "Insufficient data to analyze";
   const actions = Array.isArray(insights?.actions) ? insights.actions : [];
@@ -173,6 +180,16 @@ export default function Insights() {
     return (
       <div className="rounded-2xl bg-red-50 border border-red-200 p-6 text-red-700 text-sm">
         {error}
+      </div>
+    );
+  }
+
+  if (insights && insights.has_valid_data === false) {
+    return (
+      <div className="space-y-6">
+        <div className="rounded-2xl bg-slate-50 border border-slate-200 p-6 text-slate-700 text-sm">
+          {insights.no_data_message || "No performance data available yet. Insights will appear once data is updated."}
+        </div>
       </div>
     );
   }
@@ -320,10 +337,10 @@ export default function Insights() {
             />
             <SnapshotItem
               label="Placement Outlook"
-              value={placementStatus}
+              value={placementReadinessByCgpa}
               whyThisMatters={
-                isNumber(attendance) && isNumber(mid1) && isNumber(mid2)
-                  ? `Attendance ${attendance}%, Mid1 ${mid1}, Mid2 ${mid2}.`
+                isNumber(attendance) && isNumber(cgpa)
+                  ? `Authoritative model: Attendance ${attendance}% and predicted CGPA ${cgpa}.`
                   : "Insufficient data to analyze"
               }
             />
@@ -362,7 +379,7 @@ export default function Insights() {
                 <div className="space-y-1 text-sm text-gray-700">
                   {requiredMid2Targets.map((item, index) => (
                     <p key={`${item.target}-${index}`}>
-                      CGPA {item.target}: Mid2 needed {item.required_mid2} ({item.status})
+                      CGPA {item.target}: Mid2 needed {item.status === "IMPOSSIBLE" ? item.required_mid2_raw : item.required_mid2} ({item.status})
                     </p>
                   ))}
                 </div>
@@ -592,6 +609,7 @@ export default function Insights() {
           {!!subjectInsights.length && (
             <div className="rounded-3xl p-6 bg-white/80 border border-white/50 space-y-5">
               <h3 className="font-semibold">Subject-Level Intelligence</h3>
+              <p className="text-xs text-gray-600">Topline metrics are always visible; detailed rationale is collapsed per subject for faster scanning.</p>
 
               {prioritySubject && (
                 <div className="rounded-2xl p-4 bg-blue-50 border border-blue-200">
@@ -601,6 +619,11 @@ export default function Insights() {
                   </p>
                   <p className="text-sm text-blue-700">Priority Score: {prioritySubject.priority_score}</p>
                   <p className="text-sm text-blue-700">Time Allocation: {prioritySubject.time_allocation}</p>
+                  {prioritySubject.priority_breakdown && (
+                    <p className="text-xs text-blue-700 mt-1">
+                      Score model: {prioritySubject.priority_breakdown.formula}
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -639,25 +662,38 @@ export default function Insights() {
                       </div>
                     </div>
 
-                    <div className="mt-2 text-sm text-gray-700 space-y-1">
+                    <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-gray-700">
                       <p>Reason: {subject.reason}</p>
-                      <p>
-                        Required improvement: {isNumber(subject.required_mid2)
-                          ? `Need ${subject.required_mid2} in Mid2 to reach safe level (${subject.status})`
-                          : "Not enough mid data to estimate Mid2 requirement"}
-                      </p>
-                      {isNumber(subject.required_mid2_for_8) && (
-                        <p>Stretch target: Need {subject.required_mid2_for_8} in Mid2 to reach CGPA 8.0 in this subject.</p>
-                      )}
                       {isNumber(subject.priority_score) && <p>Priority Score: {subject.priority_score}</p>}
                       {subject.time_allocation && <p>Time Allocation: {subject.time_allocation}</p>}
-                      {subject.faculty_feedback && (
-                        <p>
-                          Faculty Feedback: {subject.faculty_feedback.summary} - {subject.faculty_feedback.action}
-                        </p>
-                      )}
-                      {subject.impact && <p>Impact: {subject.impact}</p>}
+                      <p>
+                        Required improvement: {isNumber(subject.required_mid2)
+                          ? `Need ${subject.status === "IMPOSSIBLE" ? subject.required_mid2_raw : subject.required_mid2} in Mid2 to reach safe level (${subject.status})`
+                          : "Not enough mid data to estimate Mid2 requirement"}
+                      </p>
                     </div>
+
+                    <details className="mt-3 rounded-lg bg-white border border-gray-200 p-3">
+                      <summary className="text-xs font-semibold text-gray-700 cursor-pointer">View detailed explanation</summary>
+                      <div className="mt-2 text-sm text-gray-700 space-y-1">
+                        {isNumber(subject.required_mid2_for_8) && (
+                          <p>
+                            Stretch target: Need {subject.status === "IMPOSSIBLE" && isNumber(subject.required_mid2_for_8_raw) ? subject.required_mid2_for_8_raw : subject.required_mid2_for_8} in Mid2 to reach CGPA 8.0 in this subject.
+                          </p>
+                        )}
+                        {subject.priority_breakdown && (
+                          <p>
+                            Priority breakdown: CGPA gap {subject.priority_breakdown.cgpa_gap_component}, attendance gap {subject.priority_breakdown.attendance_gap_component}, marks gap {subject.priority_breakdown.marks_gap_component}.
+                          </p>
+                        )}
+                        {subject.faculty_feedback && (
+                          <p>
+                            System Feedback ({subject.faculty_feedback.source || "SYSTEM_GENERATED"}): {subject.faculty_feedback.summary} - {subject.faculty_feedback.action}
+                          </p>
+                        )}
+                        {subject.impact && <p>Impact: {subject.impact}</p>}
+                      </div>
+                    </details>
                   </div>
                 ))}
               </div>
@@ -665,10 +701,11 @@ export default function Insights() {
           )}
 
           <div className="rounded-3xl p-6 bg-white/80 border border-white/50">
-            <h3 className="font-semibold mb-3">Placement Readiness From CGPA + Attendance</h3>
+            <h3 className="font-semibold mb-3">Placement Status (Authoritative Model)</h3>
             <p className="text-sm text-gray-700">
               Current status: <span className="font-semibold">{placementReadinessByCgpa}</span>
             </p>
+            <p className="text-xs text-gray-600 mt-1">This is the same status used in Placement Intelligence.</p>
           </div>
 
           {/* DAILY TASKS TRACKER */}
@@ -705,7 +742,7 @@ export default function Insights() {
                   </div>
                 ))}
               </div>
-              <p className="text-xs text-gray-600 mt-4">💾 Your progress is saved locally on this device</p>
+              <p className="text-xs text-gray-600 mt-4">Progress is saved locally for this student profile on this device.</p>
             </div>
           )}
 
@@ -792,7 +829,7 @@ function getPlacementText(status) {
 
 function formatPlacementValue(value, metric) {
   if (!isNumber(value)) return "Insufficient data to analyze";
-  if (metric === "Marks") {
+  if (metric === "Marks" || metric === "CGPA") {
     return `${value}`;
   }
   return `${value}%`;

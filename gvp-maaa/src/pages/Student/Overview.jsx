@@ -13,10 +13,11 @@ import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import WarningIcon from "@mui/icons-material/Warning";
 import AssignmentIcon from "@mui/icons-material/Assignment";
 import EventIcon from "@mui/icons-material/Event";
+import SmartTaskManager from "../../components/SmartTaskManager";
 
 export default function Overview({ profile }) {
   const [data, setData] = useState({
-    profile: { name: "", department: "", semester: "" },
+    profile: { name: "", department: "", semester: "", classId: "" },
     attendance: null,
     cgpa: null,
     sgpa: null,
@@ -193,8 +194,14 @@ export default function Overview({ profile }) {
           ? marksData.subjects
           : marksSubjectsRaw;
 
+        const derivedClassId =
+          profileData?.class_id ||
+          (profileData?.year && profileData?.section
+            ? `${profileData.year}-${profileData.section}`
+            : "");
+
         setData({
-          profile: { name: studentName, department, semester },
+          profile: { name: studentName, department, semester, classId: derivedClassId },
           attendance,
           cgpa: cgpa !== null ? Number(cgpa) : null,
           sgpa: sgpa !== null ? Number(sgpa) : null,
@@ -545,6 +552,22 @@ export default function Overview({ profile }) {
           subtext="Next events"
         />
       </div>
+
+      <SmartTaskManager
+        studentData={{
+          studentId,
+          studentName: data.profile.name || user?.name || "You",
+          classId: data.profile.classId,
+          attendance: data.attendance,
+          attendanceTrend: 0,
+          mid1: marksSubjects?.[0]?.mid1 || 0,
+          mid2: marksSubjects?.[0]?.mid2 || 0,
+          assignment: marksSubjects?.[0]?.assignments?.A1 || 0,
+          pendingAssignments: data.assignments.filter((a) => a?.status !== "submitted" && !a?.submitted),
+          assignmentsAll: data.assignments,
+          upcomingEvents: data.upcomingEvents,
+        }}
+      />
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 w-full">
         <div className="lg:col-span-8 space-y-4">

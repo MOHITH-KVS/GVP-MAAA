@@ -546,3 +546,31 @@ class ScalingLog(Base):
     timestamp = Column(DateTime, default=datetime.utcnow)
     snapshot_data = Column(JSON, nullable=True) # Stores previous state for undo.
 
+
+# -------------------------
+# GAMIFICATION PROGRESS
+# -------------------------
+class StudentProgress(Base):
+    __tablename__ = "student_progress"
+
+    student_id = Column(Integer, ForeignKey("students.student_id", ondelete="CASCADE"), primary_key=True)
+    total_xp = Column(Integer, default=0, nullable=False)
+    streak_days = Column(Integer, default=0, nullable=False)
+    last_active_date = Column(Date, nullable=True)
+
+
+class TaskLog(Base):
+    __tablename__ = "task_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    student_id = Column(Integer, ForeignKey("students.student_id", ondelete="CASCADE"), nullable=False, index=True)
+    task_id = Column(String(255), nullable=False, index=True)
+    completed = Column(Boolean, default=False, nullable=False)
+    verified = Column(Boolean, default=False, nullable=False)
+    xp_earned = Column(Integer, default=0, nullable=False)
+    date = Column(Date, default=lambda: datetime.utcnow().date(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("student_id", "task_id", "date", name="uq_task_log_student_task_date"),
+    )
+
