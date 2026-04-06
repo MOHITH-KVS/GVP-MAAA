@@ -4541,7 +4541,7 @@ def get_student_insights(
     student_id = current_user["user_id"]
 
     attendance_rows = (
-        db.query(Attendance.attendance_date, Attendance.status)
+        db.query(Attendance.subject_id, Attendance.attendance_date, Attendance.status)
         .filter(Attendance.student_id == student_id)
         .order_by(Attendance.attendance_date.asc())
         .all()
@@ -4573,6 +4573,19 @@ def get_student_insights(
 
     attendance_trend = attendance_trend_all[-7:]
     previous_attendance_window = attendance_trend_all[-14:-7]
+
+    subject_attendance_map = {}
+    for row in attendance_rows:
+        subject_id = row.subject_id
+        if subject_id is None:
+            continue
+
+        if subject_id not in subject_attendance_map:
+            subject_attendance_map[subject_id] = {"present": 0, "total": 0}
+
+        subject_attendance_map[subject_id]["total"] += 1
+        if bool(row.status):
+            subject_attendance_map[subject_id]["present"] += 1
 
     mark_rows = (
         db.query(Mark)
@@ -4623,6 +4636,504 @@ def get_student_insights(
 
     mid1 = round(sum(mid1_values) / len(mid1_values), 2) if mid1_values else None
     mid2 = round(sum(mid2_values) / len(mid2_values), 2) if mid2_values else None
+
+    # -----------------------------
+    # Dynamic CGPA Prediction Engine
+    # -----------------------------
+    assignments = []
+
+    def _extract_assignment_max(extra_data, exam_name, exam_key):
+        if not isinstance(extra_data, dict):
+            return None
+
+        lowered = {str(k).strip().lower(): v for k, v in extra_data.items()}
+        direct_candidates = [
+            "max",
+            "max_marks",
+            "max_score",
+            "out_of",
+            f"{exam_name}_max".lower() if exam_name else None,
+            f"{exam_key}_max".lower() if exam_key else None,
+            f"{exam_key}max".lower() if exam_key else None,
+        ]
+
+        for candidate in direct_candidates:
+            if candidate and candidate in lowered:
+                val = _to_float(lowered[candidate])
+                if val is not None and val > 0:
+                    return val
+
+        return None
+
+    for row in mark_rows:
+        exam_key = _normalize_exam_name(row.exam)
+        if not exam_key.startswith("assignment"):
+            continue
+
+        score_value = _to_float(row.marks)
+        if score_value is None:
+            continue
+
+        max_value = _extract_assignment_max(row.extra_data, row.exam, exam_key)
+        if max_value is None:
+            cohort_max_raw = (
+                db.query(func.max(Mark.marks))
+                .filter(
+                    Mark.subject_id == row.subject_id,
+                    Mark.exam == row.exam,
+                    Mark.marks.isnot(None),
+                )
+                .scalar()
+            )
+            cohort_max = _to_float(cohort_max_raw)
+            if cohort_max is not None and cohort_max > 0:
+                max_value = cohort_max
+
+        if max_value is None or max_value <= 0:
+            max_value = score_value
+
+        assignments.append({"score": score_value, "max": max_value})
+
+    if not assignments:
+        for row in mark_rows:
+            if not isinstance(row.extra_data, dict):
+                continue
+            lowered = {str(k).strip().lower(): v for k, v in row.extra_data.items()}
+            for key, raw_value in lowered.items():
+                if "assignment" not in key:
+                    continue
+                if "max" in key or "total" in key or "scaled" in key:
+                    continue
+
+                score_value = _to_float(raw_value)
+                if score_value is None:
+                    continue
+
+                max_key = f"{key}_max"
+                max_value = _to_float(lowered.get(max_key))
+                if max_value is None or max_value <= 0:
+                    max_value = score_value
+
+                assignments.append({"score": score_value, "max": max_value})
+
+    assignment_total = round(sum(item["score"] for item in assignments), 2)
+    assignment_max_total = round(sum(item["max"] for item in assignments), 2)
+
+    if assignment_max_total == 0:
+        scaled_assignment = 0.0
+    else:
+        scaled_assignment = round((assignment_total / assignment_max_total) * 10, 2)
+
+    if mid1 is not None and mid2 is not None:
+        mid_avg = (mid1 + mid2) / 2
+    elif mid1 is not None:
+        mid_avg = mid1
+    else:
+        mid_avg = None
+
+    external_candidates = []
+    for row in mark_rows:
+        sem_val = _to_float(row.semester)
+        if sem_val is not None and sem_val > 0:
+            external_candidates.append(sem_val)
+
+        exam_key = _normalize_exam_name(row.exam)
+        if exam_key == "semester":
+            exam_mark = _to_float(row.marks)
+            if exam_mark is not None and exam_mark > 0:
+                external_candidates.append(exam_mark)
+
+    external_estimate = round(sum(external_candidates) / len(external_candidates), 2) if external_candidates else 50.0
+
+    cgpa = None
+    internal = None
+    scaled_mid = None
+    cgpa_prediction_note = None
+    required_mid2_targets = []
+    simulation = []
+
+    def _clamp(value, min_value, max_value):
+        return max(min_value, min(max_value, value))
+
+    if mid_avg is None:
+        cgpa_prediction_note = "Not enough data"
+    else:
+        scaled_mid = round((mid_avg / 30) * 20, 2)
+        internal = round(scaled_assignment + scaled_mid, 2)
+
+        final_score = _clamp(round(internal + external_estimate, 2), 0, 100)
+        cgpa = round(final_score / 10, 2)
+
+        targets = [6.5, 7.5, 8.5]
+        for target in targets:
+            target_score = target * 10
+            required_internal = target_score - external_estimate
+            required_scaled_mid = required_internal - scaled_assignment
+            required_mid_avg = (required_scaled_mid / 20) * 30
+
+            if mid1 is not None:
+                required_mid2_raw = (2 * required_mid_avg) - mid1
+            else:
+                required_mid2_raw = required_mid_avg
+
+            if required_mid2_raw <= 30:
+                status = "ACHIEVABLE"
+            elif required_mid2_raw <= 35:
+                status = "STRETCH"
+            else:
+                status = "IMPOSSIBLE"
+
+            required_mid2 = round(_clamp(required_mid2_raw, 0, 30), 2)
+            required_mid2_targets.append(
+                {
+                    "target": target,
+                    "required_mid2": required_mid2,
+                    "status": status,
+                }
+            )
+
+        for simulated_mid2 in [10, 15, 20, 25, 30]:
+            sim_mid_avg = (mid1 + simulated_mid2) / 2 if mid1 is not None else simulated_mid2
+            sim_scaled_mid = (sim_mid_avg / 30) * 20
+            sim_internal = scaled_assignment + sim_scaled_mid
+            sim_final_score = _clamp(sim_internal + external_estimate, 0, 100)
+            sim_cgpa = round(sim_final_score / 10, 2)
+
+            simulation.append(
+                {
+                    "mid2": simulated_mid2,
+                    "cgpa": sim_cgpa,
+                }
+            )
+
+    if cgpa is not None and attendance_percent is not None and cgpa >= 8 and attendance_percent >= 80:
+        placement_readiness = "READY"
+    elif cgpa is not None and cgpa >= 7:
+        placement_readiness = "BORDERLINE"
+    elif cgpa is not None:
+        placement_readiness = "NOT READY"
+    else:
+        placement_readiness = "INSUFFICIENT DATA"
+
+    # -----------------------------
+    # Subject-Level Intelligence
+    # -----------------------------
+    subject_ids = set()
+    for row in mark_rows:
+        if row.subject_id is not None:
+            subject_ids.add(row.subject_id)
+    for sid in subject_attendance_map.keys():
+        subject_ids.add(sid)
+
+    subject_name_map = {}
+    if subject_ids:
+        subjects = db.query(Subject).filter(Subject.subject_id.in_(list(subject_ids))).all()
+        subject_name_map = {sub.subject_id: sub.subject_name for sub in subjects}
+
+    marks_by_subject = {}
+    for row in mark_rows:
+        subject_id = row.subject_id
+        if subject_id is None:
+            continue
+        marks_by_subject.setdefault(subject_id, []).append(row)
+
+    def _risk_from_cgpa(subject_cgpa):
+        if subject_cgpa is None:
+            return "INSUFFICIENT DATA"
+        if subject_cgpa < 6:
+            return "HIGH"
+        if subject_cgpa < 7.5:
+            return "MEDIUM"
+        return "LOW"
+
+    def _required_mid2_status(required_mid2_raw):
+        if required_mid2_raw <= 30:
+            return "ACHIEVABLE"
+        if required_mid2_raw <= 35:
+            return "STRETCH"
+        return "IMPOSSIBLE"
+
+    subject_items = []
+    for subject_id in sorted(subject_ids):
+        subject_rows = marks_by_subject.get(subject_id, [])
+        subject_name = subject_name_map.get(subject_id, f"Subject {subject_id}")
+
+        subject_mid1_values = []
+        subject_mid2_values = []
+        subject_assignments = []
+
+        for row in subject_rows:
+            exam_key = _normalize_exam_name(row.exam)
+            marks_value = _to_float(row.marks)
+
+            if exam_key in ["mid1", "mid01"] and marks_value is not None:
+                subject_mid1_values.append(marks_value)
+            elif exam_key in ["mid2", "mid02"] and marks_value is not None:
+                subject_mid2_values.append(marks_value)
+
+            if exam_key.startswith("assignment") and marks_value is not None:
+                max_value = _extract_assignment_max(row.extra_data, row.exam, exam_key)
+                if max_value is None:
+                    cohort_max_raw = (
+                        db.query(func.max(Mark.marks))
+                        .filter(
+                            Mark.subject_id == row.subject_id,
+                            Mark.exam == row.exam,
+                            Mark.marks.isnot(None),
+                        )
+                        .scalar()
+                    )
+                    cohort_max = _to_float(cohort_max_raw)
+                    if cohort_max is not None and cohort_max > 0:
+                        max_value = cohort_max
+
+                if max_value is None or max_value <= 0:
+                    max_value = marks_value
+
+                subject_assignments.append({"score": marks_value, "max": max_value})
+
+        if not subject_mid1_values:
+            for row in subject_rows:
+                val = _to_float(row.mid1)
+                if val is not None and val > 0:
+                    subject_mid1_values.append(val)
+
+        if not subject_mid2_values:
+            for row in subject_rows:
+                val = _to_float(row.mid2)
+                if val is not None and val > 0:
+                    subject_mid2_values.append(val)
+
+        if not subject_assignments:
+            for row in subject_rows:
+                if not isinstance(row.extra_data, dict):
+                    continue
+
+                lowered = {str(k).strip().lower(): v for k, v in row.extra_data.items()}
+                for key, raw_value in lowered.items():
+                    if "assignment" not in key:
+                        continue
+                    if "max" in key or "total" in key or "scaled" in key:
+                        continue
+
+                    score_value = _to_float(raw_value)
+                    if score_value is None:
+                        continue
+
+                    max_value = _to_float(lowered.get(f"{key}_max"))
+                    if max_value is None or max_value <= 0:
+                        max_value = score_value
+
+                    subject_assignments.append({"score": score_value, "max": max_value})
+
+        subject_mid1 = round(sum(subject_mid1_values) / len(subject_mid1_values), 2) if subject_mid1_values else None
+        subject_mid2 = round(sum(subject_mid2_values) / len(subject_mid2_values), 2) if subject_mid2_values else None
+
+        subject_assignment_total = round(sum(item["score"] for item in subject_assignments), 2)
+        subject_assignment_max_total = round(sum(item["max"] for item in subject_assignments), 2)
+        subject_scaled_assignment = round((subject_assignment_total / subject_assignment_max_total) * 10, 2) if subject_assignment_max_total > 0 else 0.0
+
+        subject_attendance_obj = subject_attendance_map.get(subject_id, {"present": 0, "total": 0})
+        subject_attendance = round((subject_attendance_obj["present"] / subject_attendance_obj["total"]) * 100, 2) if subject_attendance_obj["total"] > 0 else None
+
+        if subject_mid1 is not None and subject_mid2 is not None:
+            subject_mid_avg = (subject_mid1 + subject_mid2) / 2
+        elif subject_mid1 is not None:
+            subject_mid_avg = subject_mid1
+        else:
+            subject_mid_avg = None
+
+        subject_external_estimate = 50.0
+        subject_internal = None
+        subject_scaled_mid = None
+        subject_cgpa = None
+        required_mid2 = None
+        required_mid2_for_8 = None
+        status = "INSUFFICIENT DATA"
+
+        if subject_mid_avg is not None:
+            subject_scaled_mid = round((subject_mid_avg / 30) * 20, 2)
+            subject_internal = round(subject_scaled_assignment + subject_scaled_mid, 2)
+            subject_final_score = _clamp(subject_internal + subject_external_estimate, 0, 100)
+            subject_cgpa = round(subject_final_score / 10, 2)
+
+            target_cgpa = 7.5
+            target_score = target_cgpa * 10
+            required_internal = target_score - subject_external_estimate
+            required_scaled_mid = required_internal - subject_scaled_assignment
+            required_mid_avg = (required_scaled_mid / 20) * 30
+
+            if subject_mid1 is not None:
+                required_mid2_raw = (2 * required_mid_avg) - subject_mid1
+            else:
+                required_mid2_raw = required_mid_avg
+
+            status = _required_mid2_status(required_mid2_raw)
+            required_mid2 = round(_clamp(required_mid2_raw, 0, 30), 2)
+
+            target_cgpa_8 = 8.0
+            target_score_8 = target_cgpa_8 * 10
+            required_internal_8 = target_score_8 - subject_external_estimate
+            required_scaled_mid_8 = required_internal_8 - subject_scaled_assignment
+            required_mid_avg_8 = (required_scaled_mid_8 / 20) * 30
+
+            if subject_mid1 is not None:
+                required_mid2_raw_8 = (2 * required_mid_avg_8) - subject_mid1
+            else:
+                required_mid2_raw_8 = required_mid_avg_8
+
+            required_mid2_for_8 = round(_clamp(required_mid2_raw_8, 0, 30), 2)
+
+        reasons = []
+        if subject_attendance is not None and subject_attendance < 75:
+            reasons.append("Low attendance")
+        if subject_mid1 is not None and subject_mid1 < 15:
+            reasons.append("Low marks")
+        if subject_mid2 is not None and subject_mid2 < 15:
+            reasons.append("Low marks")
+        if subject_mid1 is not None and subject_mid2 is not None and subject_mid2 < subject_mid1:
+            reasons.append("Declining mid performance")
+
+        if not reasons and subject_cgpa is None:
+            reasons.append("Insufficient data")
+        elif not reasons:
+            reasons.append("Stable performance")
+
+        reason_text = ", ".join(dict.fromkeys(reasons))
+        risk = _risk_from_cgpa(subject_cgpa)
+
+        impact = None
+        if subject_cgpa is not None:
+            target_for_impact = 8.0
+            gap = round(max(0, target_for_impact - subject_cgpa), 2)
+            if gap > 0:
+                impact = f"Improving this subject by +1 CGPA can increase overall CGPA significantly (gap to 8.0: {gap})"
+            else:
+                impact = "This subject already supports a strong overall CGPA"
+
+        cgpa_gap_to_8 = round(max(0, 8.0 - subject_cgpa), 2) if subject_cgpa is not None else None
+
+        if subject_cgpa is None:
+            priority_score = 0
+        else:
+            attendance_gap = max(0, 80 - subject_attendance) if subject_attendance is not None else 0
+            mark_gap = 0
+            if subject_mid1 is not None:
+                mark_gap += max(0, 15 - subject_mid1)
+            if subject_mid2 is not None:
+                mark_gap += max(0, 15 - subject_mid2)
+
+            priority_score = round(
+                _clamp((cgpa_gap_to_8 * 35) + (attendance_gap * 0.6) + (mark_gap * 1.5), 0, 100),
+                2,
+            )
+
+        if subject_attendance is None:
+            time_allocation = f"Spend more time on {subject_name}"
+        elif priority_score >= 75:
+            time_allocation = f"Spend 60% time on {subject_name}"
+        elif priority_score >= 50:
+            time_allocation = f"Spend 40% time on {subject_name}"
+        elif priority_score >= 25:
+            time_allocation = f"Spend 25% time on {subject_name}"
+        else:
+            time_allocation = f"Spend 15% time on {subject_name}"
+
+        if subject_cgpa is None:
+            faculty_feedback = {
+                "summary": "Not enough subject data",
+                "action": "Collect more marks and attendance records before final feedback",
+            }
+        elif risk == "HIGH":
+            faculty_feedback = {
+                "summary": "Subject is below safe academic level",
+                "action": "Teacher should review basics, check attendance, and assign focused practice",
+            }
+        elif risk == "MEDIUM":
+            faculty_feedback = {
+                "summary": "Subject is near the warning zone",
+                "action": "Teacher should reinforce weak units and monitor the next assessment closely",
+            }
+        else:
+            faculty_feedback = {
+                "summary": "Subject is performing well",
+                "action": "Teacher should maintain current pace and give advanced practice",
+            }
+
+        subject_items.append(
+            {
+                "name": subject_name,
+                "subject_id": subject_id,
+                "attendance": subject_attendance,
+                "mid1": subject_mid1,
+                "mid2": subject_mid2,
+                "assignment_total": subject_assignment_total,
+                "assignment_max_total": subject_assignment_max_total,
+                "scaled_assignment": subject_scaled_assignment,
+                "scaled_mid": subject_scaled_mid,
+                "internal": subject_internal,
+                "external_estimate": subject_external_estimate,
+                "cgpa": subject_cgpa,
+                "risk": risk,
+                "priority_score": priority_score,
+                "cgpa_gap_to_8": cgpa_gap_to_8,
+                "time_allocation": time_allocation,
+                "faculty_feedback": faculty_feedback,
+                "required_mid2": required_mid2,
+                "required_mid2_for_8": required_mid2_for_8,
+                "status": status,
+                "reason": reason_text,
+                "impact": impact,
+            }
+        )
+
+    subjects_with_cgpa = [item for item in subject_items if item.get("cgpa") is not None]
+    subjects_with_cgpa.sort(key=lambda item: item["cgpa"])  # type: ignore
+
+    weakest_subjects = [
+        {
+            "name": item["name"],
+            "cgpa": item["cgpa"],
+            "risk": item["risk"],
+            "reason": item["reason"],
+            "required_mid2": item["required_mid2"],
+            "status": item["status"],
+            "impact": item["impact"],
+            "priority_score": item["priority_score"],
+            "time_allocation": item["time_allocation"],
+            "faculty_feedback": item["faculty_feedback"],
+        }
+        for item in subjects_with_cgpa[:2]
+    ]
+
+    strongest_subject = None
+    if subjects_with_cgpa:
+        strongest_item = subjects_with_cgpa[-1]
+        strongest_subject = {
+            "name": strongest_item["name"],
+            "cgpa": strongest_item["cgpa"],
+            "risk": strongest_item["risk"],
+            "reason": strongest_item["reason"],
+            "priority_score": strongest_item["priority_score"],
+        }
+
+    priority_subject = None
+    if subject_items:
+        priority_subject_item = max(subject_items, key=lambda item: item.get("priority_score") or 0)
+        priority_subject = {
+            "name": priority_subject_item["name"],
+            "priority_score": priority_subject_item["priority_score"],
+            "cgpa": priority_subject_item["cgpa"],
+            "reason": priority_subject_item["reason"],
+            "time_allocation": priority_subject_item["time_allocation"],
+        }
+
+    subject_intelligence = {
+        "subjects": subject_items,
+        "weakest_subjects": weakest_subjects,
+        "strongest_subject": strongest_subject,
+        "priority_subject": priority_subject,
+    }
 
     marks_trend = marks_trend_values[-7:]
     if len(marks_trend) < 2:
@@ -4735,11 +5246,188 @@ def get_student_insights(
     readiness = round((attendance_percent + average_mid) / 2, 2) if attendance_percent is not None and average_mid is not None else None
     aptitude = round((mid1 / 30) * 100, 2) if mid1 is not None else None
 
+    # Enhanced consistency score with interpretation
     consistency = None
+    consistency_interpretation = "Insufficient data"
     if len(attendance_trend) >= 2:
         trend_mean = sum(attendance_trend) / len(attendance_trend)
         variance = sum((value - trend_mean) ** 2 for value in attendance_trend) / len(attendance_trend)
-        consistency = round(max(0, min(100, 100 - variance)), 2)
+        std_dev = variance ** 0.5
+        consistency = round(max(0, min(100, 100 - (std_dev * 5))), 2)  # Scale std dev impact
+        
+        if consistency >= 80:
+            consistency_interpretation = "Very consistent attendance pattern"
+        elif consistency >= 60:
+            consistency_interpretation = "Moderately consistent"
+        else:
+            consistency_interpretation = "Inconsistent - shows irregular attendance"
+
+    # WHAT-IF SIMULATION ENGINE
+    what_if = {
+        "attendance_improvement": "",
+        "marks_improvement": "",
+        "combined_impact": ""
+    }
+    
+    if attendance_percent is not None:
+        # Simulate attending next 5 classes (assume 5 more classes total)
+        simulated_new_attendance = round(((present_attendance + 5) / (total_attendance + 5)) * 100, 2)
+        attendance_boost = simulated_new_attendance - attendance_percent
+        
+        if attendance_boost > 0:
+            what_if["attendance_improvement"] = f"If you attend next 5 classes: {attendance_percent}% → {simulated_new_attendance}% (+{attendance_boost}%)"
+        else:
+            what_if["attendance_improvement"] = f"Attendance is already high at {attendance_percent}%"
+    
+    if mid1 is not None:
+        # Simulate marks improvement by +5 points
+        simulated_mid2_improved = min(30, (mid2 or mid1) + 5)
+        marks_boost = simulated_mid2_improved - (mid2 or mid1)
+        original_avg = (mid1 + (mid2 or mid1)) / 2
+        simulated_avg = (mid1 + simulated_mid2_improved) / 2
+        
+        if marks_boost > 0:
+            what_if["marks_improvement"] = f"If marks improve by +5: Average {original_avg:.1f} → {simulated_avg:.1f}"
+        else:
+            what_if["marks_improvement"] = f"Marks are already strong at {mid1} (Mid1)"
+    
+    # Combined impact
+    if what_if["attendance_improvement"] and what_if["marks_improvement"]:
+        what_if["combined_impact"] = "Both attendance and marks improvement will compound your readiness gain"
+
+    # EARLY WARNING SYSTEM
+    warnings = []
+    
+    if attendance_percent is not None and attendance_percent < 75:
+        classes_allowed_to_miss = max(0, int((attendance_percent * total_attendance - 0.75 * total_attendance) / 0.25))
+        warnings.append(f"Critical: If you miss 2 more classes, you fall below 75%")
+    
+    if attendance_percent is not None and attendance_percent < 65:
+        warnings.append(f"URGENT: Attendance at {attendance_percent}% is critically low")
+    
+    if mid1 is not None and mid2 is not None and mid2 < mid1 - 3:
+        warnings.append(f"Performance declining: Mid2 ({mid2}) vs Mid1 ({mid1}) - focus on weak subjects")
+    
+    if (mid1 is not None and mid1 < 12) or (mid2 is not None and mid2 < 12):
+        warnings.append("Marks are below safe threshold - high final exam risk")
+    
+    if len(attendance_trend) >= 3:
+        recent_avg = sum(attendance_trend[-3:]) / 3
+        older_avg = sum(attendance_trend[:3]) / 3 if len(attendance_trend) >= 3 else attendance_percent
+        if recent_avg < older_avg - 5:
+            warnings.append("Attendance trend is declining sharply")
+
+    # DAILY TASK GENERATION
+    daily_tasks = []
+    
+    if attendance_percent is not None and attendance_percent < 75:
+        daily_tasks.append({
+            "task": "Attend all classes today",
+            "priority": "HIGH",
+            "reason": f"Current attendance is {attendance_percent}% - need every class",
+            "status": False
+        })
+    
+    if (mid1 is not None and mid1 < 15) or (mid2 is not None and mid2 < 15):
+        daily_tasks.append({
+            "task": "Revise 1 weak subject for 30 mins",
+            "priority": "HIGH",
+            "reason": "Marks need improvement",
+            "status": False
+        })
+    
+    if marks_decreasing:
+        daily_tasks.append({
+            "task": "Practice 10 previous exam questions",
+            "priority": "MEDIUM",
+            "reason": "Performance is declining",
+            "status": False
+        })
+    
+    if attendance_percent is not None and attendance_percent < 65:
+        daily_tasks.append({
+            "task": "Meet instructor to discuss attendance",
+            "priority": "HIGH",
+            "reason": "Critical attendance level requires intervention",
+            "status": False
+        })
+    
+    if consistency is not None and consistency < 50:
+        daily_tasks.append({
+            "task": "Plan tomorrow's class schedule now",
+            "priority": "MEDIUM",
+            "reason": "Inconsistent attendance pattern detected",
+            "status": False
+        })
+    
+    if not daily_tasks:
+        daily_tasks.append({
+            "task": "Review one advanced topic in your weak subject",
+            "priority": "LOW",
+            "reason": "Maintain current performance level",
+            "status": False
+        })
+
+    # BEHAVIOR PATTERN DETECTION
+    patterns = []
+    
+    if len(attendance_trend) >= 5:
+        # Check for mid-week drop
+        first_half = attendance_trend[:len(attendance_trend)//2]
+        second_half = attendance_trend[len(attendance_trend)//2:]
+        
+        if first_half and second_half:
+            first_avg = sum(first_half) / len(first_half)
+            second_avg = sum(second_half) / len(second_half)
+            
+            if second_avg < first_avg - 10:
+                patterns.append("📉 Attendance drops later in the week - plan weekend revisions")
+            elif second_avg > first_avg + 10:
+                patterns.append("📈 Attendance improves later in the week - maintain momentum")
+    
+    if marks_decreasing and mid1 is not None and mid2 is not None:
+        decline_rate = mid1 - mid2
+        if decline_rate > 5:
+            patterns.append(f"📉 Performance declining rapidly ({decline_rate} points) - needs immediate focus")
+        else:
+            patterns.append(f"📉 Performance declining slightly - adjust study approach")
+    
+    if marks_trend and len(marks_trend) >= 3:
+        increasing = marks_trend[-1] > marks_trend[0]
+        if increasing:
+            patterns.append("📈 Marks showing upward trend - strategy is working")
+        else:
+            patterns.append("📉 Marks trend declining - current study method needs revision")
+    
+    if attendance_percent and mid1 and mid2:
+        if attendance_percent >= 85 and mid2 >= mid1:
+            patterns.append("✅ High attendance + improving marks = strong trajectory")
+        elif attendance_percent < 70 and mid2 < mid1:
+            patterns.append("⚠️ Both attendance and marks declining - urgent intervention needed")
+
+    # EARLY WARNING SIGNALS (critical flags)
+    early_warning_signals = []
+    
+    if attendance_percent is not None and attendance_percent < 60:
+        early_warning_signals.append({
+            "level": "CRITICAL",
+            "signal": "Attendance critically low",
+            "action": "Meet academic advisor immediately"
+        })
+    
+    if (mid1 is not None and mid1 < 10) or (mid2 is not None and mid2 < 10):
+        early_warning_signals.append({
+            "level": "CRITICAL",
+            "signal": "Marks are dangerously low",
+            "action": "Seek tutor assistance or peer study group"
+        })
+    
+    if risk_level == "HIGH" and len(early_warning_signals) == 0:
+        early_warning_signals.append({
+            "level": "HIGH",
+            "signal": "Overall risk level is HIGH",
+            "action": "Schedule meeting with mentor"
+        })
 
     if attendance_percent is None or mid1 is None or mid2 is None:
         placement_status = "INSUFFICIENT DATA"
@@ -4807,6 +5495,18 @@ def get_student_insights(
         "attendance_trend": attendance_trend,
         "mid1": mid1,
         "mid2": mid2,
+        "external_estimate": external_estimate,
+        "cgpa": cgpa,
+        "internal": internal,
+        "scaled_mid": scaled_mid,
+        "scaled_assignment": scaled_assignment,
+        "assignment_total": assignment_total,
+        "assignment_max_total": assignment_max_total,
+        "required_mid2_targets": required_mid2_targets,
+        "simulation": simulation,
+        "placement_readiness": placement_readiness,
+        "cgpa_prediction_note": cgpa_prediction_note,
+        "subject_intelligence": subject_intelligence,
         "marks_trend": marks_trend,
         "risk_level": risk_level,
         "primary_issue": primary_issue,
@@ -4824,6 +5524,11 @@ def get_student_insights(
         },
         "consequences": consequences,
         "actions": actions,
+        "what_if": what_if,
+        "warnings": warnings,
+        "daily_tasks": daily_tasks,
+        "patterns": patterns,
+        "early_warning_signals": early_warning_signals,
         "placement_analysis": {
             "status": placement_status,
             "reasons": placement_reasons,
@@ -4839,6 +5544,7 @@ def get_student_insights(
             "readiness": readiness,
             "aptitude": aptitude,
             "consistency": consistency,
+            "consistency_interpretation": consistency_interpretation,
         }
     }
 
