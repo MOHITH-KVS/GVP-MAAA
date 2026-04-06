@@ -5,7 +5,7 @@ import SchoolIcon from "@mui/icons-material/School";
 import CircularProgress from "@mui/material/CircularProgress";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
-import axios from "axios";
+import api from "../../utils/axios";
 
 /* ===== ALLOWED COLLEGE DOMAINS ===== */
 const ALLOWED_DOMAINS = ["@gvpcdpgc.edu.in"];
@@ -46,7 +46,7 @@ export default function StudentSignIn() {
   try {
     setLoading(true);
 
-    const response = await axios.post("http://localhost:8000/login", {
+    const response = await api.post("/login", {
       email,
       password
     });
