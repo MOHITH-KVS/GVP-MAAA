@@ -79,6 +79,14 @@ from jose import JWTError, jwt  # type: ignore
 from datetime import date, timedelta
 from services.risk_engine import get_student_risk
 from services.alert_rules import generate_student_alerts, NO_DATA_MESSAGE
+from services.placement_engine import (
+    generate_action_plan,
+    get_company_eligibility,
+    get_interview_insights,
+    get_placement_readiness,
+    get_selection_probability,
+    get_skill_gap,
+)
 
 
 
@@ -1541,6 +1549,71 @@ def update_student_profile(
     db.commit()
 
     return {"message": "Profile updated successfully"}
+
+
+def _require_placement_student(student_id: int, current_user: dict):
+    if current_user["role"] != "student" or int(current_user["user_id"]) != int(student_id):
+        raise HTTPException(status_code=403, detail="Student only")
+
+
+@app.get("/placement/readiness/{student_id}")
+def placement_readiness(
+    student_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_placement_student(student_id, current_user)
+    return get_placement_readiness(student_id, db)
+
+
+@app.get("/placement/eligibility/{student_id}")
+def placement_eligibility(
+    student_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_placement_student(student_id, current_user)
+    return get_company_eligibility(student_id, db)
+
+
+@app.get("/placement/skills/{student_id}")
+def placement_skills(
+    student_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_placement_student(student_id, current_user)
+    return get_skill_gap(student_id, db)
+
+
+@app.get("/placement/interviews/{student_id}")
+def placement_interviews(
+    student_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_placement_student(student_id, current_user)
+    return get_interview_insights(student_id, db)
+
+
+@app.get("/placement/prediction/{student_id}")
+def placement_prediction(
+    student_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_placement_student(student_id, current_user)
+    return get_selection_probability(student_id, db)
+
+
+@app.get("/placement/action-plan/{student_id}")
+def placement_action_plan(
+    student_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_placement_student(student_id, current_user)
+    return generate_action_plan(student_id, db)
 
 
 

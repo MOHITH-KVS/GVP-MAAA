@@ -1,338 +1,484 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-/* ================= MOCK DATA ================= */
+import api from "../../utils/api";
 
-const STUDENT = {
-  cgpa: 7.4,
-  backlogs: 0,
-  skills: ["Aptitude", "DSA"],
-};
-
-const COMPANIES = [
-  {
-    name: "TCS",
-    minCGPA: 6.5,
-    maxBacklogs: 0,
-    skills: ["Aptitude", "Communication"],
-  },
-  {
-    name: "Infosys",
-    minCGPA: 7.0,
-    maxBacklogs: 1,
-    skills: ["DSA", "DBMS"],
-  },
-  {
-    name: "Wipro",
-    minCGPA: 6.0,
-    maxBacklogs: 2,
-    skills: ["Aptitude"],
-  },
-];
-
-const INTERVIEWS = [
-  {
-    company: "Infosys",
-    date: "22 Dec 2025",
-    mode: "Online",
-    status: "upcoming",
-  },
-  {
-    company: "TCS",
-    date: "10 Dec 2025",
-    mode: "Offline",
-    status: "completed",
-    round: null,
-  },
-];
+const EMPTY_MESSAGE = "No placement data available yet. Start attending interviews.";
 
 export default function Placement() {
-  const [showModal, setShowModal] = useState(false);
-  const [selectedInterview, setSelectedInterview] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [readiness, setReadiness] = useState(null);
+  const [eligibility, setEligibility] = useState([]);
+  const [skills, setSkills] = useState({ missing_skills: [], weak_skills: [], strong_skills: [] });
+  const [interviews, setInterviews] = useState(null);
+  const [prediction, setPrediction] = useState(null);
+  const [actionPlan, setActionPlan] = useState({ weekly_plan: [], priority_actions: [] });
 
-  /* ===== Update form state ===== */
-  const [round, setRound] = useState("");
-  const [weakArea, setWeakArea] = useState("");
-  const [difficulty, setDifficulty] = useState("");
-  const [confidence, setConfidence] = useState(3);
-  const [notes, setNotes] = useState("");
+  const user = JSON.parse(localStorage.getItem("user") || "{}");
+  const studentId = user?.user_id || user?.student_id || user?.id || null;
 
-  /* ===== eligibility calc ===== */
-  const eligibilityScore = (c) => {
-    let score = 0;
-    if (STUDENT.cgpa >= c.minCGPA) score += 40;
-    if (STUDENT.backlogs <= c.maxBacklogs) score += 30;
+  useEffect(() => {
+    let active = true;
 
-    const matched = c.skills.filter((s) =>
-      STUDENT.skills.includes(s)
-    );
-    score += (matched.length / c.skills.length) * 30;
+    const loadPlacementData = async () => {
+      if (!studentId) {
+        if (active) {
+          setLoading(false);
+          setError(EMPTY_MESSAGE);
+        }
+        return;
+      }
 
-    return Math.round(score);
-  };
+      setLoading(true);
+      setError("");
 
-  const upcoming = INTERVIEWS.filter(i => i.status === "upcoming");
-  const past = INTERVIEWS.filter(i => i.status === "completed");
-  const pendingInterview = past.find(i => i.round === null);
+      const safeGet = async (path) => {
+        try {
+          const response = await api.get(path);
+          return { ok: true, data: response.data };
+        } catch (requestError) {
+          return {
+            ok: false,
+            status: requestError?.response?.status,
+            data: requestError?.response?.data ?? null,
+          };
+        }
+      };
 
-  const openModal = (interview) => {
-    setSelectedInterview(interview);
-    setShowModal(true);
-  };
+      const [readinessResult, eligibilityResult, skillsResult, interviewsResult, predictionResult, actionPlanResult] =
+        await Promise.all([
+          safeGet(`/placement/readiness/${studentId}`),
+          safeGet(`/placement/eligibility/${studentId}`),
+          safeGet(`/placement/skills/${studentId}`),
+          safeGet(`/placement/interviews/${studentId}`),
+          safeGet(`/placement/prediction/${studentId}`),
+          safeGet(`/placement/action-plan/${studentId}`),
+        ]);
 
-  const handleSave = () => {
-    console.log({
-      company: selectedInterview.company,
-      round,
-      weakArea,
-      difficulty,
-      confidence,
-      notes,
+      if (!active) {
+        return;
+      }
+
+      const readinessData = readinessResult.ok ? readinessResult.data : null;
+      const eligibilityData = Array.isArray(eligibilityResult.data) ? eligibilityResult.data : [];
+      const skillsData = skillsResult.ok ? skillsResult.data : null;
+      const interviewsData = interviewsResult.ok ? interviewsResult.data : null;
+      const predictionData = predictionResult.ok ? predictionResult.data : null;
+      const actionPlanData = actionPlanResult.ok ? actionPlanResult.data : null;
+
+      setReadiness(readinessData);
+      setEligibility(eligibilityData);
+      setSkills(skillsData || { missing_skills: [], weak_skills: [], strong_skills: [] });
+      setInterviews(interviewsData);
+      setPrediction(predictionData);
+      setActionPlan(actionPlanData || { weekly_plan: [], priority_actions: [] });
+
+      const hasAnyData = Boolean(
+        readinessData?.has_data ||
+          eligibilityData.length ||
+          skillsData?.missing_skills?.length ||
+          skillsData?.weak_skills?.length ||
+          skillsData?.strong_skills?.length ||
+          interviewsData?.has_data ||
+          predictionData?.has_data ||
+          actionPlanData?.weekly_plan?.length ||
+          actionPlanData?.priority_actions?.length
+      );
+
+      if (!hasAnyData) {
+        setError(readinessData?.no_data_message || EMPTY_MESSAGE);
+      }
+
+      setLoading(false);
+    };
+
+    loadPlacementData().catch(() => {
+      if (active) {
+        setError(EMPTY_MESSAGE);
+        setLoading(false);
+      }
     });
 
-    setShowModal(false);
-    setRound("");
-    setWeakArea("");
-    setDifficulty("");
-    setConfidence(3);
-    setNotes("");
+    return () => {
+      active = false;
+    };
+  }, [studentId]);
+
+  const readinessScore = readiness?.readiness_score ?? 0;
+  const breakdown = readiness?.breakdown || { cgpa: 0, skills: 0, interview: 0, consistency: 0 };
+  const readinessStatus = readiness?.status || "Not Ready";
+  const readinessReasons = readiness?.reasons || [];
+  const suggestions = readiness?.suggestions || [];
+
+  const allEmpty = useMemo(
+    () =>
+      !loading &&
+      error === EMPTY_MESSAGE &&
+      !readiness?.has_data &&
+      !eligibility.length &&
+      !skills?.missing_skills?.length &&
+      !skills?.weak_skills?.length &&
+      !skills?.strong_skills?.length &&
+      !interviews?.has_data &&
+      !prediction?.has_data &&
+      !actionPlan?.weekly_plan?.length &&
+      !actionPlan?.priority_actions?.length,
+    [actionPlan, eligibility.length, error, interviews, loading, prediction, readiness, skills]
+  );
+
+  if (loading) {
+    return <LoadingState />;
+  }
+
+  if (allEmpty) {
+    return <EmptyState message={error || EMPTY_MESSAGE} />;
+  }
+
+  return (
+    <div className="space-y-6 pb-10">
+      <div className="rounded-[28px] border border-slate-200/70 bg-gradient-to-br from-white via-slate-50 to-emerald-50/60 p-6 shadow-[0_20px_60px_rgba(15,23,42,0.08)]">
+        <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+          <div className="space-y-2">
+            <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-500">Placement Intelligence</p>
+            <h1 className="text-3xl font-semibold text-slate-900 md:text-4xl">Career readiness, backed by live data</h1>
+            <p className="max-w-2xl text-sm leading-6 text-slate-600">
+              See where you stand, which companies you can apply to, what is blocking you, and the next best action to improve your selection odds.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-4 rounded-3xl border border-slate-200 bg-white/85 p-4 shadow-sm backdrop-blur">
+            <ScoreRing score={readinessScore} />
+            <div className="space-y-2">
+              <StatusBadge status={readinessStatus} />
+              <p className="text-sm text-slate-500">Overall readiness</p>
+              <p className="text-lg font-semibold text-slate-900">{Math.round(readinessScore)}%</p>
+              <p className="text-xs text-slate-500">Last updated: {formatDate(readiness?.last_updated)}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {error && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          {error}
+        </div>
+      )}
+
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <MetricCard label="CGPA score" value={`${Math.round(breakdown.cgpa)}%`} hint="Academic foundation" />
+        <MetricCard label="Skills score" value={`${Math.round(breakdown.skills)}%`} hint="Placement skills signal" />
+        <MetricCard label="Interview score" value={`${Math.round(breakdown.interview)}%`} hint="Recent interview outcomes" />
+        <MetricCard label="Consistency" value={`${Math.round(breakdown.consistency)}%`} hint="Attendance + tasks" />
+      </section>
+
+      <Section title="What you need to fix" subtitle="Backend-generated reasons and next steps">
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Panel>
+            <PanelTitle title="Primary reasons" />
+            {readinessReasons.length ? (
+              <div className="space-y-3">
+                {readinessReasons.map((reason) => (
+                  <ReasonItem key={reason} text={reason} />
+                ))}
+              </div>
+            ) : (
+              <InlineEmpty text="No blockers identified right now." />
+            )}
+          </Panel>
+
+          <Panel>
+            <PanelTitle title="Priority suggestions" />
+            {suggestions.length ? (
+              <div className="space-y-3">
+                {suggestions.map((item) => (
+                  <ActionChip key={item} text={item} />
+                ))}
+              </div>
+            ) : (
+              <InlineEmpty text="The backend has not generated any fixes yet." />
+            )}
+          </Panel>
+        </div>
+      </Section>
+
+      <Section title="Company eligibility" subtitle="Live eligibility against stored company rules">
+        <div className="grid gap-4 lg:grid-cols-2">
+          {eligibility.length ? (
+            eligibility.map((company) => (
+              <Panel key={company.company_name}>
+                <div className="flex flex-col gap-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-lg font-semibold text-slate-900">{company.company_name}</h3>
+                      <p className="text-sm text-slate-500">
+                        Min CGPA {company.min_cgpa} · Max backlogs {company.max_backlogs}
+                      </p>
+                    </div>
+                    <EligibilityBadge eligible={company.eligible} />
+                  </div>
+
+                  {Array.isArray(company.required_skills) && company.required_skills.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      {company.required_skills.map((skill) => (
+                        <Pill key={skill} text={skill} tone="slate" />
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="space-y-2 text-sm text-slate-600">
+                    {company.reasons.length ? (
+                      company.reasons.map((reason) => <ReasonItem key={`${company.company_name}-${reason}`} text={reason} />)
+                    ) : (
+                      <InlineEmpty text="No eligibility issues found." />
+                    )}
+                  </div>
+                </div>
+              </Panel>
+            ))
+          ) : (
+            <Panel>
+              <InlineEmpty text="No company records are available yet." />
+            </Panel>
+          )}
+        </div>
+      </Section>
+
+      <Section title="Interview intelligence" subtitle="Insights from the latest interviews">
+        <div className="grid gap-4 lg:grid-cols-3">
+          <Panel>
+            <PanelTitle title="Last round reached" />
+            <StatValue value={interviews?.last_round_reached || "No interview recorded"} />
+          </Panel>
+          <Panel>
+            <PanelTitle title="Common weak area" />
+            <StatValue value={interviews?.common_weak_area || "No pattern yet"} />
+          </Panel>
+          <Panel>
+            <PanelTitle title="Suggestion" />
+            <StatValue value={interviews?.improvement_suggestion || "Start recording interview feedback"} small />
+          </Panel>
+        </div>
+      </Section>
+
+      <Section title="Prediction" subtitle="Selection probability based on readiness and interview history">
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Panel>
+            <PanelTitle title="Probability outlook" />
+            <div className="space-y-4">
+              <ProbabilityBar label="Current probability" value={prediction?.current_probability ?? 0} />
+              <ProbabilityBar label="Improved probability" value={prediction?.improved_probability ?? 0} accent />
+            </div>
+          </Panel>
+          <Panel>
+            <PanelTitle title="What to improve next" />
+            <StatValue value={prediction?.suggestion || "No prediction available yet"} small />
+          </Panel>
+        </div>
+      </Section>
+
+      <Section title="Skill gap" subtitle="Company requirements compared with your current skill profile">
+        <div className="grid gap-4 lg:grid-cols-3">
+          <SkillColumn title="Missing skills" items={skills?.missing_skills || []} tone="rose" emptyText="No missing skills recorded." />
+          <SkillColumn title="Weak skills" items={skills?.weak_skills || []} tone="amber" emptyText="No weak skills recorded." />
+          <SkillColumn title="Strong skills" items={skills?.strong_skills || []} tone="emerald" emptyText="No strong skills recorded." />
+        </div>
+      </Section>
+
+      <Section title="Action plan" subtitle="Real tasks generated from current placement signals">
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Panel>
+            <PanelTitle title="Weekly plan" />
+            {actionPlan?.weekly_plan?.length ? (
+              <ul className="space-y-3">
+                {actionPlan.weekly_plan.map((task) => (
+                  <ListItem key={task} text={task} />
+                ))}
+              </ul>
+            ) : (
+              <InlineEmpty text="No weekly plan available right now." />
+            )}
+          </Panel>
+          <Panel>
+            <PanelTitle title="Priority actions" />
+            {actionPlan?.priority_actions?.length ? (
+              <ul className="space-y-3">
+                {actionPlan.priority_actions.map((task) => (
+                  <ListItem key={task} text={task} />
+                ))}
+              </ul>
+            ) : (
+              <InlineEmpty text="No priority tasks available right now." />
+            )}
+          </Panel>
+        </div>
+      </Section>
+    </div>
+  );
+}
+
+function LoadingState() {
+  return (
+    <div className="rounded-3xl border border-slate-200 bg-white/80 p-8 text-slate-600 shadow-sm">
+      Loading placement intelligence...
+    </div>
+  );
+}
+
+function EmptyState({ message }) {
+  return (
+    <div className="rounded-[28px] border border-slate-200 bg-white p-8 text-center shadow-sm">
+      <h1 className="text-2xl font-semibold text-slate-900">Placement Intelligence</h1>
+      <p className="mt-3 text-sm text-slate-600">{message}</p>
+    </div>
+  );
+}
+
+function Section({ title, subtitle, children }) {
+  return (
+    <section className="space-y-3">
+      <div>
+        <h2 className="text-lg font-semibold text-slate-900">{title}</h2>
+        {subtitle ? <p className="text-sm text-slate-500">{subtitle}</p> : null}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function Panel({ children }) {
+  return <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">{children}</div>;
+}
+
+function PanelTitle({ title }) {
+  return <h3 className="mb-4 text-sm font-semibold uppercase tracking-[0.24em] text-slate-500">{title}</h3>;
+}
+
+function MetricCard({ label, value, hint }) {
+  return (
+    <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+      <p className="text-xs font-medium uppercase tracking-[0.22em] text-slate-500">{label}</p>
+      <p className="mt-3 text-3xl font-semibold text-slate-900">{value}</p>
+      <p className="mt-2 text-sm text-slate-500">{hint}</p>
+    </div>
+  );
+}
+
+function ScoreRing({ score }) {
+  const safeScore = Math.max(0, Math.min(100, Math.round(score || 0)));
+  return (
+    <div
+      className="flex h-24 w-24 items-center justify-center rounded-full"
+      style={{
+        background: `conic-gradient(#0f766e ${safeScore}%, #e2e8f0 ${safeScore}% 100%)`,
+      }}
+    >
+      <div className="flex h-20 w-20 items-center justify-center rounded-full bg-white text-center shadow-sm">
+        <div>
+          <p className="text-2xl font-semibold text-slate-900">{safeScore}</p>
+          <p className="text-[11px] uppercase tracking-[0.22em] text-slate-500">Score</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StatusBadge({ status }) {
+  const tone =
+    status === "Ready"
+      ? "bg-emerald-100 text-emerald-800"
+      : status === "Borderline"
+        ? "bg-amber-100 text-amber-800"
+        : "bg-rose-100 text-rose-800";
+
+  return <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${tone}`}>{status}</span>;
+}
+
+function EligibilityBadge({ eligible }) {
+  const tone = eligible ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800";
+  return <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${tone}`}>{eligible ? "Eligible" : "Not eligible"}</span>;
+}
+
+function ReasonItem({ text }) {
+  return <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">{text}</div>;
+}
+
+function ActionChip({ text }) {
+  return <div className="rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-700">{text}</div>;
+}
+
+function InlineEmpty({ text }) {
+  return <p className="text-sm text-slate-500">{text}</p>;
+}
+
+function StatValue({ value, small = false }) {
+  return <p className={small ? "text-sm font-semibold text-slate-900" : "text-lg font-semibold text-slate-900"}>{value}</p>;
+}
+
+function ProbabilityBar({ label, value, accent = false }) {
+  const safeValue = Math.max(0, Math.min(100, Math.round(value || 0)));
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between text-sm text-slate-600">
+        <span>{label}</span>
+        <span className="font-semibold text-slate-900">{safeValue}%</span>
+      </div>
+      <div className="h-3 rounded-full bg-slate-100">
+        <div
+          className={`h-3 rounded-full ${accent ? "bg-emerald-500" : "bg-slate-700"}`}
+          style={{ width: `${safeValue}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function SkillColumn({ title, items, tone, emptyText }) {
+  return (
+    <Panel>
+      <PanelTitle title={title} />
+      <div className="flex flex-wrap gap-2">
+        {items.length ? (
+          items.map((skill) => (
+            <Pill key={skill} text={skill} tone={tone} />
+          ))
+        ) : (
+          <InlineEmpty text={emptyText} />
+        )}
+      </div>
+    </Panel>
+  );
+}
+
+function Pill({ text, tone = "slate" }) {
+  const tones = {
+    slate: "border-slate-200 bg-slate-50 text-slate-700",
+    rose: "border-rose-200 bg-rose-50 text-rose-800",
+    amber: "border-amber-200 bg-amber-50 text-amber-800",
+    emerald: "border-emerald-200 bg-emerald-50 text-emerald-800",
   };
 
+  return <span className={`rounded-full border px-3 py-1 text-xs font-medium ${tones[tone] || tones.slate}`}>{text}</span>;
+}
+
+function ListItem({ text }) {
   return (
-    <div className="space-y-10">
-
-      {/* ================= HEADER ================= */}
-      <div>
-        <h1 className="text-2xl font-semibold">🎯 Placements</h1>
-        <p className="text-gray-500">
-          Eligibility, interview schedule & outcomes
-        </p>
-      </div>
-
-      {/* ================= ACTION REQUIRED ================= */}
-      {pendingInterview && (
-        <div className="flex items-center justify-between bg-yellow-50 border border-yellow-200 rounded-2xl p-4">
-          <div>
-            <p className="font-medium text-yellow-800">⚠️ Action Required</p>
-            <p className="text-sm text-yellow-700">
-              You have a completed interview pending update
-            </p>
-          </div>
-          <button
-            onClick={() => openModal(pendingInterview)}
-            className="px-4 py-2 rounded-lg bg-yellow-600 text-white text-sm"
-          >
-            Update Now
-          </button>
-        </div>
-      )}
-
-      {/* ================= OVERVIEW ================= */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <OverviewCard title="Eligible Companies" value={COMPANIES.length} />
-        <OverviewCard title="Upcoming Interviews" value={upcoming.length} />
-        <OverviewCard title="Completed Interviews" value={past.length} />
-        <OverviewCard title="Offers" value="0" />
-      </div>
-
-      {/* ================= UPCOMING ================= */}
-      <Section title="⏳ Upcoming Interviews">
-        {upcoming.map((i, idx) => (
-          <Card key={idx}>
-            <div>
-              <h3 className="font-semibold">{i.company}</h3>
-              <p className="text-sm text-gray-500">
-                {i.date} • {i.mode}
-              </p>
-            </div>
-            <Badge text="Upcoming" />
-          </Card>
-        ))}
-      </Section>
-
-      {/* ================= ELIGIBILITY ================= */}
-      <Section title="🏢 Company-wise Eligibility">
-        {COMPANIES.map((c, idx) => {
-          const score = eligibilityScore(c);
-          return (
-            <Card key={idx}>
-              <div>
-                <h3 className="font-semibold">{c.name}</h3>
-                <p className="text-sm text-gray-500">
-                  CGPA ≥ {c.minCGPA} • Backlogs ≤ {c.maxBacklogs}
-                </p>
-                <p className="text-sm mt-1">
-                  Eligibility: <span className="font-semibold">{score}%</span>
-                </p>
-              </div>
-              <span className="text-xs text-gray-400">
-                {score >= 60 ? "Eligible" : "Not Eligible"}
-              </span>
-            </Card>
-          );
-        })}
-      </Section>
-
-      {/* ================= PAST ================= */}
-      <Section title="✅ Past Interviews">
-        {past.map((i, idx) => (
-          <Card key={idx}>
-            <div>
-              <h3 className="font-semibold">{i.company}</h3>
-              <p className="text-sm text-gray-500">
-                {i.date} • {i.mode}
-              </p>
-            </div>
-            <button
-              onClick={() => openModal(i)}
-              className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm"
-            >
-              Update Interview
-            </button>
-          </Card>
-        ))}
-      </Section>
-
-      {/* ================= 📊 PLACEMENT INSIGHTS (RESTORED) ================= */}
-      <Section title="📊 Placement Insights">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <AnalyticsPlaceholder title="Round-wise Performance" />
-          <AnalyticsPlaceholder title="Skill Gap Analysis" />
-          <AnalyticsPlaceholder title="Interview Difficulty vs Outcome" />
-          <AnalyticsPlaceholder title="Confidence vs Selection Trend" />
-        </div>
-      </Section>
-
-      {/* ================= MODAL ================= */}
-      {showModal && selectedInterview && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
-          <div className="bg-white rounded-2xl p-6 w-96 space-y-4">
-            <h3 className="font-semibold">Interview Update</h3>
-            <p className="text-sm text-gray-500">
-              Company: <b>{selectedInterview.company}</b>
-            </p>
-
-            <select
-              value={round}
-              onChange={(e) => setRound(e.target.value)}
-              className="w-full border rounded-lg px-3 py-2 text-sm"
-            >
-              <option value="">Highest round completed</option>
-              <option>Aptitude</option>
-              <option>Technical</option>
-              <option>HR</option>
-              <option>Selected</option>
-              <option>Rejected</option>
-            </select>
-
-            <select
-              value={weakArea}
-              onChange={(e) => setWeakArea(e.target.value)}
-              className="w-full border rounded-lg px-3 py-2 text-sm"
-            >
-              <option value="">Weak area / Reason</option>
-              <option>Technical knowledge</option>
-              <option>Coding / DSA</option>
-              <option>Communication</option>
-              <option>Confidence</option>
-              <option>Time management</option>
-              <option>Not shared</option>
-            </select>
-
-            <select
-              value={difficulty}
-              onChange={(e) => setDifficulty(e.target.value)}
-              className="w-full border rounded-lg px-3 py-2 text-sm"
-            >
-              <option value="">Interview difficulty</option>
-              <option>Easy</option>
-              <option>Medium</option>
-              <option>Hard</option>
-            </select>
-
-            <div>
-              <label className="text-sm text-gray-500">
-                Confidence level: {confidence}/5
-              </label>
-              <input
-                type="range"
-                min="1"
-                max="5"
-                value={confidence}
-                onChange={(e) => setConfidence(e.target.value)}
-                className="w-full"
-              />
-            </div>
-
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="Optional feedback / notes"
-              className="w-full border rounded-lg px-3 py-2 text-sm"
-            />
-
-            <div className="flex justify-end gap-3">
-              <button
-                onClick={() => setShowModal(false)}
-                className="px-4 py-2 rounded-lg bg-gray-100"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSave}
-                className="px-4 py-2 rounded-lg bg-indigo-600 text-white"
-              >
-                Save
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-    </div>
+    <li className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+      <span className="mt-1 h-2 w-2 rounded-full bg-emerald-500" />
+      <span>{text}</span>
+    </li>
   );
 }
 
-/* ================= UI HELPERS ================= */
-
-function Section({ title, children }) {
-  return (
-    <div className="space-y-4">
-      <h2 className="text-lg font-semibold">{title}</h2>
-      {children}
-    </div>
-  );
-}
-
-function Card({ children }) {
-  return (
-    <div className="glass rounded-2xl p-5 border border-white/40 flex justify-between items-center">
-      {children}
-    </div>
-  );
-}
-
-function OverviewCard({ title, value }) {
-  return (
-    <div className="bg-white/80 backdrop-blur rounded-2xl p-4 border border-white/40">
-      <p className="text-sm text-gray-500">{title}</p>
-      <p className="text-2xl font-semibold mt-1">{value}</p>
-    </div>
-  );
-}
-
-function Badge({ text }) {
-  return (
-    <span className="px-3 py-1 text-xs rounded-full bg-blue-100 text-blue-700">
-      {text}
-    </span>
-  );
-}
-
-function AnalyticsPlaceholder({ title }) {
-  return (
-    <div className="glass rounded-2xl h-64 flex flex-col justify-center items-center text-gray-400">
-      <p className="text-sm uppercase tracking-wide">{title}</p>
-      <p className="text-sm mt-2">Analytics Agent will render here</p>
-    </div>
-  );
+function formatDate(value) {
+  if (!value) {
+    return "Not updated yet";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "Not updated yet";
+  }
+  return new Intl.DateTimeFormat("en-IN", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
 }

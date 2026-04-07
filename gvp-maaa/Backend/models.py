@@ -60,6 +60,73 @@ class Student(Base):
     is_deleted = Column(Boolean, default=False)
     deleted_at = Column(DateTime, nullable=True)
 
+
+# -------------------------
+# PLACEMENT INTELLIGENCE
+# -------------------------
+class PlacementStudentProfile(Base):
+    __tablename__ = "student_profile"
+
+    student_id = Column(
+        Integer,
+        ForeignKey("students.student_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    cgpa = Column(Numeric(3, 2), nullable=True)
+    backlogs = Column(Integer, default=0)
+    department = Column(String(50), nullable=True)
+    year = Column(Integer, nullable=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class PlacementInterview(Base):
+    __tablename__ = "interviews"
+
+    id = Column(Integer, primary_key=True, index=True)
+    student_id = Column(Integer, ForeignKey("students.student_id", ondelete="CASCADE"), nullable=False)
+    company_name = Column(String(255), nullable=False)
+    date = Column(Date, nullable=True)
+    mode = Column(String(20), nullable=True)
+    status = Column(String(20), nullable=True)
+    result = Column(String(20), nullable=True)
+    round_reached = Column(String(100), nullable=True)
+    feedback = Column(Text, nullable=True)
+    weak_area = Column(String(100), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class PlacementCompany(Base):
+    __tablename__ = "companies"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), unique=True, nullable=False)
+    min_cgpa = Column(Numeric(3, 2), nullable=False)
+    max_backlogs = Column(Integer, default=0)
+    required_skills = Column(JSON, default=list)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class PlacementStudentSkill(Base):
+    __tablename__ = "student_skills"
+
+    id = Column(Integer, primary_key=True, index=True)
+    student_id = Column(Integer, ForeignKey("students.student_id", ondelete="CASCADE"), nullable=False)
+    skill_name = Column(String(120), nullable=False)
+    level = Column(String(20), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("student_id", "skill_name", name="unique_student_skill"),
+    )
+
+
+class PlacementProgress(Base):
+    __tablename__ = "placement_progress"
+
+    student_id = Column(Integer, ForeignKey("students.student_id", ondelete="CASCADE"), primary_key=True)
+    readiness_score = Column(Numeric(5, 2), nullable=True)
+    last_updated = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
     
 # -------------------------
 # STUDENT ALERTS
