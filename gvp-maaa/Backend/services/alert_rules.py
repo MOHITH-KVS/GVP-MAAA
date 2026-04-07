@@ -60,7 +60,7 @@ def generate_student_alerts(
 
     # CGPA alert: only when valid CGPA exists.
     cgpa_val = risk.get("cgpa")
-    if isinstance(cgpa_val, (int, float)) and float(cgpa_val) < float(cgpa_threshold):
+    if isinstance(cgpa_val, (int, float)) and float(cgpa_val) > 0 and float(cgpa_val) < float(cgpa_threshold):
         alerts.append(
             {
                 "type": "cgpa-monitor",

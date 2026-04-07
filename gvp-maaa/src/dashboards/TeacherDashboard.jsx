@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import api from "../utils/axios";
 import Overview from "../pages/Teacher/Overview";
 import Timetable from "../pages/Teacher/Timetable";
@@ -13,6 +14,7 @@ import GiveAlertModal from "../pages/Teacher/GiveAlertModal";
 import Alerts from "../pages/Teacher/Alerts";
 import Logout from "../pages/Logout";
 import TeacherProfilePage from "../pages/Teacher/TeacherProfilePage";
+import Placement from "../pages/Teacher/Placement";
 
 /* ICONS */
 import DashboardIcon from "@mui/icons-material/Dashboard";
@@ -33,6 +35,7 @@ import FolderIcon from "@mui/icons-material/Folder";
 import EventIcon from "@mui/icons-material/Event";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
 import CampaignIcon from "@mui/icons-material/Campaign";
+import WorkIcon from "@mui/icons-material/Work";
 
 export default function TeacherDashboard() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -47,6 +50,37 @@ export default function TeacherDashboard() {
   const unreadCount = alerts.filter(a => !a.is_read).length;
 
   const [loading, setLoading] = useState(true);
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  const availableTeacherPages = [
+    "overview",
+    "timetable",
+    "attendance",
+    "assignments",
+    "marks",
+    "resources",
+    "events",
+    "insights",
+    "alerts",
+    "placement",
+  ];
+
+  const resolvePageFromPath = (pathname) => {
+    const parts = pathname.split("/").filter(Boolean);
+    const page = parts[1] || "overview";
+    return availableTeacherPages.includes(page) ? page : "overview";
+  };
+
+  const goToPage = (page) => {
+    const targetPath = page === "overview" ? "/teacher" : `/teacher/${page}`;
+    setActivePage(page);
+    navigate(targetPath);
+  };
+
+  useEffect(() => {
+    setActivePage(resolvePageFromPath(location.pathname));
+  }, [location.pathname]);
 
 
   useEffect(() => {
@@ -124,35 +158,35 @@ export default function TeacherDashboard() {
                 label="Overview"
                 open={sidebarOpen}
                 active={activePage === "overview"}
-                onClick={() => setActivePage("overview")}
+                onClick={() => goToPage("overview")}
               />
               <MenuItem
                 icon={DashboardIcon}
                 label="Timetable"
                 open={sidebarOpen}
                 active={activePage === "timetable"}
-                onClick={() => setActivePage("timetable")}
+                onClick={() => goToPage("timetable")}
               />
               <MenuItem
                 icon={EventAvailableIcon}
                 label="Attendance"
                 open={sidebarOpen}
                 active={activePage === "attendance"}
-                onClick={() => setActivePage("attendance")}
+                onClick={() => goToPage("attendance")}
               />
               <MenuItem
                 icon={AssignmentIcon}
                 label="Assignments"
                 open={sidebarOpen}
                 active={activePage === "assignments"}
-                onClick={() => setActivePage("assignments")}
+                onClick={() => goToPage("assignments")}
               />
               <MenuItem
                 icon={BarChartIcon}
                 label="Marks"
                 open={sidebarOpen}
                 active={activePage === "marks"}
-                onClick={() => setActivePage("marks")}
+                onClick={() => goToPage("marks")}
               />
             </SidebarSection>
 
@@ -162,21 +196,28 @@ export default function TeacherDashboard() {
                 label="Resources"
                 open={sidebarOpen}
                 active={activePage === "resources"}
-                onClick={() => setActivePage("resources")}
+                onClick={() => goToPage("resources")}
               />
               <MenuItem
                 icon={EventIcon}
                 label="Events"
                 open={sidebarOpen}
                 active={activePage === "events"}
-                onClick={() => setActivePage("events")}
+                onClick={() => goToPage("events")}
               />
               <MenuItem
                 icon={InsightsIcon}
                 label="Insights"
                 open={sidebarOpen}
                 active={activePage === "insights"}
-                onClick={() => setActivePage("insights")}
+                onClick={() => goToPage("insights")}
+              />
+              <MenuItem
+                icon={WorkIcon}
+                label="Placement"
+                open={sidebarOpen}
+                active={activePage === "placement"}
+                onClick={() => goToPage("placement")}
               />
             </SidebarSection>
 
@@ -217,7 +258,7 @@ export default function TeacherDashboard() {
                   label="Alerts"
                   open={sidebarOpen}
                   active={activePage === "alerts"}
-                  onClick={() => setActivePage("alerts")}
+                  onClick={() => goToPage("alerts")}
                 />
                 {unreadCount > 0 && (
                   <span className="absolute top-0 right-4 bg-red-500 text-white text-xs px-2 py-0.5 rounded-full">
@@ -254,6 +295,7 @@ export default function TeacherDashboard() {
             {activePage === "resources" && <Resources />}
             {activePage === "events" && <Events />}
             {activePage === "insights" && <Insights />}
+            {activePage === "placement" && <Placement />}
             {activePage === "alerts" && (
               <Alerts
                 alerts={alerts}

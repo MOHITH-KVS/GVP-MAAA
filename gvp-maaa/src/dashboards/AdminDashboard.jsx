@@ -21,6 +21,7 @@ import MenuBookIcon from "@mui/icons-material/MenuBook";
 import EventAvailableIcon from "@mui/icons-material/EventAvailable";
 import NotificationsIcon from "@mui/icons-material/Notifications";
 import BarChartIcon from "@mui/icons-material/BarChart";
+import WorkIcon from "@mui/icons-material/Work";
 import SettingsIcon from "@mui/icons-material/Settings";
 import LogoutIcon from "@mui/icons-material/Logout";
 import MenuIcon from "@mui/icons-material/Menu";
@@ -130,6 +131,14 @@ export default function AdminDashboard() {
                   open={sidebarOpen}
                   active={activePage === "insights"}
                   onClick={() => navigate("/admin/insights")}
+                />
+
+                <MenuItem
+                  icon={WorkIcon}
+                  label="Placement"
+                  open={sidebarOpen}
+                  active={activePage === "placement"}
+                  onClick={() => navigate("/admin/placement")}
                 />
               </SidebarSection>
 

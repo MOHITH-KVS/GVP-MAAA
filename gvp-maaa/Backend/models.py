@@ -102,7 +102,9 @@ class PlacementCompany(Base):
     name = Column(String(255), unique=True, nullable=False)
     min_cgpa = Column(Numeric(3, 2), nullable=False)
     max_backlogs = Column(Integer, default=0)
+    role_type = Column(String(50), nullable=True)
     required_skills = Column(JSON, default=list)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
@@ -126,6 +128,46 @@ class PlacementProgress(Base):
     student_id = Column(Integer, ForeignKey("students.student_id", ondelete="CASCADE"), primary_key=True)
     readiness_score = Column(Numeric(5, 2), nullable=True)
     last_updated = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class PlacementDrive(Base):
+    __tablename__ = "placement_drives"
+
+    id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(Integer, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False)
+    drive_date = Column(Date, nullable=True)
+    mode = Column(String(30), nullable=True)
+    branches = Column(JSON, default=list)
+    created_by = Column(Integer, ForeignKey("users.user_id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class StudentDrive(Base):
+    __tablename__ = "student_drives"
+
+    id = Column(Integer, primary_key=True, index=True)
+    student_id = Column(Integer, ForeignKey("students.student_id", ondelete="CASCADE"), nullable=False)
+    drive_id = Column(Integer, ForeignKey("placement_drives.id", ondelete="CASCADE"), nullable=False)
+    status = Column(String(30), default="assigned")
+    current_round = Column(Integer, default=0)
+    final_result = Column(String(30), default="pending")
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("student_id", "drive_id", name="unique_student_drive"),
+    )
+
+
+class PlacementFeedback(Base):
+    __tablename__ = "placement_feedback"
+
+    id = Column(Integer, primary_key=True, index=True)
+    student_id = Column(Integer, ForeignKey("students.student_id", ondelete="CASCADE"), nullable=False)
+    drive_id = Column(Integer, ForeignKey("placement_drives.id", ondelete="CASCADE"), nullable=False)
+    faculty_id = Column(Integer, ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True)
+    comment = Column(Text, nullable=True)
+    rating = Column(Integer, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     
 # -------------------------

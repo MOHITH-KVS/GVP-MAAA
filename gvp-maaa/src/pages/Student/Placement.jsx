@@ -2,17 +2,16 @@ import { useEffect, useMemo, useState } from "react";
 
 import api from "../../utils/api";
 
-const EMPTY_MESSAGE = "No placement data available yet. Start attending interviews.";
+const EMPTY_MESSAGE = "No placement drives available yet";
 
 export default function Placement() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [readiness, setReadiness] = useState(null);
-  const [eligibility, setEligibility] = useState([]);
-  const [skills, setSkills] = useState({ missing_skills: [], weak_skills: [], strong_skills: [] });
-  const [interviews, setInterviews] = useState(null);
-  const [prediction, setPrediction] = useState(null);
-  const [actionPlan, setActionPlan] = useState({ weekly_plan: [], priority_actions: [] });
+  const [summary, setSummary] = useState({ eligible: 0, upcoming: 0, completed: 0, offers: 0 });
+  const [eligibleCompanies, setEligibleCompanies] = useState([]);
+  const [upcomingDrives, setUpcomingDrives] = useState([]);
+  const [pastDrives, setPastDrives] = useState([]);
+  const [intelligence, setIntelligence] = useState(null);
 
   const user = JSON.parse(localStorage.getItem("user") || "{}");
   const studentId = user?.user_id || user?.student_id || user?.id || null;
@@ -45,48 +44,48 @@ export default function Placement() {
         }
       };
 
-      const [readinessResult, eligibilityResult, skillsResult, interviewsResult, predictionResult, actionPlanResult] =
-        await Promise.all([
-          safeGet(`/placement/readiness/${studentId}`),
-          safeGet(`/placement/eligibility/${studentId}`),
-          safeGet(`/placement/skills/${studentId}`),
-          safeGet(`/placement/interviews/${studentId}`),
-          safeGet(`/placement/prediction/${studentId}`),
-          safeGet(`/placement/action-plan/${studentId}`),
-        ]);
+      const [summaryResult, eligibleResult, upcomingResult, pastResult, intelligenceResult] = await Promise.all([
+        safeGet("/api/student/placement-summary"),
+        safeGet("/api/student/eligible-companies"),
+        safeGet("/api/student/upcoming-drives"),
+        safeGet("/api/student/past-drives"),
+        safeGet("/api/student/placement-intelligence"),
+      ]);
+
+      console.log("[StudentPlacement] GET /api/student/placement-summary", summaryResult);
+      console.log("[StudentPlacement] GET /api/student/eligible-companies", eligibleResult);
+      console.log("[StudentPlacement] GET /api/student/upcoming-drives", upcomingResult);
+      console.log("[StudentPlacement] GET /api/student/past-drives", pastResult);
+      console.log("[StudentPlacement] GET /api/student/placement-intelligence", intelligenceResult);
 
       if (!active) {
         return;
       }
 
-      const readinessData = readinessResult.ok ? readinessResult.data : null;
-      const eligibilityData = Array.isArray(eligibilityResult.data) ? eligibilityResult.data : [];
-      const skillsData = skillsResult.ok ? skillsResult.data : null;
-      const interviewsData = interviewsResult.ok ? interviewsResult.data : null;
-      const predictionData = predictionResult.ok ? predictionResult.data : null;
-      const actionPlanData = actionPlanResult.ok ? actionPlanResult.data : null;
+      const summaryData = summaryResult.ok ? summaryResult.data : { eligible: 0, upcoming: 0, completed: 0, offers: 0 };
+      const eligibleData = Array.isArray(eligibleResult.data) ? eligibleResult.data : [];
+      const upcomingData = Array.isArray(upcomingResult.data) ? upcomingResult.data : [];
+      const pastData = Array.isArray(pastResult.data) ? pastResult.data : [];
+      const intelligenceData = intelligenceResult.ok ? intelligenceResult.data : null;
 
-      setReadiness(readinessData);
-      setEligibility(eligibilityData);
-      setSkills(skillsData || { missing_skills: [], weak_skills: [], strong_skills: [] });
-      setInterviews(interviewsData);
-      setPrediction(predictionData);
-      setActionPlan(actionPlanData || { weekly_plan: [], priority_actions: [] });
+      setSummary(summaryData);
+      setEligibleCompanies(eligibleData);
+      setUpcomingDrives(upcomingData);
+      setPastDrives(pastData);
+      setIntelligence(intelligenceData);
 
       const hasAnyData = Boolean(
-        readinessData?.has_data ||
-          eligibilityData.length ||
-          skillsData?.missing_skills?.length ||
-          skillsData?.weak_skills?.length ||
-          skillsData?.strong_skills?.length ||
-          interviewsData?.has_data ||
-          predictionData?.has_data ||
-          actionPlanData?.weekly_plan?.length ||
-          actionPlanData?.priority_actions?.length
+        summaryData?.eligible ||
+          summaryData?.upcoming ||
+          summaryData?.completed ||
+          summaryData?.offers ||
+          eligibleData.length ||
+          upcomingData.length ||
+          pastData.length
       );
 
       if (!hasAnyData) {
-        setError(readinessData?.no_data_message || EMPTY_MESSAGE);
+        setError(EMPTY_MESSAGE);
       }
 
       setLoading(false);
@@ -104,6 +103,14 @@ export default function Placement() {
     };
   }, [studentId]);
 
+  const readiness = intelligence?.readiness || null;
+  const interviews = intelligence?.interviews || null;
+  const prediction = intelligence?.prediction || null;
+  const skills = intelligence?.skill_gap || { missing_skills: [], weak_skills: [], strong_skills: [] };
+  const actionPlan = intelligence?.action_plan || { weekly_plan: [], priority_actions: [] };
+  const successProbability = intelligence?.success_probability || null;
+  const recommendations = intelligence?.recommendations || [];
+
   const readinessScore = readiness?.readiness_score ?? 0;
   const breakdown = readiness?.breakdown || { cgpa: 0, skills: 0, interview: 0, consistency: 0 };
   const readinessStatus = readiness?.status || "Not Ready";
@@ -114,16 +121,14 @@ export default function Placement() {
     () =>
       !loading &&
       error === EMPTY_MESSAGE &&
-      !readiness?.has_data &&
-      !eligibility.length &&
-      !skills?.missing_skills?.length &&
-      !skills?.weak_skills?.length &&
-      !skills?.strong_skills?.length &&
-      !interviews?.has_data &&
-      !prediction?.has_data &&
-      !actionPlan?.weekly_plan?.length &&
-      !actionPlan?.priority_actions?.length,
-    [actionPlan, eligibility.length, error, interviews, loading, prediction, readiness, skills]
+      !summary.eligible &&
+      !summary.upcoming &&
+      !summary.completed &&
+      !summary.offers &&
+      !eligibleCompanies.length &&
+      !upcomingDrives.length &&
+      !pastDrives.length,
+    [eligibleCompanies.length, error, loading, pastDrives.length, summary, upcomingDrives.length]
   );
 
   if (loading) {
@@ -165,46 +170,16 @@ export default function Placement() {
       )}
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="CGPA score" value={`${Math.round(breakdown.cgpa)}%`} hint="Academic foundation" />
-        <MetricCard label="Skills score" value={`${Math.round(breakdown.skills)}%`} hint="Placement skills signal" />
-        <MetricCard label="Interview score" value={`${Math.round(breakdown.interview)}%`} hint="Recent interview outcomes" />
-        <MetricCard label="Consistency" value={`${Math.round(breakdown.consistency)}%`} hint="Attendance + tasks" />
+        <MetricCard label="Eligible companies" value={summary.eligible} hint="Based on your profile" />
+        <MetricCard label="Upcoming interviews" value={summary.upcoming} hint="Assigned placement drives" />
+        <MetricCard label="Completed interviews" value={summary.completed} hint="Past drive participation" />
+        <MetricCard label="Offers" value={summary.offers} hint="Final selected outcomes" />
       </section>
-
-      <Section title="What you need to fix" subtitle="Backend-generated reasons and next steps">
-        <div className="grid gap-4 lg:grid-cols-2">
-          <Panel>
-            <PanelTitle title="Primary reasons" />
-            {readinessReasons.length ? (
-              <div className="space-y-3">
-                {readinessReasons.map((reason) => (
-                  <ReasonItem key={reason} text={reason} />
-                ))}
-              </div>
-            ) : (
-              <InlineEmpty text="No blockers identified right now." />
-            )}
-          </Panel>
-
-          <Panel>
-            <PanelTitle title="Priority suggestions" />
-            {suggestions.length ? (
-              <div className="space-y-3">
-                {suggestions.map((item) => (
-                  <ActionChip key={item} text={item} />
-                ))}
-              </div>
-            ) : (
-              <InlineEmpty text="The backend has not generated any fixes yet." />
-            )}
-          </Panel>
-        </div>
-      </Section>
 
       <Section title="Company eligibility" subtitle="Live eligibility against stored company rules">
         <div className="grid gap-4 lg:grid-cols-2">
-          {eligibility.length ? (
-            eligibility.map((company) => (
+          {eligibleCompanies.length ? (
+            eligibleCompanies.map((company) => (
               <Panel key={company.company_name}>
                 <div className="flex flex-col gap-3">
                   <div className="flex items-start justify-between gap-3">
@@ -236,82 +211,197 @@ export default function Placement() {
               </Panel>
             ))
           ) : (
-            <Panel>
-              <InlineEmpty text="No company records are available yet." />
-            </Panel>
+            <p className="text-sm text-slate-500">No eligible companies based on current CGPA and backlog.</p>
           )}
         </div>
       </Section>
 
-      <Section title="Interview intelligence" subtitle="Insights from the latest interviews">
-        <div className="grid gap-4 lg:grid-cols-3">
-          <Panel>
-            <PanelTitle title="Last round reached" />
-            <StatValue value={interviews?.last_round_reached || "No interview recorded"} />
-          </Panel>
-          <Panel>
-            <PanelTitle title="Common weak area" />
-            <StatValue value={interviews?.common_weak_area || "No pattern yet"} />
-          </Panel>
-          <Panel>
-            <PanelTitle title="Suggestion" />
-            <StatValue value={interviews?.improvement_suggestion || "Start recording interview feedback"} small />
-          </Panel>
+      <Section title="Upcoming interviews" subtitle="Drives assigned to you and not completed yet">
+        <div className="grid gap-4 lg:grid-cols-2">
+          {upcomingDrives.length ? (
+            upcomingDrives.map((drive) => (
+              <Panel key={drive.student_drive_id}>
+                <PanelTitle title={drive.company_name} />
+                <div className="space-y-2 text-sm text-slate-600">
+                  <p>Date: {formatDate(drive.drive_date)}</p>
+                  <p>Mode: {drive.mode || "N/A"}</p>
+                  <p>Status: {drive.status || "assigned"}</p>
+                  <p>Current round: {drive.current_round ?? 0}</p>
+                </div>
+              </Panel>
+            ))
+          ) : (
+            <p className="text-sm text-slate-500">No interviews assigned</p>
+          )}
         </div>
       </Section>
 
-      <Section title="Prediction" subtitle="Selection probability based on readiness and interview history">
+      <Section title="Past interviews" subtitle="Completed or closed placement drives">
         <div className="grid gap-4 lg:grid-cols-2">
-          <Panel>
-            <PanelTitle title="Probability outlook" />
-            <div className="space-y-4">
-              <ProbabilityBar label="Current probability" value={prediction?.current_probability ?? 0} />
-              <ProbabilityBar label="Improved probability" value={prediction?.improved_probability ?? 0} accent />
+          {pastDrives.length ? (
+            pastDrives.map((drive) => (
+              <Panel key={drive.student_drive_id}>
+                <PanelTitle title={drive.company_name} />
+                <div className="space-y-2 text-sm text-slate-600">
+                  <p>Date: {formatDate(drive.drive_date)}</p>
+                  <p>Mode: {drive.mode || "N/A"}</p>
+                  <p>Status: {drive.status || "completed"}</p>
+                  <p>Final result: {drive.final_result || "pending"}</p>
+                </div>
+              </Panel>
+            ))
+          ) : (
+            <p className="text-sm text-slate-500">No placement drives available yet</p>
+          )}
+        </div>
+      </Section>
+
+      {pastDrives.length === 0 ? (
+        <Section title="Placement intelligence" subtitle="Insights appear after interview participation">
+          <p className="text-sm text-slate-500">No placement drives available yet</p>
+        </Section>
+      ) : (
+        <>
+          <Section title="Placement readiness" subtitle="Backend-generated readiness score and component breakdown">
+            <div className="grid gap-4 lg:grid-cols-2">
+              <Panel>
+                <div className="flex items-center gap-4">
+                  <ScoreRing score={readinessScore} />
+                  <div>
+                    <StatusBadge status={readinessStatus} />
+                    <p className="mt-2 text-sm text-slate-500">Readiness score</p>
+                    <p className="text-xl font-semibold text-slate-900">{Math.round(readinessScore)}%</p>
+                  </div>
+                </div>
+              </Panel>
+              <Panel>
+                <PanelTitle title="Breakdown" />
+                <div className="space-y-3">
+                  <ProbabilityBar label="CGPA" value={breakdown.cgpa} />
+                  <ProbabilityBar label="Skills" value={breakdown.skills} />
+                  <ProbabilityBar label="Interview" value={breakdown.interview} />
+                  <ProbabilityBar label="Consistency" value={breakdown.consistency} />
+                </div>
+              </Panel>
             </div>
-          </Panel>
-          <Panel>
-            <PanelTitle title="What to improve next" />
-            <StatValue value={prediction?.suggestion || "No prediction available yet"} small />
-          </Panel>
-        </div>
-      </Section>
+          </Section>
 
-      <Section title="Skill gap" subtitle="Company requirements compared with your current skill profile">
-        <div className="grid gap-4 lg:grid-cols-3">
-          <SkillColumn title="Missing skills" items={skills?.missing_skills || []} tone="rose" emptyText="No missing skills recorded." />
-          <SkillColumn title="Weak skills" items={skills?.weak_skills || []} tone="amber" emptyText="No weak skills recorded." />
-          <SkillColumn title="Strong skills" items={skills?.strong_skills || []} tone="emerald" emptyText="No strong skills recorded." />
-        </div>
-      </Section>
+          <Section title="What you need to fix" subtitle="Backend-generated reasons and recommendations">
+            <div className="grid gap-4 lg:grid-cols-2">
+              <Panel>
+                <PanelTitle title="Primary reasons" />
+                {readinessReasons.length ? (
+                  <div className="space-y-3">
+                    {readinessReasons.map((reason) => (
+                      <ReasonItem key={reason} text={reason} />
+                    ))}
+                  </div>
+                ) : (
+                  <InlineEmpty text="No blockers identified right now." />
+                )}
+              </Panel>
 
-      <Section title="Action plan" subtitle="Real tasks generated from current placement signals">
-        <div className="grid gap-4 lg:grid-cols-2">
-          <Panel>
-            <PanelTitle title="Weekly plan" />
-            {actionPlan?.weekly_plan?.length ? (
-              <ul className="space-y-3">
-                {actionPlan.weekly_plan.map((task) => (
-                  <ListItem key={task} text={task} />
-                ))}
-              </ul>
-            ) : (
-              <InlineEmpty text="No weekly plan available right now." />
-            )}
-          </Panel>
-          <Panel>
-            <PanelTitle title="Priority actions" />
-            {actionPlan?.priority_actions?.length ? (
-              <ul className="space-y-3">
-                {actionPlan.priority_actions.map((task) => (
-                  <ListItem key={task} text={task} />
-                ))}
-              </ul>
-            ) : (
-              <InlineEmpty text="No priority tasks available right now." />
-            )}
-          </Panel>
-        </div>
-      </Section>
+              <Panel>
+                <PanelTitle title="Priority suggestions" />
+                {suggestions.length ? (
+                  <div className="space-y-3">
+                    {suggestions.map((item) => (
+                      <ActionChip key={item} text={item} />
+                    ))}
+                  </div>
+                ) : (
+                  <InlineEmpty text="No suggestions available right now." />
+                )}
+              </Panel>
+            </div>
+          </Section>
+
+          <Section title="Interview intelligence" subtitle="Insights from recent interviews and feedback trends">
+            <div className="grid gap-4 lg:grid-cols-3">
+              <Panel>
+                <PanelTitle title="Last round reached" />
+                <StatValue value={interviews?.last_round_reached || "No interview recorded"} />
+              </Panel>
+              <Panel>
+                <PanelTitle title="Common weak area" />
+                <StatValue value={interviews?.common_weak_area || "No pattern yet"} />
+              </Panel>
+              <Panel>
+                <PanelTitle title="Suggestion" />
+                <StatValue value={interviews?.improvement_suggestion || "Start recording interview feedback"} small />
+              </Panel>
+            </div>
+          </Section>
+
+          <Section title="Prediction" subtitle="Selection probability from CGPA, success-rate, and attendance">
+            <div className="grid gap-4 lg:grid-cols-2">
+              <Panel>
+                <PanelTitle title="Probability outlook" />
+                <div className="space-y-4">
+                  <ProbabilityBar label="Current probability" value={prediction?.current_probability ?? 0} />
+                  <ProbabilityBar label="Improved probability" value={prediction?.improved_probability ?? 0} accent />
+                </div>
+              </Panel>
+              <Panel>
+                <PanelTitle title="Readiness band" />
+                <StatValue value={successProbability?.readiness || "N/A"} />
+                <p className="mt-3 text-sm text-slate-600">Model score: {Math.round(successProbability?.score || 0)}</p>
+              </Panel>
+            </div>
+          </Section>
+
+          <Section title="Skill gap" subtitle="Skills missing or weak based on company requirements and feedback">
+            <div className="grid gap-4 lg:grid-cols-3">
+              <SkillColumn title="Missing skills" items={skills?.missing_skills || []} tone="rose" emptyText="No missing skills recorded." />
+              <SkillColumn title="Weak skills" items={skills?.weak_skills || []} tone="amber" emptyText="No weak skills recorded." />
+              <SkillColumn title="Strong skills" items={skills?.strong_skills || []} tone="emerald" emptyText="No strong skills recorded." />
+            </div>
+          </Section>
+
+          <Section title="Action plan" subtitle="Real weekly and priority actions">
+            <div className="grid gap-4 lg:grid-cols-2">
+              <Panel>
+                <PanelTitle title="Weekly plan" />
+                {actionPlan?.weekly_plan?.length ? (
+                  <ul className="space-y-3">
+                    {actionPlan.weekly_plan.map((task) => (
+                      <ListItem key={task} text={task} />
+                    ))}
+                  </ul>
+                ) : (
+                  <InlineEmpty text="No weekly plan available right now." />
+                )}
+              </Panel>
+              <Panel>
+                <PanelTitle title="Priority actions" />
+                {actionPlan?.priority_actions?.length ? (
+                  <ul className="space-y-3">
+                    {actionPlan.priority_actions.map((task) => (
+                      <ListItem key={task} text={task} />
+                    ))}
+                  </ul>
+                ) : (
+                  <InlineEmpty text="No priority tasks available right now." />
+                )}
+              </Panel>
+            </div>
+          </Section>
+
+          <Section title="Recommendations" subtitle="Actionable placement guidance">
+            <Panel>
+              {recommendations.length ? (
+                <div className="space-y-3">
+                  {recommendations.map((item) => (
+                    <ReasonItem key={item} text={item} />
+                  ))}
+                </div>
+              ) : (
+                <InlineEmpty text="No recommendations available right now." />
+              )}
+            </Panel>
+          </Section>
+        </>
+      )}
     </div>
   );
 }
@@ -357,7 +447,7 @@ function MetricCard({ label, value, hint }) {
   return (
     <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
       <p className="text-xs font-medium uppercase tracking-[0.22em] text-slate-500">{label}</p>
-      <p className="mt-3 text-3xl font-semibold text-slate-900">{value}</p>
+      <p className="mt-3 text-3xl font-semibold text-slate-900">{value ?? 0}</p>
       <p className="mt-2 text-sm text-slate-500">{hint}</p>
     </div>
   );
