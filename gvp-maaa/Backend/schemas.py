@@ -259,6 +259,29 @@ class DriveCreate(BaseModel):
     selection_process: Optional[List[str]] = None
 
 
+class AssignFacultyRequest(BaseModel):
+    faculty_ids: List[int]
+
+
+class DriveStudentUpdateRequest(BaseModel):
+    current_round: Optional[int] = None
+    final_status: Optional[str] = None
+
+
+class DriveNotifyFilteredRequest(BaseModel):
+    branch: Optional[List[str]] = None
+    year: Optional[List[int]] = None
+    status: Optional[List[str]] = None
+    title: Optional[str] = None
+    message: Optional[str] = None
+
+
+class StudentNotifyRequest(BaseModel):
+    title: str
+    message: str
+    drive_id: Optional[int] = None
+
+
 
 
 

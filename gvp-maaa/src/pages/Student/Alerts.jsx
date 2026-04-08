@@ -105,6 +105,9 @@ export default function Alerts({ alerts = [], setAlerts, loading }) {
 
               <h3 className="font-semibold">{alert.title}</h3>
               <p className="text-sm text-gray-700">{alert.message}</p>
+              {alert.drive_id ? (
+                <p className="text-xs text-indigo-700">Drive ID: {alert.drive_id}</p>
+              ) : null}
 
               {!alert.is_read && (
                 <button

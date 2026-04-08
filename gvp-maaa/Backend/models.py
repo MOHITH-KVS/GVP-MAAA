@@ -179,6 +179,36 @@ class StudentDrive(Base):
     )
 
 
+class DriveFacultyMap(Base):
+    __tablename__ = "drive_faculty_map"
+
+    id = Column(Integer, primary_key=True, index=True)
+    drive_id = Column(Integer, ForeignKey("placement_drives.id", ondelete="CASCADE"), nullable=False)
+    faculty_id = Column(Integer, ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False)
+    assigned_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("drive_id", "faculty_id", name="unique_drive_faculty_map"),
+    )
+
+
+class DriveApplication(Base):
+    __tablename__ = "drive_applications"
+
+    id = Column(Integer, primary_key=True, index=True)
+    drive_id = Column(Integer, ForeignKey("placement_drives.id", ondelete="CASCADE"), nullable=False)
+    student_id = Column(Integer, ForeignKey("students.student_id", ondelete="CASCADE"), nullable=False)
+    application_status = Column(String(30), default="not_applied")
+    current_round = Column(Integer, default=0)
+    final_status = Column(String(30), default="pending")
+    updated_by = Column(Integer, ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("drive_id", "student_id", name="unique_drive_application"),
+    )
+
+
 class PlacementFeedback(Base):
     __tablename__ = "placement_feedback"
 
@@ -342,6 +372,8 @@ class Alert(Base):
     file_name = Column(String, nullable=True)
     file_path = Column(String, nullable=True)
     file_type = Column(String, nullable=True)
+    drive_id = Column(Integer, ForeignKey("placement_drives.id"), nullable=True)
+    is_read = Column(Boolean, default=False)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

@@ -157,6 +157,8 @@ export default function Placement() {
   const actionPlan = intelligence?.action_plan || { weekly_plan: [], priority_actions: [] };
   const successProbability = intelligence?.success_probability || null;
   const recommendations = intelligence?.recommendations || [];
+  const opportunitySummary = intelligence?.opportunity_summary || { missed_opportunities: 0, selected_drives: 0, rejected_drives: 0 };
+  const importantAlerts = intelligence?.important_alerts || [];
 
   const readinessScore = readiness?.readiness_score ?? 0;
   const breakdown = readiness?.breakdown || { cgpa: 0, skills: 0, interview: 0, consistency: 0 };
@@ -225,6 +227,12 @@ export default function Placement() {
         <MetricCard label="Upcoming interviews" value={summary.upcoming} hint="Assigned placement drives" />
         <MetricCard label="Completed interviews" value={summary.completed} hint="Past drive participation" />
         <MetricCard label="Offers" value={summary.offers} hint="Final selected outcomes" />
+      </section>
+
+      <section className="grid gap-4 md:grid-cols-3">
+        <MetricCard label="Missed opportunities" value={opportunitySummary.missed_opportunities || 0} hint="Eligible drives not completed" />
+        <MetricCard label="Selected drives" value={opportunitySummary.selected_drives || 0} hint="Final selected status" />
+        <MetricCard label="Rejected drives" value={opportunitySummary.rejected_drives || 0} hint="Final rejected status" />
       </section>
 
       <Section title="Drive applications" subtitle="Apply directly to eligible drives with live probability and skill match">
@@ -303,6 +311,22 @@ export default function Placement() {
               {probabilityReasons.length ? probabilityReasons.map((reason) => <ReasonItem key={reason} text={reason} />) : <InlineEmpty text="No explanation available yet." />}
             </div>
           </Panel>
+        </div>
+      </Section>
+
+      <Section title="Important alerts" subtitle="Recent placement notifications linked to your drives">
+        <div className="grid gap-4 lg:grid-cols-2">
+          {importantAlerts.length ? (
+            importantAlerts.map((alert) => (
+              <Panel key={alert.id}>
+                <PanelTitle title={alert.title} />
+                <p className="text-sm text-slate-600">{alert.message}</p>
+                <p className="mt-2 text-xs text-slate-500">Drive ID: {alert.drive_id || "N/A"} · {formatDate(alert.created_at)}</p>
+              </Panel>
+            ))
+          ) : (
+            <p className="text-sm text-slate-500">No important alerts right now.</p>
+          )}
         </div>
       </Section>
 

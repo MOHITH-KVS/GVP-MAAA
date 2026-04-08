@@ -59,6 +59,8 @@ export default function AdminPlacement() {
   const [showDriveForm, setShowDriveForm] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState("Action completed successfully");
+  const [actionBusyByDrive, setActionBusyByDrive] = useState({});
   const [driveForm, setDriveForm] = useState(DRIVE_DEFAULT);
 
   const authHeaders = useMemo(() => {
@@ -151,6 +153,7 @@ export default function AdminPlacement() {
 
       await axios.post(`${BASE_URL}/api/drives`, payload, { headers: authHeaders });
 
+      setSuccessMessage("Drive created successfully");
       setShowSuccess(true);
       setShowDriveForm(false);
 
@@ -178,36 +181,29 @@ export default function AdminPlacement() {
   };
 
   const closeDrive = async (driveId) => {
+    setActionBusyByDrive((prev) => ({ ...prev, [`close-${driveId}`]: true }));
     try {
       await axios.put(`${BASE_URL}/api/drives/${driveId}/close`, {}, { headers: authHeaders });
+      setSuccessMessage("Drive closed successfully");
+      setShowSuccess(true);
       await fetchData();
     } catch (err) {
       setError(readErrorMessage(err, "Failed to close drive."));
+    } finally {
+      setActionBusyByDrive((prev) => ({ ...prev, [`close-${driveId}`]: false }));
     }
   };
 
   const notifyStudents = async (driveId) => {
+    setActionBusyByDrive((prev) => ({ ...prev, [`notify-${driveId}`]: true }));
     try {
-      await axios.post(`${BASE_URL}/api/drives/${driveId}/notify-students`, {}, { headers: authHeaders });
+      await axios.post(`${BASE_URL}/api/drives/${driveId}/notify`, {}, { headers: authHeaders });
+      setSuccessMessage("Notifications sent successfully");
+      setShowSuccess(true);
     } catch (err) {
       setError(readErrorMessage(err, "Failed to notify students."));
-    }
-  };
-
-  const uploadResults = async (driveId, file) => {
-    if (!file) return;
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-      await axios.post(`${BASE_URL}/api/drives/${driveId}/upload-results`, formData, {
-        headers: {
-          ...authHeaders,
-          "Content-Type": "multipart/form-data",
-        },
-      });
-      await fetchData();
-    } catch (err) {
-      setError(readErrorMessage(err, "Failed to upload results."));
+    } finally {
+      setActionBusyByDrive((prev) => ({ ...prev, [`notify-${driveId}`]: false }));
     }
   };
 
@@ -277,14 +273,14 @@ export default function AdminPlacement() {
                           Details
                         </button>
                         <button className="rounded-lg bg-blue-100 px-2 py-1 text-xs text-blue-700" onClick={() => notifyStudents(drive.id)}>
-                          Notify
+                          {actionBusyByDrive[`notify-${drive.id}`] ? "Notifying..." : "Notify"}
                         </button>
-                        <label className="cursor-pointer rounded-lg bg-amber-100 px-2 py-1 text-xs text-amber-700">
-                          Upload CSV
-                          <input className="hidden" type="file" accept=".csv" onChange={(e) => uploadResults(drive.id, e.target.files?.[0])} />
-                        </label>
-                        <button className="rounded-lg bg-red-100 px-2 py-1 text-xs text-red-700" onClick={() => closeDrive(drive.id)}>
-                          Close
+                        <button
+                          className="rounded-lg bg-red-100 px-2 py-1 text-xs text-red-700"
+                          disabled={Boolean(actionBusyByDrive[`close-${drive.id}`])}
+                          onClick={() => closeDrive(drive.id)}
+                        >
+                          {actionBusyByDrive[`close-${drive.id}`] ? "Closing..." : "Close"}
                         </button>
                       </div>
                     </td>
@@ -401,12 +397,12 @@ export default function AdminPlacement() {
         />
       )}
 
-      {showSuccess && <SuccessModal />}
+      {showSuccess && <SuccessModal message={successMessage} />}
     </div>
   );
 }
 
-function SuccessModal() {
+function SuccessModal({ message }) {
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/50 p-4">
       <div
@@ -416,7 +412,8 @@ function SuccessModal() {
         }}
       >
         <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-emerald-100 text-3xl text-emerald-700">✓</div>
-        <p className="text-lg font-semibold text-slate-900">Drive Created Successfully</p>
+        <p className="text-lg font-semibold text-slate-900">Success</p>
+        <p className="mt-1 text-sm text-slate-600">{message || "Action completed successfully"}</p>
       </div>
       <style>{`@keyframes success-pop { from { opacity: 0; transform: scale(0.8);} to { opacity: 1; transform: scale(1);} }`}</style>
     </div>

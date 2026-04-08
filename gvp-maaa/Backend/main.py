@@ -9,7 +9,7 @@ from sqlalchemy import text, extract, func, or_, case  # type: ignore
 from typing import Optional, List, Dict, Any
 from security import hash_password, verify_password  # type: ignore
 from mail import send_reset_email  # type: ignore
-from schemas import  AlertCreate, AssignSubjectRequest, AttendanceCreate, ResetPasswordRequest, StudentPromotionRequest, TeacherAdminUpdate, TeacherDeleteRequest,TimetableCreate, TimetableResponse,StudentDeleteRequest,SubjectCreate,AttendanceAnalyticsResponse, MarksUpload, AdminOverviewResponse, DriveCreate  # type: ignore
+from schemas import  AlertCreate, AssignFacultyRequest, AssignSubjectRequest, AttendanceCreate, DriveNotifyFilteredRequest, DriveStudentUpdateRequest, ResetPasswordRequest, StudentNotifyRequest, StudentPromotionRequest, TeacherAdminUpdate, TeacherDeleteRequest,TimetableCreate, TimetableResponse,StudentDeleteRequest,SubjectCreate,AttendanceAnalyticsResponse, MarksUpload, AdminOverviewResponse, DriveCreate  # type: ignore
 import schemas  # type: ignore
 from datetime import datetime, timedelta
 from database import engine  # type: ignore
@@ -57,6 +57,8 @@ from models import (  # type: ignore
     PlacementFeedback,
     PlacementStudentProfile,
     PlacementStudentSkill,
+    DriveApplication,
+    DriveFacultyMap,
     StudentDrive,
 )
 
@@ -533,6 +535,57 @@ def ensure_placement_schema():
                 WHEN COALESCE(applied, FALSE) THEN TRUE
                 ELSE FALSE
             END;
+        """))
+
+        db.execute(text("""
+            CREATE TABLE IF NOT EXISTS drive_faculty_map (
+                id SERIAL PRIMARY KEY,
+                drive_id INT REFERENCES placement_drives(id) ON DELETE CASCADE,
+                faculty_id INT REFERENCES users(user_id) ON DELETE CASCADE,
+                assigned_at TIMESTAMP DEFAULT NOW(),
+                UNIQUE(drive_id, faculty_id)
+            );
+        """))
+
+        db.execute(text("""
+            CREATE TABLE IF NOT EXISTS drive_applications (
+                id SERIAL PRIMARY KEY,
+                drive_id INT REFERENCES placement_drives(id) ON DELETE CASCADE,
+                student_id INT REFERENCES students(student_id) ON DELETE CASCADE,
+                application_status TEXT DEFAULT 'not_applied',
+                current_round INT DEFAULT 0,
+                final_status TEXT DEFAULT 'pending',
+                updated_by INT REFERENCES users(user_id) ON DELETE SET NULL,
+                updated_at TIMESTAMP DEFAULT NOW(),
+                UNIQUE(drive_id, student_id)
+            );
+        """))
+
+        db.execute(text("""
+            INSERT INTO drive_applications (drive_id, student_id, application_status, current_round, final_status, updated_by, updated_at)
+            SELECT
+                sd.drive_id,
+                sd.student_id,
+                CASE
+                    WHEN COALESCE(sd.applied, FALSE) THEN 'applied'
+                    ELSE 'not_applied'
+                END,
+                COALESCE(sd.current_round, 0),
+                COALESCE(NULLIF(BTRIM(sd.final_result), ''), 'pending'),
+                NULL,
+                COALESCE(sd.updated_at, NOW())
+            FROM student_drives sd
+            ON CONFLICT (drive_id, student_id) DO NOTHING;
+        """))
+
+        db.execute(text("""
+            ALTER TABLE alerts
+            ADD COLUMN IF NOT EXISTS drive_id INT REFERENCES placement_drives(id) ON DELETE CASCADE,
+            ADD COLUMN IF NOT EXISTS is_read BOOLEAN DEFAULT FALSE;
+        """))
+
+        db.execute(text("""
+            UPDATE alerts SET is_read = FALSE WHERE is_read IS NULL;
         """))
 
         db.execute(text("""
@@ -2026,6 +2079,57 @@ def _build_drive_stats(drive_id: int, db: Session) -> Dict[str, int]:
     }
 
 
+def _is_admin_user(current_user: dict) -> bool:
+    return _normalized_role(current_user) == "admin"
+
+
+def _is_assigned_faculty_for_drive(drive_id: int, user_id: int, db: Session) -> bool:
+    row = (
+        db.query(DriveFacultyMap)
+        .filter(DriveFacultyMap.drive_id == drive_id, DriveFacultyMap.faculty_id == user_id)
+        .first()
+    )
+    return row is not None
+
+
+def _can_update_drive_students(drive_id: int, current_user: dict, db: Session) -> bool:
+    if _is_admin_user(current_user):
+        return True
+    normalized = _normalized_role(current_user)
+    if normalized not in {"teacher", "coordinator"}:
+        return False
+    return _is_assigned_faculty_for_drive(drive_id, int(current_user["user_id"]), db)
+
+
+def _sync_drive_application(sd: StudentDrive, updated_by: Optional[int], db: Session) -> None:
+    app_row = (
+        db.query(DriveApplication)
+        .filter(DriveApplication.drive_id == sd.drive_id, DriveApplication.student_id == sd.student_id)
+        .first()
+    )
+    application_status = "applied" if bool(sd.applied) else "not_applied"
+    final_status = str(sd.final_result or "pending").strip().lower() or "pending"
+    if not app_row:
+        db.add(
+            DriveApplication(
+                drive_id=sd.drive_id,
+                student_id=sd.student_id,
+                application_status=application_status,
+                current_round=int(sd.current_round or 0),
+                final_status=final_status,
+                updated_by=updated_by,
+                updated_at=datetime.utcnow(),
+            )
+        )
+        return
+
+    app_row.application_status = application_status
+    app_row.current_round = int(sd.current_round or 0)
+    app_row.final_status = final_status
+    app_row.updated_by = updated_by
+    app_row.updated_at = datetime.utcnow()
+
+
 def _get_student_skill_set(student: Student, db: Session) -> set:
     skills = set()
 
@@ -2114,20 +2218,22 @@ def _auto_assign_students_for_drive(drive: PlacementDrive, db: Session) -> int:
             existing.is_eligible = bool(is_eligible)
             existing.probability_score = probability_score
             existing.updated_at = datetime.utcnow()
+            _sync_drive_application(existing, None, db)
             continue
 
-        db.add(
-            StudentDrive(
-                student_id=student.student_id,
-                drive_id=drive.id,
-                is_eligible=bool(is_eligible),
-                applied=False,
-                status="Not Applied",
-                probability_score=probability_score,
-                current_round=0,
-                final_result="pending",
-            )
+        new_row = StudentDrive(
+            student_id=student.student_id,
+            drive_id=drive.id,
+            is_eligible=bool(is_eligible),
+            applied=False,
+            status="Not Applied",
+            probability_score=probability_score,
+            current_round=0,
+            final_result="pending",
         )
+        db.add(new_row)
+        db.flush()
+        _sync_drive_application(new_row, None, db)
         processed += 1
 
     return processed
@@ -2175,7 +2281,7 @@ def create_drive(
     current_user: dict = Depends(authorize(["admin", "coordinator"])),
     db: Session = Depends(get_db),
 ):
-    print("Incoming drive:", drive.dict())
+    print("Incoming data:", drive.dict())
 
     if drive.registration_deadline > drive.date:
         raise HTTPException(status_code=400, detail="registration_deadline must be on or before drive_date")
@@ -2259,6 +2365,20 @@ def get_drives(
         }
         for drive in rows
     ]
+
+
+@app.get("/api/faculty/list")
+def get_faculty_list(
+    _: dict = Depends(authorize(["admin", "coordinator"])),
+    db: Session = Depends(get_db),
+):
+    rows = (
+        db.query(User)
+        .filter(func.lower(func.coalesce(User.role, "")) .in_(["faculty", "teacher"]))
+        .order_by(User.name.asc())
+        .all()
+    )
+    return [{"id": row.user_id, "name": row.name, "email": row.email} for row in rows]
 
 
 @app.get("/api/admin/placement/dashboard")
@@ -2373,16 +2493,78 @@ def assign_students_to_drive(
     return {"message": "Students assignment refreshed", "assigned": assigned}
 
 
+@app.post("/api/drives/{drive_id}/assign-faculty")
+def assign_faculty_to_drive(
+    drive_id: int,
+    payload: AssignFacultyRequest,
+    _: dict = Depends(authorize(["admin", "coordinator"])),
+    db: Session = Depends(get_db),
+):
+    drive = db.query(PlacementDrive).filter(PlacementDrive.id == drive_id).first()
+    if not drive:
+        raise HTTPException(status_code=404, detail="Drive not found")
+
+    ids = sorted(set(int(fid) for fid in (payload.faculty_ids or []) if int(fid) > 0))
+    if not ids:
+        raise HTTPException(status_code=400, detail="faculty_ids are required")
+
+    valid_faculty = (
+        db.query(User)
+        .filter(
+            User.user_id.in_(ids),
+            func.lower(func.coalesce(User.role, "")).in_(["faculty", "teacher"]),
+        )
+        .all()
+    )
+    valid_ids = {row.user_id for row in valid_faculty}
+    if not valid_ids:
+        raise HTTPException(status_code=400, detail="No valid faculty IDs found")
+
+    for faculty_id in valid_ids:
+        exists = (
+            db.query(DriveFacultyMap)
+            .filter(DriveFacultyMap.drive_id == drive_id, DriveFacultyMap.faculty_id == faculty_id)
+            .first()
+        )
+        if exists:
+            continue
+        db.add(DriveFacultyMap(drive_id=drive_id, faculty_id=faculty_id))
+
+    db.commit()
+
+    assigned_rows = (
+        db.query(DriveFacultyMap, User)
+        .join(User, User.user_id == DriveFacultyMap.faculty_id)
+        .filter(DriveFacultyMap.drive_id == drive_id)
+        .order_by(User.name.asc())
+        .all()
+    )
+    return {
+        "message": "Faculty assigned successfully",
+        "assigned_faculty": [
+            {
+                "faculty_id": user.user_id,
+                "name": user.name,
+                "email": user.email,
+                "assigned_at": mapping.assigned_at.isoformat() if mapping.assigned_at else None,
+            }
+            for mapping, user in assigned_rows
+        ],
+    }
+
+
 @app.put("/api/student-drives/{student_drive_id}")
 def update_student_drive(
     student_drive_id: int,
     payload: Dict[str, Any] = Body(...),
-    _: dict = Depends(authorize(["coordinator", "admin", "teacher"])),
+    current_user: dict = Depends(authorize(["coordinator", "admin", "teacher"])),
     db: Session = Depends(get_db),
 ):
     row = db.query(StudentDrive).filter(StudentDrive.id == student_drive_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="Student drive record not found")
+    if not _can_update_drive_students(row.drive_id, current_user, db):
+        raise HTTPException(status_code=403, detail="Only admin or assigned faculty can update this drive")
 
     if "current_round" in payload:
         row.current_round = int(payload.get("current_round") or 0)
@@ -2405,6 +2587,7 @@ def update_student_drive(
             row.status = "completed"
 
     row.updated_at = datetime.utcnow()
+    _sync_drive_application(row, int(current_user["user_id"]), db)
     db.commit()
     return {"message": "Student drive updated"}
 
@@ -2416,34 +2599,7 @@ def upload_drive_results(
     _: dict = Depends(authorize(["coordinator", "admin"])),
     db: Session = Depends(get_db),
 ):
-    drive = db.query(PlacementDrive).filter(PlacementDrive.id == drive_id).first()
-    if not drive:
-        raise HTTPException(status_code=404, detail="Drive not found")
-
-    try:
-        raw = file.file.read().decode("utf-8")
-        reader = csv.DictReader(raw.splitlines())
-        updated = 0
-        for row in reader:
-            student_id = int(row.get("student_id") or 0)
-            if student_id <= 0:
-                continue
-            record = db.query(StudentDrive).filter(StudentDrive.student_id == student_id, StudentDrive.drive_id == drive_id).first()
-            if not record:
-                continue
-            if row.get("current_round") is not None:
-                record.current_round = int(row.get("current_round") or 0)
-            if row.get("status"):
-                record.status = row.get("status")
-            if row.get("final_result"):
-                record.final_result = row.get("final_result")
-            record.updated_at = datetime.utcnow()
-            updated += 1
-        db.commit()
-        return {"message": "Bulk results processed", "updated": updated}
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=400, detail=f"Invalid CSV: {str(e)}")
+    raise HTTPException(status_code=410, detail="CSV upload is removed. Use manual student status updates.")
 
 
 @app.post("/api/drives/{drive_id}/notify-students")
@@ -2457,7 +2613,7 @@ def notify_drive_students(
     if not drive:
         raise HTTPException(status_code=404, detail="Drive not found")
 
-    records = db.query(StudentDrive).filter(StudentDrive.drive_id == drive_id).all()
+    records = db.query(StudentDrive).filter(StudentDrive.drive_id == drive_id, StudentDrive.is_eligible.is_(True)).all()
     if not records:
         return {"message": "No eligible students to notify", "sent": 0}
 
@@ -2469,21 +2625,122 @@ def notify_drive_students(
 
     sent = 0
     for row in records:
-        db.add(
-            Alert(
-                title=title,
-                message=message,
-                type="placement",
-                target_role="student",
-                target_type="individual",
-                student_id=row.student_id,
-                department=None,
-            )
+        alert = Alert(
+            title=title,
+            message=message,
+            type="placement",
+            target_role="student",
+            target_type="individual",
+            student_id=row.student_id,
+            drive_id=drive_id,
+            is_read=False,
+            department=None,
         )
+        db.add(alert)
+        db.flush()
+        db.add(AlertRecipient(alert_id=alert.id, user_id=row.student_id, is_read=False))
         sent += 1
 
     db.commit()
     return {"message": "Students notified", "sent": sent}
+
+
+@app.post("/api/drives/{drive_id}/notify")
+def notify_drive_students_bulk(
+    drive_id: int,
+    payload: Dict[str, Any] = Body(default={}),
+    _: dict = Depends(authorize(["admin", "coordinator"])),
+    db: Session = Depends(get_db),
+):
+    return notify_drive_students(drive_id=drive_id, payload=payload, _=_, db=db)
+
+
+@app.post("/api/drives/{drive_id}/notify-filtered")
+def notify_drive_students_filtered(
+    drive_id: int,
+    payload: DriveNotifyFilteredRequest,
+    _: dict = Depends(authorize(["admin", "coordinator"])),
+    db: Session = Depends(get_db),
+):
+    drive = db.query(PlacementDrive).filter(PlacementDrive.id == drive_id).first()
+    if not drive:
+        raise HTTPException(status_code=404, detail="Drive not found")
+
+    rows = (
+        db.query(StudentDrive, Student, User)
+        .join(Student, Student.student_id == StudentDrive.student_id)
+        .join(User, User.user_id == Student.student_id)
+        .filter(StudentDrive.drive_id == drive_id)
+        .all()
+    )
+
+    allowed_branches = {str(value).strip().upper() for value in (payload.branch or []) if str(value).strip()}
+    allowed_years = {int(value) for value in (payload.year or []) if str(value).strip()}
+    allowed_status = {str(value).strip().lower() for value in (payload.status or []) if str(value).strip()}
+
+    title = payload.title or f"Placement Update: {drive.title or drive.company_name or 'Drive'}"
+    message = payload.message or "New placement update is available. Check your drive progress and next actions."
+
+    sent = 0
+    for sd, student, user in rows:
+        branch_name = DEPARTMENT_MAP.get(user.department_id, str(user.department_id or "")).upper()
+        student_status = str(sd.final_result or sd.status or "").lower()
+
+        if allowed_branches and branch_name not in allowed_branches:
+            continue
+        if allowed_years and int(student.year or 0) not in allowed_years:
+            continue
+        if allowed_status and student_status not in allowed_status:
+            continue
+
+        alert = Alert(
+            title=title,
+            message=message,
+            type="placement",
+            target_role="student",
+            target_type="individual",
+            student_id=student.student_id,
+            drive_id=drive_id,
+            is_read=False,
+            department=None,
+        )
+        db.add(alert)
+        db.flush()
+        db.add(AlertRecipient(alert_id=alert.id, user_id=student.student_id, is_read=False))
+        sent += 1
+
+    db.commit()
+    return {"message": "Filtered notifications sent", "sent": sent}
+
+
+@app.post("/api/students/{student_id}/notify")
+def notify_single_student(
+    student_id: int,
+    payload: StudentNotifyRequest,
+    _: dict = Depends(authorize(["admin", "coordinator", "teacher"])),
+    db: Session = Depends(get_db),
+):
+    student = db.query(Student).filter(Student.student_id == student_id).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    alert = Alert(
+        title=payload.title,
+        message=payload.message,
+        type="placement",
+        target_role="student",
+        target_type="individual",
+        student_id=student_id,
+        drive_id=payload.drive_id,
+        is_read=False,
+        department=None,
+    )
+    db.add(alert)
+    db.flush()
+    db.add(AlertRecipient(alert_id=alert.id, user_id=student_id, is_read=False))
+    db.commit()
+
+    return {"message": "Notification sent", "alert_id": alert.id}
 
 
 @app.put("/api/drives/{drive_id}/close")
@@ -2505,62 +2762,83 @@ def close_drive(
 @app.get("/api/drives/{drive_id}/details")
 def get_drive_details(
     drive_id: int,
-    _: dict = Depends(authorize(["admin", "coordinator", "teacher"])),
+    current_user: dict = Depends(authorize(["admin", "coordinator", "teacher"])),
     db: Session = Depends(get_db),
 ):
     drive = db.query(PlacementDrive).filter(PlacementDrive.id == drive_id).first()
     if not drive:
         raise HTTPException(status_code=404, detail="Drive not found")
 
+    can_update = _can_update_drive_students(drive_id, current_user, db)
+
     rows = (
         db.query(StudentDrive, Student, User)
         .join(Student, Student.student_id == StudentDrive.student_id)
         .join(User, User.user_id == Student.student_id)
         .filter(StudentDrive.drive_id == drive_id)
+        .order_by(User.name.asc())
+        .all()
+    )
+
+    assigned_faculty_rows = (
+        db.query(DriveFacultyMap, User)
+        .join(User, User.user_id == DriveFacultyMap.faculty_id)
+        .filter(DriveFacultyMap.drive_id == drive_id)
+        .order_by(User.name.asc())
         .all()
     )
 
     eligible_students = []
     applied_students = []
-    interview_status = []
+    interview_progress = []
     selection_results = []
 
     for sd, student, user in rows:
+        app_row = (
+            db.query(DriveApplication)
+            .filter(DriveApplication.drive_id == drive_id, DriveApplication.student_id == student.student_id)
+            .first()
+        )
+        updated_by_name = None
+        if app_row and app_row.updated_by:
+            updater = db.query(User).filter(User.user_id == app_row.updated_by).first()
+            if updater:
+                updated_by_name = updater.name
+
+        branch_name = DEPARTMENT_MAP.get(int(user.department_id or 0), str(user.department_id or "N/A"))
+        current_round = int((app_row.current_round if app_row else sd.current_round) or 0)
+        final_result = str((app_row.final_status if app_row else sd.final_result) or "pending")
+        application_status = str((app_row.application_status if app_row else ("applied" if sd.applied else "not_applied")) or "not_applied")
+
         student_payload = {
             "student_drive_id": sd.id,
             "student_id": student.student_id,
-            "name": user.name,
-            "roll_no": student.roll_no,
-            "cgpa": _safe_float(student.cgpa),
+            "student_name": user.name,
+            "roll_number": student.roll_no,
+            "branch": branch_name,
+            "department": branch_name,
+            "year": int(student.year or 0),
+            "section": student.section or "N/A",
             "is_eligible": bool(sd.is_eligible),
             "applied": bool(sd.applied),
             "probability_score": _safe_float(sd.probability_score),
-            "status": sd.status,
-            "current_round": sd.current_round,
-            "final_result": sd.final_result,
+            "status": application_status,
+            "current_round": current_round,
+            "final_result": final_result,
+            "updated_by": updated_by_name or "System",
+            "updated_at": app_row.updated_at.isoformat() if app_row and app_row.updated_at else (sd.updated_at.isoformat() if sd.updated_at else None),
+            "can_update": bool(can_update),
         }
         if bool(sd.is_eligible):
             eligible_students.append(student_payload)
 
-        if bool(sd.applied) or str(sd.status or "").lower() in {"applied", "in_progress", "completed"} or int(sd.current_round or 0) > 0:
+        if application_status in {"applied", "in_progress", "selected", "rejected"} or bool(sd.applied):
             applied_students.append(student_payload)
 
-        interview_status.append(
-            {
-                "student_id": student.student_id,
-                "name": user.name,
-                "current_round": sd.current_round,
-                "status": sd.status,
-            }
-        )
+        interview_progress.append(student_payload)
 
-        selection_results.append(
-            {
-                "student_id": student.student_id,
-                "name": user.name,
-                "final_result": sd.final_result,
-            }
-        )
+        if final_result in {"selected", "rejected", "pending"}:
+            selection_results.append(student_payload)
 
     return {
         "drive": {
@@ -2574,10 +2852,20 @@ def get_drive_details(
             "registration_deadline": drive.registration_deadline.isoformat() if drive.registration_deadline else None,
             "eligible_years": drive.eligible_years or [],
             "branches": drive.branches or [],
+            "can_update": bool(can_update),
         },
+        "assigned_faculty": [
+            {
+                "faculty_id": user.user_id,
+                "name": user.name,
+                "email": user.email,
+                "assigned_at": mapping.assigned_at.isoformat() if mapping.assigned_at else None,
+            }
+            for mapping, user in assigned_faculty_rows
+        ],
         "eligible_students": eligible_students,
         "applied_students": applied_students,
-        "interview_status": interview_status,
+        "interview_progress": interview_progress,
         "selection_results": selection_results,
     }
 
@@ -2614,6 +2902,148 @@ def get_student_drives_api(
     ]
 
 
+@app.get("/api/drives/{drive_id}/students")
+def get_drive_students_filtered(
+    drive_id: int,
+    branch: Optional[str] = Query(default=None),
+    year: Optional[int] = Query(default=None),
+    section: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default=None),
+    current_user: dict = Depends(authorize(["admin", "coordinator", "teacher"])),
+    db: Session = Depends(get_db),
+):
+    drive = db.query(PlacementDrive).filter(PlacementDrive.id == drive_id).first()
+    if not drive:
+        raise HTTPException(status_code=404, detail="Drive not found")
+
+    can_update = _can_update_drive_students(drive_id, current_user, db)
+    rows = (
+        db.query(StudentDrive, Student, User)
+        .join(Student, Student.student_id == StudentDrive.student_id)
+        .join(User, User.user_id == Student.student_id)
+        .filter(StudentDrive.drive_id == drive_id)
+        .all()
+    )
+
+    normalized_branch = str(branch or "").strip().upper()
+    normalized_status = str(status or "").strip().lower()
+
+    result = []
+    for sd, student, user in rows:
+        app_row = (
+            db.query(DriveApplication)
+            .filter(DriveApplication.drive_id == drive_id, DriveApplication.student_id == student.student_id)
+            .first()
+        )
+        branch_name = DEPARTMENT_MAP.get(int(user.department_id or 0), str(user.department_id or "N/A"))
+        final_status = str((app_row.final_status if app_row else sd.final_result) or "pending").lower()
+        app_status = str((app_row.application_status if app_row else ("applied" if sd.applied else "not_applied")) or "not_applied").lower()
+
+        if normalized_branch and branch_name.upper() != normalized_branch:
+            continue
+        if year is not None and int(student.year or 0) != int(year):
+            continue
+        if section and str(student.section or "").strip().lower() != str(section).strip().lower():
+            continue
+        if normalized_status:
+            if normalized_status in {"selected", "rejected"} and final_status != normalized_status:
+                continue
+            if normalized_status == "applied" and app_status not in {"applied", "in_progress"}:
+                continue
+
+        updated_by_name = "System"
+        if app_row and app_row.updated_by:
+            updater = db.query(User).filter(User.user_id == app_row.updated_by).first()
+            if updater:
+                updated_by_name = updater.name
+
+        result.append(
+            {
+                "student_id": student.student_id,
+                "student_name": user.name,
+                "roll_number": student.roll_no,
+                "branch": branch_name,
+                "department": branch_name,
+                "year": int(student.year or 0),
+                "section": student.section or "N/A",
+                "status": app_status,
+                "current_round": int((app_row.current_round if app_row else sd.current_round) or 0),
+                "final_result": final_status,
+                "updated_by": updated_by_name,
+                "updated_at": app_row.updated_at.isoformat() if app_row and app_row.updated_at else (sd.updated_at.isoformat() if sd.updated_at else None),
+                "can_update": bool(can_update),
+            }
+        )
+
+    return {
+        "drive_id": drive_id,
+        "can_update": bool(can_update),
+        "students": result,
+    }
+
+
+@app.patch("/api/drives/{drive_id}/students/{student_id}")
+def patch_drive_student_status(
+    drive_id: int,
+    student_id: int,
+    payload: DriveStudentUpdateRequest,
+    current_user: dict = Depends(authorize(["admin", "coordinator", "teacher"])),
+    db: Session = Depends(get_db),
+):
+    if not _can_update_drive_students(drive_id, current_user, db):
+        raise HTTPException(status_code=403, detail="Only admin or assigned faculty can update this drive")
+
+    sd = (
+        db.query(StudentDrive)
+        .filter(StudentDrive.drive_id == drive_id, StudentDrive.student_id == student_id)
+        .first()
+    )
+    if not sd:
+        raise HTTPException(status_code=404, detail="Student drive record not found")
+
+    app_row = (
+        db.query(DriveApplication)
+        .filter(DriveApplication.drive_id == drive_id, DriveApplication.student_id == student_id)
+        .first()
+    )
+    if not app_row:
+        app_row = DriveApplication(drive_id=drive_id, student_id=student_id)
+        db.add(app_row)
+
+    if payload.current_round is not None:
+        round_value = max(0, int(payload.current_round))
+        app_row.current_round = round_value
+        sd.current_round = round_value
+        if round_value > 0:
+            app_row.application_status = "in_progress"
+            sd.status = "in_progress"
+            sd.applied = True
+
+    if payload.final_status is not None:
+        normalized_final = str(payload.final_status).strip().lower()
+        if normalized_final not in {"pending", "selected", "rejected"}:
+            raise HTTPException(status_code=400, detail="final_status must be pending/selected/rejected")
+        app_row.final_status = normalized_final
+        sd.final_result = normalized_final
+        if normalized_final in {"selected", "rejected"}:
+            app_row.application_status = normalized_final
+            sd.status = "completed"
+            sd.applied = True
+
+    app_row.updated_by = int(current_user["user_id"])
+    app_row.updated_at = datetime.utcnow()
+    sd.updated_at = datetime.utcnow()
+
+    _sync_drive_application(sd, int(current_user["user_id"]), db)
+    db.commit()
+
+    return {
+        "message": "Student status updated",
+        "drive_id": drive_id,
+        "student_id": student_id,
+    }
+
+
 @app.get("/api/student/placement")
 def get_student_placement_cards(
     current_user: dict = Depends(authorize(["student"])),
@@ -2628,6 +3058,26 @@ def get_student_placement_cards(
         .order_by(PlacementDrive.drive_date.asc().nullslast(), PlacementDrive.id.desc())
         .all()
     )
+
+    alert_rows = (
+        db.query(Alert)
+        .filter(Alert.student_id == student_id, Alert.type == "placement")
+        .order_by(Alert.created_at.desc())
+        .all()
+    )
+    alerts_by_drive: Dict[int, List[Dict[str, Any]]] = {}
+    for alert in alert_rows:
+        if not alert.drive_id:
+            continue
+        alerts_by_drive.setdefault(int(alert.drive_id), []).append(
+            {
+                "id": alert.id,
+                "title": alert.title,
+                "message": alert.message,
+                "created_at": alert.created_at.isoformat() if alert.created_at else None,
+                "is_read": bool(alert.is_read),
+            }
+        )
 
     cards = []
     for sd, drive, student in rows:
@@ -2674,6 +3124,7 @@ def get_student_placement_cards(
                 "matched_skills": skill_data["matched_skills"],
                 "reasons": reasons,
                 "action_to_improve": actions[0],
+                "alerts": alerts_by_drive.get(int(drive.id), [])[:5],
             }
         )
 
@@ -2718,6 +3169,7 @@ def apply_for_drive(
     if str(record.status or "").lower() in {"", "not applied", "assigned"}:
         record.status = "applied"
     record.updated_at = datetime.utcnow()
+    _sync_drive_application(record, student_id, db)
     db.commit()
 
     return {"message": "Applied successfully"}
@@ -2726,7 +3178,7 @@ def apply_for_drive(
 @app.put("/api/teacher/update-status")
 def teacher_update_status(
     payload: Dict[str, Any] = Body(...),
-    _: dict = Depends(authorize(["teacher", "coordinator", "admin"])),
+    current_user: dict = Depends(authorize(["teacher", "coordinator", "admin"])),
     db: Session = Depends(get_db),
 ):
     student_drive_id = int(payload.get("student_drive_id") or 0)
@@ -2736,6 +3188,8 @@ def teacher_update_status(
     row = db.query(StudentDrive).filter(StudentDrive.id == student_drive_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="Student drive record not found")
+    if not _can_update_drive_students(row.drive_id, current_user, db):
+        raise HTTPException(status_code=403, detail="Only admin or assigned faculty can update this drive")
 
     status = str(payload.get("status") or row.status)
     current_round = int(payload.get("current_round") or row.current_round or 0)
@@ -2746,6 +3200,7 @@ def teacher_update_status(
     row.final_result = final_result
     row.applied = True
     row.updated_at = datetime.utcnow()
+    _sync_drive_application(row, int(current_user["user_id"]), db)
     db.commit()
 
     return {"message": "Status updated"}
@@ -2901,6 +3356,8 @@ def student_placement_intelligence(
 
     past_rows = student_past_drives(current_user=current_user, db=db)
     selected_count = len([row for row in past_rows if str(row.get("final_result") or "").lower() == "selected"])
+    rejected_count = len([row for row in past_rows if str(row.get("final_result") or "").lower() == "rejected"])
+    missed_opportunities = len([row for row in past_rows if str(row.get("status") or "").lower() in {"not applied", "assigned"} and str(row.get("final_result") or "").lower() == "pending"])
     success_rate = round((selected_count / len(past_rows)) * 100, 2) if past_rows else 0.0
 
     student = db.query(Student).filter(Student.student_id == student_id).first()
@@ -2916,6 +3373,14 @@ def student_placement_intelligence(
     if not recommendations:
         recommendations.append("Keep your current preparation momentum")
 
+    important_alerts = (
+        db.query(Alert)
+        .filter(Alert.student_id == student_id, Alert.type == "placement")
+        .order_by(Alert.created_at.desc())
+        .limit(5)
+        .all()
+    )
+
     return {
         "readiness": readiness,
         "skill_gap": skill_gap,
@@ -2930,6 +3395,22 @@ def student_placement_intelligence(
             "attendance": attendance_pct,
         },
         "recommendations": recommendations,
+        "opportunity_summary": {
+            "missed_opportunities": missed_opportunities,
+            "selected_drives": selected_count,
+            "rejected_drives": rejected_count,
+        },
+        "important_alerts": [
+            {
+                "id": alert.id,
+                "title": alert.title,
+                "message": alert.message,
+                "drive_id": alert.drive_id,
+                "is_read": bool(alert.is_read),
+                "created_at": alert.created_at.isoformat() if alert.created_at else None,
+            }
+            for alert in important_alerts
+        ],
     }
 
 
@@ -6319,6 +6800,7 @@ def get_student_alerts(
             "message": alert.message,
             "type": alert.type,
             "created_at": alert.created_at,
+            "drive_id": alert.drive_id,
             "is_read": recipient.is_read
         })
 
@@ -7571,6 +8053,9 @@ def mark_read(alert_id: int, current_user=Depends(get_current_user), db: Session
         raise HTTPException(status_code=404, detail="Not found")
 
     recipient.is_read = True
+    alert_row = db.query(Alert).filter(Alert.id == alert_id).first()
+    if alert_row:
+        alert_row.is_read = True
     db.commit()
 
     return {"message": "Marked as read"}
