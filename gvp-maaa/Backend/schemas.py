@@ -1,6 +1,10 @@
+from __future__ import annotations
+
 from pydantic import BaseModel
 from typing import List, Optional, Any, Union
-from datetime import datetime ,date
+from datetime import datetime, date
+
+DateType = date
 
 
 class LoginRequest(BaseModel):
@@ -236,6 +240,23 @@ class StudentPromotionRequest(BaseModel):
     student_ids: list[int]
     new_semester: int | None = None
     new_section: str | None = None
+
+
+class DriveCreate(BaseModel):
+    title: str
+    company_name: str
+    role: str
+    package: float
+    min_cgpa: float
+    max_backlogs: int
+    date: DateType
+    location: str
+    registration_deadline: DateType
+    eligible_years: List[int]
+    branches: List[str]
+    mode: str
+    status: str
+    selection_process: Optional[List[str]] = None
 
 
 

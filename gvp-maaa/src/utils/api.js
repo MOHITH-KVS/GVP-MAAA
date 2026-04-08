@@ -1,7 +1,10 @@
 import axios from 'axios';
 
+const rawBaseUrl = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_BACKEND_URL || 'http://127.0.0.1:8000';
+const baseURL = rawBaseUrl.endsWith('/') ? rawBaseUrl.slice(0, -1) : rawBaseUrl;
+
 const api = axios.create({
-  baseURL: 'http://localhost:8000',
+  baseURL,
 });
 
 // Request interceptor
@@ -22,7 +25,7 @@ api.interceptors.response.use(
   (error) => {
     if (error.response && error.response.status === 401) {
       localStorage.removeItem('access_token');
-      alert('Session expired. Please login again.');
+      window.dispatchEvent(new CustomEvent('placement-auth-error', { detail: 'Session expired. Please login again.' }));
       window.location.href = '/login';
     }
     return Promise.reject(error);

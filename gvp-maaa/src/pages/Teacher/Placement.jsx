@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import api from "../../utils/api";
 
-const STATUS_OPTIONS = ["Round 1", "Round 2", "Selected", "Rejected"];
+const STATUS_OPTIONS = ["Applied", "Round 1", "Round 2", "Selected", "Rejected"];
 
 export default function TeacherPlacement() {
   const [drives, setDrives] = useState([]);
@@ -65,8 +65,11 @@ export default function TeacherPlacement() {
   const updateInterviewStatus = async (studentDriveId, value) => {
     try {
       const payload = mapStatusToPayload(value);
-      const res = await api.put(`/api/student-drives/${studentDriveId}`, payload);
-      console.log(`[TeacherPlacement] PUT /api/student-drives/${studentDriveId}`, res.data);
+      const res = await api.put(`/api/teacher/update-status`, {
+        student_drive_id: studentDriveId,
+        ...payload,
+      });
+      console.log("[TeacherPlacement] PUT /api/teacher/update-status", res.data);
       fetchPlacementData();
     } catch (err) {
       console.error("[TeacherPlacement] updateInterviewStatus error", err);
@@ -137,6 +140,9 @@ export default function TeacherPlacement() {
                         <thead>
                           <tr className="border-b border-slate-200 text-slate-600">
                             <th className="px-3 py-2 font-semibold">Student ID</th>
+                            <th className="px-3 py-2 font-semibold">Eligibility</th>
+                            <th className="px-3 py-2 font-semibold">Applied</th>
+                            <th className="px-3 py-2 font-semibold">Probability</th>
                             <th className="px-3 py-2 font-semibold">Current Round</th>
                             <th className="px-3 py-2 font-semibold">Result</th>
                             <th className="px-3 py-2 font-semibold">Update Status</th>
@@ -146,6 +152,9 @@ export default function TeacherPlacement() {
                           {(studentDriveByDrive[drive.id] || []).map((row) => (
                             <tr key={row.id} className="border-b border-slate-100">
                               <td className="px-3 py-2 text-slate-800">{row.student_id}</td>
+                              <td className="px-3 py-2 text-slate-700">{row.is_eligible ? "Yes" : "No"}</td>
+                              <td className="px-3 py-2 text-slate-700">{row.applied ? "Yes" : "No"}</td>
+                              <td className="px-3 py-2 text-slate-700">{Math.round(row.probability_score || 0)}%</td>
                               <td className="px-3 py-2 text-slate-700">{row.current_round || 0}</td>
                               <td className="px-3 py-2 text-slate-700">{row.final_result || "pending"}</td>
                               <td className="px-3 py-2">
@@ -224,6 +233,10 @@ export default function TeacherPlacement() {
 }
 
 function mapStatusToPayload(statusValue) {
+  if (statusValue === "Applied") {
+    return { status: "applied", final_result: "pending" };
+  }
+
   if (statusValue === "Round 1") {
     return { current_round: 1, status: "in_progress", final_result: "pending" };
   }

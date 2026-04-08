@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Numeric, ForeignKey, Text, Boolean, DateTime, Date, UniqueConstraint, JSON
+from sqlalchemy import Column, Integer, String, Numeric, ForeignKey, Text, Boolean, DateTime, Date, UniqueConstraint, JSON, Float
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
@@ -119,7 +119,7 @@ class PlacementStudentSkill(Base):
     id = Column(Integer, primary_key=True, index=True)
     student_id = Column(Integer, ForeignKey("students.student_id", ondelete="CASCADE"), nullable=False)
     skill_name = Column(String(120), nullable=False)
-    level = Column(String(20), nullable=False)
+    level = Column(String(20), nullable=True)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     __table_args__ = (
@@ -140,14 +140,20 @@ class PlacementDrive(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String(255), nullable=True)
-    company_id = Column(Integer, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False)
+    company_id = Column(Integer, ForeignKey("companies.id", ondelete="CASCADE"), nullable=True)
+    company_name = Column(String(255), nullable=True)
+    role = Column(String(255), nullable=True)
+    package_lpa = Column(Numeric(10, 2), nullable=True)
+    min_cgpa = Column(Numeric(3, 2), nullable=True)
+    max_backlogs = Column(Integer, default=0)
+    selection_process = Column(ARRAY(String), nullable=True)
     drive_date = Column(Date, nullable=True)
     mode = Column(String(30), nullable=True)
     location = Column(String(255), nullable=True)
     registration_deadline = Column(Date, nullable=True)
     eligible_years = Column(ARRAY(Integer), nullable=True)
     status = Column(String(30), default="open")
-    branches = Column(JSON, default=list)
+    branches = Column(ARRAY(String), nullable=True)
     created_by = Column(Integer, ForeignKey("users.user_id"), nullable=True)
     closed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -159,9 +165,13 @@ class StudentDrive(Base):
     id = Column(Integer, primary_key=True, index=True)
     student_id = Column(Integer, ForeignKey("students.student_id", ondelete="CASCADE"), nullable=False)
     drive_id = Column(Integer, ForeignKey("placement_drives.id", ondelete="CASCADE"), nullable=False)
-    status = Column(String(30), default="assigned")
+    is_eligible = Column(Boolean, default=False)
+    applied = Column(Boolean, default=False)
+    status = Column(String(30), default="Not Applied")
+    probability_score = Column(Float, nullable=True)
     current_round = Column(Integer, default=0)
     final_result = Column(String(30), default="pending")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     __table_args__ = (

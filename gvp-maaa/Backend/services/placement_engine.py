@@ -674,31 +674,95 @@ def get_selection_probability(student_id: int, db: Session, context: Optional[Di
             "current_probability": 0,
             "improved_probability": 0,
             "suggestion": NO_PLACEMENT_DATA_MESSAGE,
+            "reasons": [],
+            "improvement_actions": [],
         }
+
+    profile_values = _resolve_profile_values(context)
+    attendance_pct = _attendance_percentage(context["attendance_rows"])
+    backlog_count = int(profile_values["backlogs"] or 0)
+
+    cgpa_component = _clamp((profile_values["cgpa"] / 10.0) * 100 if profile_values["cgpa"] else 0.0)
+    attendance_component = _clamp(attendance_pct)
+    backlog_component = _clamp(100.0 - (backlog_count * 25.0))
 
     readiness = get_placement_readiness(student_id, db)
     interview_success_rate = _interview_success_rate(context["interviews"])
-    readiness_score = readiness["readiness_score"] or 0
+    skill_rows = _build_student_skill_map(context, interview_success_rate)
+    skill_component = _skills_score(skill_rows)
 
-    current_probability = round((_clamp(readiness_score) * 0.65) + (_clamp(interview_success_rate) * 0.35), 2)
-    improvement_headroom = max(8.0, (100.0 - readiness_score) * 0.25)
+    current_probability = round(
+        (cgpa_component * 0.34)
+        + (attendance_component * 0.28)
+        + (backlog_component * 0.18)
+        + (skill_component * 0.20),
+        2,
+    )
+
+    improvement_headroom = max(6.0, (100.0 - current_probability) * 0.30)
     improved_probability = round(_clamp(current_probability + improvement_headroom), 2)
+
+    reasons: List[str] = []
+    improvement_actions: List[str] = []
+
+    if cgpa_component >= 80:
+        reasons.append("CGPA is strong and supports shortlisting")
+    elif cgpa_component >= 65:
+        reasons.append("CGPA is moderate and keeps you in contention")
+        improvement_actions.append("Raise CGPA with subject revision and internal assessment focus")
+    else:
+        reasons.append("CGPA is pulling the selection chance down")
+        improvement_actions.append("Improve CGPA before the next drive")
+
+    if attendance_component >= 85:
+        reasons.append("Attendance is healthy and signals consistency")
+    elif attendance_component >= 70:
+        reasons.append("Attendance is acceptable but still improvable")
+        improvement_actions.append("Push attendance above 80% to improve selection odds")
+    else:
+        reasons.append("Low attendance is reducing the probability score")
+        improvement_actions.append("Fix attendance immediately")
+
+    if backlog_count == 0:
+        reasons.append("No backlogs detected")
+    elif backlog_count == 1:
+        reasons.append("One backlog is limiting the score")
+        improvement_actions.append("Clear the backlog to remove a major penalty")
+    else:
+        reasons.append(f"{backlog_count} backlogs are a significant risk")
+        improvement_actions.append("Reduce backlogs as a priority")
+
+    skill_gap = get_skill_gap(student_id, db, context=context, skill_rows=skill_rows)
+    if skill_gap["missing_skills"]:
+        top_gap = skill_gap["missing_skills"][0]
+        reasons.append(f"Missing skill coverage for {top_gap}")
+        improvement_actions.append(f"Practice {top_gap} and prepare interview questions around it")
+
+    if skill_component >= 75:
+        reasons.append("Skill profile is strong for current companies")
+    elif skill_component >= 55:
+        reasons.append("Skill profile is average and needs targeted practice")
+    else:
+        reasons.append("Skill profile is weak compared to company requirements")
+
+    if not improvement_actions:
+        improvement_actions.append("Keep current momentum and maintain attendance and CGPA")
 
     weakest_driver = min(
         [
-            (readiness["breakdown"]["cgpa"], "CGPA"),
-            (readiness["breakdown"]["skills"], "skills"),
-            (readiness["breakdown"]["interview"], "interviews"),
-            (readiness["breakdown"]["consistency"], "consistency"),
+            (cgpa_component, "CGPA"),
+            (attendance_component, "attendance"),
+            (backlog_component, "backlogs"),
+            (skill_component, "skills"),
         ],
         key=lambda item: item[0],
     )[1]
 
     suggestion_map = {
         "CGPA": "Improve CGPA through internal marks and targeted subject revision.",
+        "attendance": "Keep attendance above the safe threshold.",
+        "backlogs": "Clear backlogs first to remove the biggest penalty.",
         "skills": "Close your largest skill gaps before the next drive.",
-        "interviews": "Do mock interviews and practice timed responses.",
-        "consistency": "Keep attendance and task completion above the safe threshold.",
     }
 
     return {
@@ -706,6 +770,15 @@ def get_selection_probability(student_id: int, db: Session, context: Optional[Di
         "current_probability": int(round(current_probability)),
         "improved_probability": int(round(improved_probability)),
         "suggestion": suggestion_map.get(weakest_driver, "Improve the weakest placement signal first."),
+        "score": round(current_probability, 2),
+        "components": {
+            "cgpa": round(cgpa_component, 2),
+            "attendance": round(attendance_component, 2),
+            "backlogs": round(backlog_component, 2),
+            "skills": round(skill_component, 2),
+        },
+        "reasons": reasons,
+        "improvement_actions": improvement_actions,
     }
 
 

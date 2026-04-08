@@ -9,7 +9,7 @@ from sqlalchemy import text, extract, func, or_, case  # type: ignore
 from typing import Optional, List, Dict, Any
 from security import hash_password, verify_password  # type: ignore
 from mail import send_reset_email  # type: ignore
-from schemas import  AlertCreate, AssignSubjectRequest, AttendanceCreate, ResetPasswordRequest, StudentPromotionRequest, TeacherAdminUpdate, TeacherDeleteRequest,TimetableCreate, TimetableResponse,StudentDeleteRequest,SubjectCreate,AttendanceAnalyticsResponse, MarksUpload, AdminOverviewResponse  # type: ignore
+from schemas import  AlertCreate, AssignSubjectRequest, AttendanceCreate, ResetPasswordRequest, StudentPromotionRequest, TeacherAdminUpdate, TeacherDeleteRequest,TimetableCreate, TimetableResponse,StudentDeleteRequest,SubjectCreate,AttendanceAnalyticsResponse, MarksUpload, AdminOverviewResponse, DriveCreate  # type: ignore
 import schemas  # type: ignore
 from datetime import datetime, timedelta
 from database import engine  # type: ignore
@@ -56,6 +56,7 @@ from models import (  # type: ignore
     PlacementDrive,
     PlacementFeedback,
     PlacementStudentProfile,
+    PlacementStudentSkill,
     StudentDrive,
 )
 
@@ -206,7 +207,12 @@ Base.metadata.create_all(bind=engine)
 # -------------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -281,9 +287,17 @@ def ensure_placement_schema():
                     SELECT 1 FROM information_schema.columns
                     WHERE table_name='companies' AND column_name='branches' AND data_type='jsonb'
                 ) THEN
-                    ALTER TABLE companies
-                    ALTER COLUMN branches TYPE TEXT[]
-                    USING COALESCE((SELECT array_agg(value) FROM jsonb_array_elements_text(branches)), ARRAY[]::TEXT[]);
+                    ALTER TABLE companies ADD COLUMN IF NOT EXISTS branches_tmp TEXT[];
+                    UPDATE companies
+                    SET branches_tmp =
+                        CASE
+                            WHEN branches IS NULL OR branches = 'null'::jsonb THEN ARRAY[]::TEXT[]
+                            WHEN jsonb_typeof(branches) = 'array' THEN ARRAY(SELECT jsonb_array_elements_text(branches))
+                            ELSE ARRAY[TRIM(BOTH '"' FROM branches::text)]
+                        END;
+                    ALTER TABLE companies DROP COLUMN branches;
+                    ALTER TABLE companies RENAME COLUMN branches_tmp TO branches;
+                    ALTER TABLE companies ALTER COLUMN branches SET DEFAULT ARRAY[]::TEXT[];
                 END IF;
             END $$;
         """))
@@ -295,9 +309,17 @@ def ensure_placement_schema():
                     SELECT 1 FROM information_schema.columns
                     WHERE table_name='companies' AND column_name='selection_process' AND data_type='jsonb'
                 ) THEN
-                    ALTER TABLE companies
-                    ALTER COLUMN selection_process TYPE TEXT[]
-                    USING COALESCE((SELECT array_agg(value) FROM jsonb_array_elements_text(selection_process)), ARRAY[]::TEXT[]);
+                    ALTER TABLE companies ADD COLUMN IF NOT EXISTS selection_process_tmp TEXT[];
+                    UPDATE companies
+                    SET selection_process_tmp =
+                        CASE
+                            WHEN selection_process IS NULL OR selection_process = 'null'::jsonb THEN ARRAY[]::TEXT[]
+                            WHEN jsonb_typeof(selection_process) = 'array' THEN ARRAY(SELECT jsonb_array_elements_text(selection_process))
+                            ELSE ARRAY[TRIM(BOTH '"' FROM selection_process::text)]
+                        END;
+                    ALTER TABLE companies DROP COLUMN selection_process;
+                    ALTER TABLE companies RENAME COLUMN selection_process_tmp TO selection_process;
+                    ALTER TABLE companies ALTER COLUMN selection_process SET DEFAULT ARRAY[]::TEXT[];
                 END IF;
             END $$;
         """))
@@ -312,6 +334,12 @@ def ensure_placement_schema():
                 id SERIAL PRIMARY KEY,
                 title VARCHAR(255),
                 company_id INT REFERENCES companies(id) ON DELETE CASCADE,
+                company_name VARCHAR(255),
+                role VARCHAR(255),
+                package_lpa NUMERIC(10,2),
+                min_cgpa NUMERIC(3,2),
+                max_backlogs INT DEFAULT 0,
+                selection_process TEXT[] DEFAULT ARRAY[]::TEXT[],
                 drive_date DATE,
                 mode TEXT,
                 location VARCHAR(255),
@@ -328,11 +356,63 @@ def ensure_placement_schema():
         db.execute(text("""
             ALTER TABLE placement_drives
             ADD COLUMN IF NOT EXISTS title VARCHAR(255),
+            ADD COLUMN IF NOT EXISTS company_name VARCHAR(255),
+            ADD COLUMN IF NOT EXISTS role VARCHAR(255),
+            ADD COLUMN IF NOT EXISTS package_lpa NUMERIC(10,2),
+            ADD COLUMN IF NOT EXISTS min_cgpa NUMERIC(3,2),
+            ADD COLUMN IF NOT EXISTS max_backlogs INT DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS selection_process TEXT[] DEFAULT ARRAY[]::TEXT[],
             ADD COLUMN IF NOT EXISTS location VARCHAR(255),
             ADD COLUMN IF NOT EXISTS registration_deadline DATE,
             ADD COLUMN IF NOT EXISTS eligible_years INT[] DEFAULT ARRAY[]::INT[],
             ADD COLUMN IF NOT EXISTS status VARCHAR(30) DEFAULT 'open',
             ADD COLUMN IF NOT EXISTS closed_at TIMESTAMP;
+        """))
+
+        db.execute(text("""
+            ALTER TABLE placement_drives
+            ALTER COLUMN company_id DROP NOT NULL;
+        """))
+
+        db.execute(text("""
+            UPDATE placement_drives pd
+            SET
+                company_name = COALESCE(pd.company_name, c.name),
+                role = COALESCE(pd.role, c.role),
+                package_lpa = COALESCE(pd.package_lpa, c.package_lpa),
+                min_cgpa = COALESCE(pd.min_cgpa, c.min_cgpa),
+                max_backlogs = COALESCE(pd.max_backlogs, c.max_backlogs)
+            FROM companies c
+            WHERE pd.company_id = c.id;
+        """))
+
+        db.execute(text("""
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='placement_drives' AND column_name='selection_process' AND data_type IN ('json', 'jsonb')
+                ) THEN
+                    ALTER TABLE placement_drives ADD COLUMN IF NOT EXISTS selection_process_tmp TEXT[];
+                    UPDATE placement_drives
+                    SET selection_process_tmp =
+                        CASE
+                            WHEN selection_process IS NULL OR selection_process::jsonb = 'null'::jsonb THEN ARRAY[]::TEXT[]
+                            WHEN jsonb_typeof(selection_process::jsonb) = 'array' THEN ARRAY(SELECT jsonb_array_elements_text(selection_process::jsonb))
+                            ELSE ARRAY[TRIM(BOTH '"' FROM selection_process::text)]
+                        END;
+                    ALTER TABLE placement_drives DROP COLUMN selection_process;
+                    ALTER TABLE placement_drives RENAME COLUMN selection_process_tmp TO selection_process;
+                    ALTER TABLE placement_drives ALTER COLUMN selection_process SET DEFAULT ARRAY[]::TEXT[];
+                END IF;
+            END $$;
+        """))
+
+        db.execute(text("""
+            UPDATE placement_drives pd
+            SET selection_process = COALESCE(pd.selection_process, c.selection_process)
+            FROM companies c
+            WHERE pd.company_id = c.id;
         """))
 
         db.execute(text("""
@@ -345,11 +425,19 @@ def ensure_placement_schema():
             BEGIN
                 IF EXISTS (
                     SELECT 1 FROM information_schema.columns
-                    WHERE table_name='placement_drives' AND column_name='branches' AND data_type='jsonb'
+                    WHERE table_name='placement_drives' AND column_name='branches' AND data_type IN ('json', 'jsonb')
                 ) THEN
-                    ALTER TABLE placement_drives
-                    ALTER COLUMN branches TYPE TEXT[]
-                    USING COALESCE((SELECT array_agg(value) FROM jsonb_array_elements_text(branches)), ARRAY[]::TEXT[]);
+                    ALTER TABLE placement_drives ADD COLUMN IF NOT EXISTS branches_tmp TEXT[];
+                    UPDATE placement_drives
+                    SET branches_tmp =
+                        CASE
+                            WHEN branches IS NULL OR branches::jsonb = 'null'::jsonb THEN ARRAY[]::TEXT[]
+                            WHEN jsonb_typeof(branches::jsonb) = 'array' THEN ARRAY(SELECT jsonb_array_elements_text(branches::jsonb))
+                            ELSE ARRAY[TRIM(BOTH '"' FROM branches::text)]
+                        END;
+                    ALTER TABLE placement_drives DROP COLUMN branches;
+                    ALTER TABLE placement_drives RENAME COLUMN branches_tmp TO branches;
+                    ALTER TABLE placement_drives ALTER COLUMN branches SET DEFAULT ARRAY[]::TEXT[];
                 END IF;
             END $$;
         """))
@@ -359,11 +447,19 @@ def ensure_placement_schema():
             BEGIN
                 IF EXISTS (
                     SELECT 1 FROM information_schema.columns
-                    WHERE table_name='placement_drives' AND column_name='eligible_years' AND data_type='jsonb'
+                    WHERE table_name='placement_drives' AND column_name='eligible_years' AND data_type IN ('json', 'jsonb')
                 ) THEN
-                    ALTER TABLE placement_drives
-                    ALTER COLUMN eligible_years TYPE INT[]
-                    USING COALESCE((SELECT array_agg((value)::INT) FROM jsonb_array_elements_text(eligible_years)), ARRAY[]::INT[]);
+                    ALTER TABLE placement_drives ADD COLUMN IF NOT EXISTS eligible_years_tmp INT[];
+                    UPDATE placement_drives
+                    SET eligible_years_tmp =
+                        CASE
+                            WHEN eligible_years IS NULL OR eligible_years::jsonb = 'null'::jsonb THEN ARRAY[]::INT[]
+                            WHEN jsonb_typeof(eligible_years::jsonb) = 'array' THEN ARRAY(SELECT (jsonb_array_elements_text(eligible_years::jsonb))::INT)
+                            ELSE ARRAY[]::INT[]
+                        END;
+                    ALTER TABLE placement_drives DROP COLUMN eligible_years;
+                    ALTER TABLE placement_drives RENAME COLUMN eligible_years_tmp TO eligible_years;
+                    ALTER TABLE placement_drives ALTER COLUMN eligible_years SET DEFAULT ARRAY[]::INT[];
                 END IF;
             END $$;
         """))
@@ -388,12 +484,55 @@ def ensure_placement_schema():
                 id SERIAL PRIMARY KEY,
                 student_id INT REFERENCES students(student_id) ON DELETE CASCADE,
                 drive_id INT REFERENCES placement_drives(id) ON DELETE CASCADE,
-                status TEXT DEFAULT 'assigned',
+                is_eligible BOOLEAN DEFAULT FALSE,
+                applied BOOLEAN DEFAULT FALSE,
+                status TEXT DEFAULT 'Not Applied',
+                probability_score DOUBLE PRECISION,
                 current_round INT DEFAULT 0,
                 final_result TEXT DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT NOW(),
                 updated_at TIMESTAMP DEFAULT NOW(),
                 UNIQUE(student_id, drive_id)
             );
+        """))
+
+        db.execute(text("""
+            ALTER TABLE student_drives
+            ADD COLUMN IF NOT EXISTS is_eligible BOOLEAN DEFAULT FALSE,
+            ADD COLUMN IF NOT EXISTS applied BOOLEAN DEFAULT FALSE,
+            ADD COLUMN IF NOT EXISTS probability_score DOUBLE PRECISION,
+            ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW();
+        """))
+
+        db.execute(text("""
+            ALTER TABLE student_drives
+            ALTER COLUMN status SET DEFAULT 'Not Applied';
+        """))
+
+        db.execute(text("""
+            UPDATE student_drives
+            SET status = 'Not Applied'
+            WHERE status IS NULL OR BTRIM(status) = '';
+        """))
+
+        db.execute(text("""
+            UPDATE student_drives
+            SET applied = CASE
+                WHEN LOWER(COALESCE(status, '')) IN ('applied', 'in_progress', 'completed', 'selected', 'rejected') THEN TRUE
+                WHEN COALESCE(current_round, 0) > 0 THEN TRUE
+                WHEN LOWER(COALESCE(final_result, 'pending')) IN ('selected', 'rejected') THEN TRUE
+                ELSE COALESCE(applied, FALSE)
+            END;
+        """))
+
+        db.execute(text("""
+            UPDATE student_drives
+            SET is_eligible = CASE
+                WHEN COALESCE(is_eligible, FALSE) THEN TRUE
+                WHEN LOWER(COALESCE(final_result, 'pending')) IN ('selected', 'rejected') THEN TRUE
+                WHEN COALESCE(applied, FALSE) THEN TRUE
+                ELSE FALSE
+            END;
         """))
 
         db.execute(text("""
@@ -1868,12 +2007,13 @@ def placement_action_plan(
 # -------------------------
 def _build_drive_stats(drive_id: int, db: Session) -> Dict[str, int]:
     rows = db.query(StudentDrive).filter(StudentDrive.drive_id == drive_id).all()
-    eligible_count = len(rows)
+    eligible_count = len([row for row in rows if bool(row.is_eligible)])
     applied_count = len(
         [
             row
             for row in rows
-            if str(row.status or "").lower() in {"applied", "in_progress", "completed"}
+            if bool(row.applied)
+            or str(row.status or "").lower() in {"applied", "in_progress", "completed"}
             or int(row.current_round or 0) > 0
             or str(row.final_result or "pending").lower() in {"selected", "rejected"}
         ]
@@ -1886,21 +2026,84 @@ def _build_drive_stats(drive_id: int, db: Session) -> Dict[str, int]:
     }
 
 
-def _auto_assign_students_for_drive(drive: PlacementDrive, company: PlacementCompany, db: Session) -> int:
-    students = db.query(Student).all()
-    assigned = 0
-    for student in students:
-        if not _year_allowed(student.year, drive.eligible_years or []):
-            continue
+def _get_student_skill_set(student: Student, db: Session) -> set:
+    skills = set()
 
-        cgpa = _safe_float(student.cgpa)
-        backlogs = _get_student_backlogs(db, student.student_id)
-        if cgpa < _safe_float(company.min_cgpa):
-            continue
-        if backlogs > int(company.max_backlogs or 0):
-            continue
-        if not _branch_allowed(student.student_id, drive.branches or company.branches or [], db):
-            continue
+    if getattr(student, "skills", None):
+        for item in str(student.skills).split(","):
+            value = item.strip().upper()
+            if value:
+                skills.add(value)
+
+    skill_rows = db.query(PlacementStudentSkill).filter(PlacementStudentSkill.student_id == student.student_id).all()
+    for row in skill_rows:
+        value = str(row.skill_name or "").strip().upper()
+        if value:
+            skills.add(value)
+
+    return skills
+
+
+def _compute_skill_match(student: Student, drive: PlacementDrive, db: Session) -> Dict[str, Any]:
+    required = [str(item).strip().upper() for item in (drive.selection_process or []) if str(item).strip()]
+    if not required:
+        return {
+            "required_skills": [],
+            "matched_skills": [],
+            "skill_match": 100.0,
+        }
+
+    student_skills = _get_student_skill_set(student, db)
+    matched = [skill for skill in required if skill in student_skills]
+    skill_match = round((len(matched) * 100.0) / len(required), 2) if required else 100.0
+
+    return {
+        "required_skills": required,
+        "matched_skills": matched,
+        "skill_match": skill_match,
+    }
+
+
+def _is_student_eligible_for_drive(student: Student, drive: PlacementDrive, db: Session) -> bool:
+    if not _year_allowed(student.year, drive.eligible_years or []):
+        return False
+
+    cgpa = _safe_float(student.cgpa)
+    backlogs = _get_student_backlogs(db, student.student_id)
+
+    if cgpa < _safe_float(drive.min_cgpa):
+        return False
+    if backlogs > int(drive.max_backlogs or 0):
+        return False
+    if not _branch_allowed(student.student_id, drive.branches or [], db):
+        return False
+
+    return True
+
+
+def _get_student_attendance_percent(db: Session, student_id: int) -> float:
+    attendance_rows = db.query(Attendance).filter(Attendance.student_id == student_id).all()
+    if not attendance_rows:
+        return 0.0
+    present_count = sum(1 for row in attendance_rows if bool(row.status))
+    return round((present_count * 100.0) / len(attendance_rows), 2)
+
+
+def _calculate_probability_score(student: Student, db: Session, backlog_count: int) -> float:
+    cgpa_component = min((_safe_float(student.cgpa) / 10.0) * 100.0, 100.0)
+    attendance_component = _get_student_attendance_percent(db, student.student_id)
+    backlog_component = max(0.0, 100.0 - (max(0, int(backlog_count)) * 25.0))
+    probability = (cgpa_component * 0.45) + (attendance_component * 0.35) + (backlog_component * 0.20)
+    return round(max(0.0, min(100.0, probability)), 2)
+
+
+def _auto_assign_students_for_drive(drive: PlacementDrive, db: Session) -> int:
+    students = db.query(Student).all()
+    processed = 0
+    for student in students:
+        backlog_count = _get_student_backlogs(db, student.student_id)
+        is_eligible = _is_student_eligible_for_drive(student, drive, db)
+        probability_score = _calculate_probability_score(student, db, backlog_count)
 
         existing = (
             db.query(StudentDrive)
@@ -1908,12 +2111,26 @@ def _auto_assign_students_for_drive(drive: PlacementDrive, company: PlacementCom
             .first()
         )
         if existing:
+            existing.is_eligible = bool(is_eligible)
+            existing.probability_score = probability_score
+            existing.updated_at = datetime.utcnow()
             continue
 
-        db.add(StudentDrive(student_id=student.student_id, drive_id=drive.id, status="assigned", current_round=0))
-        assigned += 1
+        db.add(
+            StudentDrive(
+                student_id=student.student_id,
+                drive_id=drive.id,
+                is_eligible=bool(is_eligible),
+                applied=False,
+                status="Not Applied",
+                probability_score=probability_score,
+                current_round=0,
+                final_result="pending",
+            )
+        )
+        processed += 1
 
-    return assigned
+    return processed
 
 
 @app.post("/api/companies")
@@ -1922,33 +2139,7 @@ def create_company(
     _: dict = Depends(authorize(["admin"])),
     db: Session = Depends(get_db),
 ):
-    company_name = str(payload.get("name") or "").strip()
-    if not company_name:
-        raise HTTPException(status_code=400, detail="name is required")
-
-    min_cgpa = _safe_float(payload.get("min_cgpa"))
-    if min_cgpa < 0 or min_cgpa > 10:
-        raise HTTPException(status_code=400, detail="min_cgpa must be between 0 and 10")
-
-    package_lpa = payload.get("package_lpa")
-    if package_lpa is not None and _safe_float(package_lpa) <= 0:
-        raise HTTPException(status_code=400, detail="package_lpa must be greater than 0")
-
-    company = PlacementCompany(
-        name=company_name,
-        role=(payload.get("role") or None),
-        package_lpa=_safe_float(package_lpa) if package_lpa is not None else None,
-        min_cgpa=min_cgpa,
-        max_backlogs=int(payload.get("max_backlogs") or 0),
-        branches=_normalize_str_list(payload.get("branches")),
-        selection_process=_normalize_str_list(payload.get("selection_process")),
-        role_type=(payload.get("role_type") or None),
-        required_skills=payload.get("required_skills") or [],
-    )
-    db.add(company)
-    db.commit()
-    db.refresh(company)
-    return {"id": company.id, "message": "Company created"}
+    raise HTTPException(status_code=410, detail="Standalone company module is removed. Create drives directly via /api/drives")
 
 
 @app.get("/api/companies")
@@ -1956,50 +2147,7 @@ def get_companies(
     _: dict = Depends(authorize(["admin", "coordinator", "teacher", "student"])),
     db: Session = Depends(get_db),
 ):
-    rows = db.query(PlacementCompany).order_by(PlacementCompany.created_at.desc(), PlacementCompany.id.desc()).all()
-    drive_counts = {
-        company_id: count
-        for company_id, count in (
-            db.query(PlacementDrive.company_id, func.count(PlacementDrive.id))
-            .group_by(PlacementDrive.company_id)
-            .all()
-        )
-    }
-
-    success_stats = {}
-    success_rows = (
-        db.query(
-            PlacementDrive.company_id,
-            func.count(StudentDrive.id).label("total"),
-            func.sum(case((StudentDrive.final_result == "selected", 1), else_=0)).label("selected"),
-        )
-        .join(StudentDrive, StudentDrive.drive_id == PlacementDrive.id)
-        .group_by(PlacementDrive.company_id)
-        .all()
-    )
-    for company_id, total, selected in success_rows:
-        total_val = int(total or 0)
-        selected_val = int(selected or 0)
-        success_stats[company_id] = round((selected_val * 100 / total_val), 2) if total_val > 0 else 0.0
-
-    return [
-        {
-            "id": row.id,
-            "name": row.name,
-            "role": row.role,
-            "package_lpa": _safe_float(row.package_lpa) if row.package_lpa is not None else None,
-            "min_cgpa": _safe_float(row.min_cgpa),
-            "max_backlogs": int(row.max_backlogs or 0),
-            "branches": row.branches or [],
-            "selection_process": row.selection_process or [],
-            "role_type": row.role_type,
-            "required_skills": row.required_skills or [],
-            "drives_count": int(drive_counts.get(row.id, 0)),
-            "success_rate": float(success_stats.get(row.id, 0.0)),
-            "created_at": row.created_at.isoformat() if row.created_at else None,
-        }
-        for row in rows
-    ]
+    raise HTTPException(status_code=410, detail="Standalone company module is removed. Use /api/drives")
 
 
 @app.put("/api/companies/{company_id}")
@@ -2009,37 +2157,7 @@ def update_company(
     _: dict = Depends(authorize(["admin"])),
     db: Session = Depends(get_db),
 ):
-    row = db.query(PlacementCompany).filter(PlacementCompany.id == company_id).first()
-    if not row:
-        raise HTTPException(status_code=404, detail="Company not found")
-
-    if "name" in payload:
-        row.name = str(payload.get("name") or "").strip() or row.name
-    if "role" in payload:
-        row.role = payload.get("role") or None
-    if "package_lpa" in payload:
-        package_lpa = payload.get("package_lpa")
-        if package_lpa is not None and _safe_float(package_lpa) <= 0:
-            raise HTTPException(status_code=400, detail="package_lpa must be greater than 0")
-        row.package_lpa = _safe_float(package_lpa) if package_lpa is not None else None
-    if "min_cgpa" in payload:
-        cgpa = _safe_float(payload.get("min_cgpa"))
-        if cgpa < 0 or cgpa > 10:
-            raise HTTPException(status_code=400, detail="min_cgpa must be between 0 and 10")
-        row.min_cgpa = cgpa
-    if "max_backlogs" in payload:
-        row.max_backlogs = int(payload.get("max_backlogs") or 0)
-    if "branches" in payload:
-        row.branches = _normalize_str_list(payload.get("branches"))
-    if "selection_process" in payload:
-        row.selection_process = _normalize_str_list(payload.get("selection_process"))
-    if "role_type" in payload:
-        row.role_type = payload.get("role_type") or None
-    if "required_skills" in payload:
-        row.required_skills = payload.get("required_skills") or []
-
-    db.commit()
-    return {"message": "Company updated"}
+    raise HTTPException(status_code=410, detail="Standalone company module is removed. Update values on drive records")
 
 
 @app.delete("/api/companies/{company_id}")
@@ -2048,66 +2166,69 @@ def delete_company(
     _: dict = Depends(authorize(["admin"])),
     db: Session = Depends(get_db),
 ):
-    row = db.query(PlacementCompany).filter(PlacementCompany.id == company_id).first()
-    if not row:
-        raise HTTPException(status_code=404, detail="Company not found")
-    db.delete(row)
-    db.commit()
-    return {"message": "Company deleted"}
+    raise HTTPException(status_code=410, detail="Standalone company module is removed")
 
 
 @app.post("/api/drives")
 def create_drive(
-    payload: Dict[str, Any] = Body(...),
+    drive: DriveCreate,
     current_user: dict = Depends(authorize(["admin", "coordinator"])),
     db: Session = Depends(get_db),
 ):
-    company_id = int(payload.get("company_id") or 0)
-    company = db.query(PlacementCompany).filter(PlacementCompany.id == company_id).first()
-    if not company:
-        raise HTTPException(status_code=404, detail="Company not found")
+    print("Incoming drive:", drive.dict())
 
-    drive_date = payload.get("drive_date")
-    try:
-        parsed_date = datetime.strptime(str(drive_date), "%Y-%m-%d").date() if drive_date else None
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid drive_date format. Use YYYY-MM-DD")
-
-    if not parsed_date:
-        raise HTTPException(status_code=400, detail="drive_date is required")
-
-    deadline = payload.get("registration_deadline")
-    try:
-        parsed_deadline = datetime.strptime(str(deadline), "%Y-%m-%d").date() if deadline else None
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid registration_deadline format. Use YYYY-MM-DD")
-
-    if parsed_deadline and parsed_deadline > parsed_date:
+    if drive.registration_deadline > drive.date:
         raise HTTPException(status_code=400, detail="registration_deadline must be on or before drive_date")
 
-    normalized_branches = _normalize_str_list(payload.get("branches")) or (company.branches or [])
-    normalized_years = _normalize_int_list(payload.get("eligible_years"))
+    if _safe_float(drive.min_cgpa) < 0 or _safe_float(drive.min_cgpa) > 10:
+        raise HTTPException(status_code=400, detail="min_cgpa must be between 0 and 10")
 
-    drive = PlacementDrive(
-        title=str(payload.get("title") or payload.get("drive_title") or "").strip() or f"{company.name} Drive",
-        company_id=company_id,
-        drive_date=parsed_date,
-        mode=str(payload.get("mode") or "online"),
-        location=(payload.get("location") or None),
-        registration_deadline=parsed_deadline,
-        eligible_years=normalized_years,
-        status=str(payload.get("status") or "open"),
-        branches=normalized_branches,
-        created_by=int(current_user["user_id"]),
-    )
-    db.add(drive)
-    db.commit()
-    db.refresh(drive)
+    if _safe_float(drive.package) <= 0:
+        raise HTTPException(status_code=400, detail="package must be greater than 0")
 
-    assigned = _auto_assign_students_for_drive(drive, company, db)
-    db.commit()
+    if int(drive.max_backlogs) < 0:
+        raise HTTPException(status_code=400, detail="max_backlogs cannot be negative")
 
-    return {"id": drive.id, "assigned": assigned, "message": "Drive created"}
+    normalized_branches = _normalize_str_list(drive.branches)
+    normalized_years = _normalize_int_list(drive.eligible_years)
+    normalized_selection_process = _normalize_str_list(drive.selection_process or [])
+
+    try:
+        new_drive = PlacementDrive(
+            title=str(drive.title).strip(),
+            company_name=str(drive.company_name).strip(),
+            role=str(drive.role).strip(),
+            package_lpa=_safe_float(drive.package),
+            min_cgpa=_safe_float(drive.min_cgpa),
+            max_backlogs=int(drive.max_backlogs),
+            drive_date=drive.date,
+            location=str(drive.location).strip(),
+            registration_deadline=drive.registration_deadline,
+            eligible_years=normalized_years,
+            branches=normalized_branches,
+            selection_process=normalized_selection_process,
+            mode=str(drive.mode).strip().lower(),
+            status=str(drive.status).strip().lower(),
+            created_by=int(current_user["user_id"]),
+        )
+
+        db.add(new_drive)
+        db.commit()
+        db.refresh(new_drive)
+
+        assigned = _auto_assign_students_for_drive(new_drive, db)
+        db.commit()
+
+        return {
+            "success": True,
+            "message": "Drive created successfully",
+            "data": new_drive.id,
+            "assigned": assigned,
+        }
+    except Exception as e:
+        db.rollback()
+        print("ERROR:", str(e))
+        raise HTTPException(status_code=500, detail="Drive creation failed")
 
 
 @app.get("/api/drives")
@@ -2115,18 +2236,17 @@ def get_drives(
     _: dict = Depends(authorize(["admin", "coordinator", "teacher", "student"])),
     db: Session = Depends(get_db),
 ):
-    rows = (
-        db.query(PlacementDrive, PlacementCompany)
-        .join(PlacementCompany, PlacementCompany.id == PlacementDrive.company_id)
-        .order_by(PlacementDrive.drive_date.desc(), PlacementDrive.id.desc())
-        .all()
-    )
+    rows = db.query(PlacementDrive).order_by(PlacementDrive.drive_date.desc(), PlacementDrive.id.desc()).all()
     return [
         {
             "id": drive.id,
             "title": drive.title,
-            "company_id": company.id,
-            "company_name": company.name,
+            "company_name": drive.company_name,
+            "role": drive.role,
+            "package": _safe_float(drive.package_lpa),
+            "min_cgpa": _safe_float(drive.min_cgpa),
+            "max_backlogs": int(drive.max_backlogs or 0),
+            "selection_process": drive.selection_process or [],
             "drive_date": drive.drive_date.isoformat() if drive.drive_date else None,
             "mode": drive.mode,
             "location": drive.location,
@@ -2137,7 +2257,7 @@ def get_drives(
             "created_by": drive.created_by,
             **_build_drive_stats(drive.id, db),
         }
-        for drive, company in rows
+        for drive in rows
     ]
 
 
@@ -2146,10 +2266,10 @@ def get_admin_placement_dashboard(
     _: dict = Depends(authorize(["admin"])),
     db: Session = Depends(get_db),
 ):
-    total_companies = db.query(PlacementCompany).count()
+    total_companies = db.query(func.count(func.distinct(PlacementDrive.company_name))).filter(PlacementDrive.company_name.isnot(None)).scalar() or 0
     active_drives = db.query(PlacementDrive).filter(func.lower(func.coalesce(PlacementDrive.status, "open")) == "open").count()
 
-    total_eligible_students = db.query(StudentDrive.student_id).distinct().count()
+    total_eligible_students = db.query(StudentDrive.student_id).filter(StudentDrive.is_eligible.is_(True)).distinct().count()
     total_assigned = db.query(StudentDrive).count()
     total_selections = db.query(StudentDrive).filter(func.lower(func.coalesce(StudentDrive.final_result, "")) == "selected").count()
     success_rate = round((total_selections * 100 / total_assigned), 2) if total_assigned > 0 else 0.0
@@ -2170,13 +2290,13 @@ def get_admin_placement_analytics(
 ):
     company_rows = (
         db.query(
-            PlacementCompany.name,
+            PlacementDrive.company_name,
             func.count(StudentDrive.id).label("total"),
             func.sum(case((StudentDrive.final_result == "selected", 1), else_=0)).label("selected"),
         )
-        .join(PlacementDrive, PlacementDrive.company_id == PlacementCompany.id)
         .join(StudentDrive, StudentDrive.drive_id == PlacementDrive.id)
-        .group_by(PlacementCompany.name)
+        .filter(PlacementDrive.company_name.isnot(None))
+        .group_by(PlacementDrive.company_name)
         .all()
     )
     selection_rate_by_company = []
@@ -2247,14 +2367,10 @@ def assign_students_to_drive(
     if not drive:
         raise HTTPException(status_code=404, detail="Drive not found")
 
-    company = db.query(PlacementCompany).filter(PlacementCompany.id == drive.company_id).first()
-    if not company:
-        raise HTTPException(status_code=404, detail="Company not found")
-
-    assigned = _auto_assign_students_for_drive(drive, company, db)
+    assigned = _auto_assign_students_for_drive(drive, db)
 
     db.commit()
-    return {"message": "Students assigned", "assigned": assigned}
+    return {"message": "Students assignment refreshed", "assigned": assigned}
 
 
 @app.put("/api/student-drives/{student_drive_id}")
@@ -2274,6 +2390,20 @@ def update_student_drive(
         row.status = str(payload.get("status") or row.status)
     if "final_result" in payload:
         row.final_result = str(payload.get("final_result") or row.final_result)
+    if "applied" in payload:
+        row.applied = bool(payload.get("applied"))
+    if "is_eligible" in payload:
+        row.is_eligible = bool(payload.get("is_eligible"))
+    if "probability_score" in payload:
+        row.probability_score = _safe_float(payload.get("probability_score"))
+
+    if str(row.status or "").lower() in {"applied", "in_progress", "completed"}:
+        row.applied = True
+    if str(row.final_result or "pending").lower() in {"selected", "rejected"}:
+        row.applied = True
+        if str(row.status or "").lower() in {"not applied", "assigned"}:
+            row.status = "completed"
+
     row.updated_at = datetime.utcnow()
     db.commit()
     return {"message": "Student drive updated"}
@@ -2327,18 +2457,14 @@ def notify_drive_students(
     if not drive:
         raise HTTPException(status_code=404, detail="Drive not found")
 
-    company = db.query(PlacementCompany).filter(PlacementCompany.id == drive.company_id).first()
-    if not company:
-        raise HTTPException(status_code=404, detail="Company not found")
-
     records = db.query(StudentDrive).filter(StudentDrive.drive_id == drive_id).all()
     if not records:
         return {"message": "No eligible students to notify", "sent": 0}
 
-    title = str(payload.get("title") or f"Placement Drive: {drive.title or company.name}")
+    title = str(payload.get("title") or f"Placement Drive: {drive.title or drive.company_name or 'Drive'}")
     message = str(
         payload.get("message")
-        or f"{company.name} drive is active. Date: {drive.drive_date.isoformat() if drive.drive_date else 'TBD'}, mode: {drive.mode or 'N/A'}, location: {drive.location or 'TBD'}."
+        or f"{drive.company_name or 'Company'} drive is active. Date: {drive.drive_date.isoformat() if drive.drive_date else 'TBD'}, mode: {drive.mode or 'N/A'}, location: {drive.location or 'TBD'}."
     )
 
     sent = 0
@@ -2386,10 +2512,6 @@ def get_drive_details(
     if not drive:
         raise HTTPException(status_code=404, detail="Drive not found")
 
-    company = db.query(PlacementCompany).filter(PlacementCompany.id == drive.company_id).first()
-    if not company:
-        raise HTTPException(status_code=404, detail="Company not found")
-
     rows = (
         db.query(StudentDrive, Student, User)
         .join(Student, Student.student_id == StudentDrive.student_id)
@@ -2410,13 +2532,17 @@ def get_drive_details(
             "name": user.name,
             "roll_no": student.roll_no,
             "cgpa": _safe_float(student.cgpa),
+            "is_eligible": bool(sd.is_eligible),
+            "applied": bool(sd.applied),
+            "probability_score": _safe_float(sd.probability_score),
             "status": sd.status,
             "current_round": sd.current_round,
             "final_result": sd.final_result,
         }
-        eligible_students.append(student_payload)
+        if bool(sd.is_eligible):
+            eligible_students.append(student_payload)
 
-        if str(sd.status or "").lower() in {"applied", "in_progress", "completed"} or int(sd.current_round or 0) > 0:
+        if bool(sd.applied) or str(sd.status or "").lower() in {"applied", "in_progress", "completed"} or int(sd.current_round or 0) > 0:
             applied_students.append(student_payload)
 
         interview_status.append(
@@ -2440,7 +2566,7 @@ def get_drive_details(
         "drive": {
             "id": drive.id,
             "title": drive.title,
-            "company_name": company.name,
+            "company_name": drive.company_name,
             "date": drive.drive_date.isoformat() if drive.drive_date else None,
             "mode": drive.mode,
             "status": drive.status,
@@ -2463,9 +2589,8 @@ def get_student_drives_api(
     db: Session = Depends(get_db),
 ):
     query = (
-        db.query(StudentDrive, PlacementDrive, PlacementCompany)
+        db.query(StudentDrive, PlacementDrive)
         .join(PlacementDrive, PlacementDrive.id == StudentDrive.drive_id)
-        .join(PlacementCompany, PlacementCompany.id == PlacementDrive.company_id)
     )
     if student_id is not None:
         query = query.filter(StudentDrive.student_id == student_id)
@@ -2476,14 +2601,154 @@ def get_student_drives_api(
             "id": sd.id,
             "student_id": sd.student_id,
             "drive_id": drive.id,
-            "company_name": company.name,
+            "company_name": drive.company_name,
             "drive_date": drive.drive_date.isoformat() if drive.drive_date else None,
+            "is_eligible": bool(sd.is_eligible),
+            "applied": bool(sd.applied),
+            "probability_score": _safe_float(sd.probability_score),
             "status": sd.status,
             "current_round": sd.current_round,
             "final_result": sd.final_result,
         }
-        for sd, drive, company in rows
+        for sd, drive in rows
     ]
+
+
+@app.get("/api/student/placement")
+def get_student_placement_cards(
+    current_user: dict = Depends(authorize(["student"])),
+    db: Session = Depends(get_db),
+):
+    student_id = int(current_user["user_id"])
+    rows = (
+        db.query(StudentDrive, PlacementDrive, Student)
+        .join(PlacementDrive, PlacementDrive.id == StudentDrive.drive_id)
+        .join(Student, Student.student_id == StudentDrive.student_id)
+        .filter(StudentDrive.student_id == student_id)
+        .order_by(PlacementDrive.drive_date.asc().nullslast(), PlacementDrive.id.desc())
+        .all()
+    )
+
+    cards = []
+    for sd, drive, student in rows:
+        skill_data = _compute_skill_match(student, drive, db)
+        backlogs = _get_student_backlogs(db, student.student_id)
+        attendance_pct = _get_student_attendance_percent(db, student.student_id)
+
+        reasons = []
+        actions = []
+
+        if _safe_float(student.cgpa) < _safe_float(drive.min_cgpa):
+            reasons.append("CGPA is below drive requirement")
+            actions.append("Improve CGPA to meet the cut-off")
+        if int(backlogs or 0) > int(drive.max_backlogs or 0):
+            reasons.append("Backlogs exceed allowed limit")
+            actions.append("Clear backlogs before applying")
+        if attendance_pct < 75:
+            reasons.append("Attendance is below safe threshold")
+            actions.append("Increase attendance above 75%")
+        if not reasons:
+            reasons.append("Profile meets core eligibility conditions")
+            actions.append("Apply early and prepare for interview rounds")
+
+        cards.append(
+            {
+                "student_drive_id": sd.id,
+                "drive_id": drive.id,
+                "title": drive.title,
+                "company_name": drive.company_name,
+                "drive_date": drive.drive_date.isoformat() if drive.drive_date else None,
+                "registration_deadline": drive.registration_deadline.isoformat() if drive.registration_deadline else None,
+                "mode": drive.mode,
+                "location": drive.location,
+                "role": drive.role,
+                "package": _safe_float(drive.package_lpa),
+                "is_eligible": bool(sd.is_eligible),
+                "applied": bool(sd.applied),
+                "status": sd.status,
+                "current_round": int(sd.current_round or 0),
+                "final_result": sd.final_result,
+                "probability_score": _safe_float(sd.probability_score),
+                "skill_match": skill_data["skill_match"],
+                "required_skills": skill_data["required_skills"],
+                "matched_skills": skill_data["matched_skills"],
+                "reasons": reasons,
+                "action_to_improve": actions[0],
+            }
+        )
+
+    summary = {
+        "total": len(cards),
+        "eligible": len([card for card in cards if card["is_eligible"]]),
+        "applied": len([card for card in cards if card["applied"]]),
+        "selected": len([card for card in cards if str(card["final_result"] or "").lower() == "selected"]),
+    }
+
+    return {"summary": summary, "drives": cards}
+
+
+@app.post("/api/student/apply/{drive_id}")
+def apply_for_drive(
+    drive_id: int,
+    current_user: dict = Depends(authorize(["student"])),
+    db: Session = Depends(get_db),
+):
+    student_id = int(current_user["user_id"])
+    record = (
+        db.query(StudentDrive)
+        .filter(StudentDrive.student_id == student_id, StudentDrive.drive_id == drive_id)
+        .first()
+    )
+    if not record:
+        raise HTTPException(status_code=404, detail="Drive assignment not found")
+    if not bool(record.is_eligible):
+        raise HTTPException(status_code=400, detail="You are not eligible for this drive")
+
+    drive = db.query(PlacementDrive).filter(PlacementDrive.id == drive_id).first()
+    if not drive:
+        raise HTTPException(status_code=404, detail="Drive not found")
+    if str(drive.status or "open").lower() != "open":
+        raise HTTPException(status_code=400, detail="Drive is not open")
+
+    today = datetime.utcnow().date()
+    if drive.registration_deadline and drive.registration_deadline < today:
+        raise HTTPException(status_code=400, detail="Registration deadline is over")
+
+    record.applied = True
+    if str(record.status or "").lower() in {"", "not applied", "assigned"}:
+        record.status = "applied"
+    record.updated_at = datetime.utcnow()
+    db.commit()
+
+    return {"message": "Applied successfully"}
+
+
+@app.put("/api/teacher/update-status")
+def teacher_update_status(
+    payload: Dict[str, Any] = Body(...),
+    _: dict = Depends(authorize(["teacher", "coordinator", "admin"])),
+    db: Session = Depends(get_db),
+):
+    student_drive_id = int(payload.get("student_drive_id") or 0)
+    if student_drive_id <= 0:
+        raise HTTPException(status_code=400, detail="student_drive_id is required")
+
+    row = db.query(StudentDrive).filter(StudentDrive.id == student_drive_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Student drive record not found")
+
+    status = str(payload.get("status") or row.status)
+    current_round = int(payload.get("current_round") or row.current_round or 0)
+    final_result = str(payload.get("final_result") or row.final_result or "pending")
+
+    row.status = status
+    row.current_round = current_round
+    row.final_result = final_result
+    row.applied = True
+    row.updated_at = datetime.utcnow()
+    db.commit()
+
+    return {"message": "Status updated"}
 
 
 @app.post("/api/feedback")
@@ -2515,14 +2780,14 @@ def student_placement_summary(
     db: Session = Depends(get_db),
 ):
     student_id = int(current_user["user_id"])
-    eligible = len([row for row in get_company_eligibility(student_id, db) if row.get("eligible")])
-
     rows = (
         db.query(StudentDrive, PlacementDrive)
         .join(PlacementDrive, PlacementDrive.id == StudentDrive.drive_id)
         .filter(StudentDrive.student_id == student_id)
         .all()
     )
+
+    eligible = len([1 for sd, _ in rows if bool(sd.is_eligible)])
     today = datetime.utcnow().date()
     upcoming = 0
     completed = 0
@@ -2532,7 +2797,7 @@ def student_placement_summary(
         result = str(sd.final_result or "pending").lower()
         if result == "selected":
             offers += 1
-        if drive.drive_date and drive.drive_date >= today and result == "pending":
+        if drive.drive_date and drive.drive_date >= today and result == "pending" and bool(sd.applied):
             upcoming += 1
         else:
             completed += 1
@@ -2557,23 +2822,25 @@ def student_upcoming_drives(
     student_id = int(current_user["user_id"])
     today = datetime.utcnow().date()
     rows = (
-        db.query(StudentDrive, PlacementDrive, PlacementCompany)
+        db.query(StudentDrive, PlacementDrive)
         .join(PlacementDrive, PlacementDrive.id == StudentDrive.drive_id)
-        .join(PlacementCompany, PlacementCompany.id == PlacementDrive.company_id)
         .filter(StudentDrive.student_id == student_id)
         .order_by(PlacementDrive.drive_date.asc())
         .all()
     )
 
     result = []
-    for sd, drive, company in rows:
-        if drive.drive_date and drive.drive_date >= today and str(sd.final_result or "pending").lower() == "pending":
+    for sd, drive in rows:
+        if drive.drive_date and drive.drive_date >= today and str(sd.final_result or "pending").lower() == "pending" and bool(sd.applied):
             result.append(
                 {
                     "student_drive_id": sd.id,
-                    "company_name": company.name,
+                    "company_name": drive.company_name,
                     "drive_date": drive.drive_date.isoformat(),
                     "mode": drive.mode,
+                    "is_eligible": bool(sd.is_eligible),
+                    "applied": bool(sd.applied),
+                    "probability_score": _safe_float(sd.probability_score),
                     "status": sd.status,
                     "current_round": sd.current_round,
                 }
@@ -2589,24 +2856,26 @@ def student_past_drives(
     student_id = int(current_user["user_id"])
     today = datetime.utcnow().date()
     rows = (
-        db.query(StudentDrive, PlacementDrive, PlacementCompany)
+        db.query(StudentDrive, PlacementDrive)
         .join(PlacementDrive, PlacementDrive.id == StudentDrive.drive_id)
-        .join(PlacementCompany, PlacementCompany.id == PlacementDrive.company_id)
         .filter(StudentDrive.student_id == student_id)
         .order_by(PlacementDrive.drive_date.desc())
         .all()
     )
 
     result = []
-    for sd, drive, company in rows:
+    for sd, drive in rows:
         is_past = (drive.drive_date and drive.drive_date < today) or str(sd.final_result or "pending").lower() in {"selected", "rejected"}
         if is_past:
             result.append(
                 {
                     "student_drive_id": sd.id,
-                    "company_name": company.name,
+                    "company_name": drive.company_name,
                     "drive_date": drive.drive_date.isoformat() if drive.drive_date else None,
                     "mode": drive.mode,
+                    "is_eligible": bool(sd.is_eligible),
+                    "applied": bool(sd.applied),
+                    "probability_score": _safe_float(sd.probability_score),
                     "status": sd.status,
                     "current_round": sd.current_round,
                     "final_result": sd.final_result,
@@ -2654,6 +2923,7 @@ def student_placement_intelligence(
         "interviews": interviews,
         "action_plan": action_plan,
         "success_probability": {
+            **prediction,
             "score": round(score, 2),
             "readiness": readiness_band,
             "success_rate": success_rate,

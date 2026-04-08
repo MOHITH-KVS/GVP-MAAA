@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import axios from "axios";
 import {
   Bar,
   BarChart,
@@ -12,31 +13,26 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import api from "../../utils/api";
 
+const BASE_URL = "http://127.0.0.1:8000";
 const BRANCH_OPTIONS = ["CSE", "CSM", "ECE", "EEE", "MECH", "CIVIL"];
 const YEAR_OPTIONS = [1, 2, 3, 4];
 
-const COMPANY_DEFAULT = {
-  name: "",
-  role: "",
-  package_lpa: "",
-  min_cgpa: "",
-  max_backlogs: "",
-  branches: [],
-  selection_process: [],
-};
-
 const DRIVE_DEFAULT = {
   title: "",
-  company_id: "",
-  drive_date: "",
-  mode: "online",
+  company_name: "",
+  role: "",
+  package: "",
+  min_cgpa: "",
+  max_backlogs: "",
+  date: "",
   location: "",
   registration_deadline: "",
   eligible_years: [],
-  status: "open",
   branches: [],
+  selection_process: [],
+  mode: "online",
+  status: "open",
 };
 
 export default function AdminPlacement() {
@@ -44,8 +40,7 @@ export default function AdminPlacement() {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [dashboardUnavailable, setDashboardUnavailable] = useState(false);
-  const [toast, setToast] = useState({ visible: false, type: "success", message: "" });
+  const [submittingDrive, setSubmittingDrive] = useState(false);
 
   const [dashboard, setDashboard] = useState({
     total_companies: 0,
@@ -54,32 +49,22 @@ export default function AdminPlacement() {
     total_selections: 0,
     success_rate: 0,
   });
-
   const [analytics, setAnalytics] = useState({
     selection_rate_by_company: [],
     branch_performance: [],
     cgpa_vs_selection: [],
   });
-
-  const [companies, setCompanies] = useState([]);
   const [drives, setDrives] = useState([]);
 
-  const [showCompanyForm, setShowCompanyForm] = useState(false);
   const [showDriveForm, setShowDriveForm] = useState(false);
-  const [editingCompany, setEditingCompany] = useState(null);
-
-  const [companyForm, setCompanyForm] = useState(COMPANY_DEFAULT);
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [showSuccess, setShowSuccess] = useState(false);
   const [driveForm, setDriveForm] = useState(DRIVE_DEFAULT);
 
-  const [submittingCompany, setSubmittingCompany] = useState(false);
-  const [submittingDrive, setSubmittingDrive] = useState(false);
-
-  const [confirmConfig, setConfirmConfig] = useState({
-    open: false,
-    title: "",
-    message: "",
-    onConfirm: null,
-  });
+  const authHeaders = useMemo(() => {
+    const token = localStorage.getItem("access_token");
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  }, []);
 
   const selectionRateBars = useMemo(
     () => (analytics.selection_rate_by_company || []).map((item) => ({ name: item.company_name, rate: item.selection_rate })),
@@ -91,49 +76,23 @@ export default function AdminPlacement() {
     [analytics.branch_performance]
   );
 
-  const showToast = (message, type = "success") => {
-    setToast({ visible: true, message, type });
-    window.setTimeout(() => {
-      setToast({ visible: false, message: "", type: "success" });
-    }, 2200);
-  };
+  const readErrorMessage = (err, fallback) => err?.response?.data?.detail || err?.response?.data?.message || err?.message || fallback;
 
   const fetchData = async () => {
     setLoading(true);
     setError("");
-    setDashboardUnavailable(false);
-
     try {
-      const [companiesRes, drivesRes, analyticsRes] = await Promise.all([
-        api.get("/api/companies"),
-        api.get("/api/drives"),
-        api.get("/api/admin/placement/analytics"),
+      const [drivesRes, analyticsRes, dashboardRes] = await Promise.all([
+        axios.get(`${BASE_URL}/api/drives`, { headers: authHeaders }),
+        axios.get(`${BASE_URL}/api/admin/placement/analytics`, { headers: authHeaders }),
+        axios.get(`${BASE_URL}/api/admin/placement/dashboard`, { headers: authHeaders }),
       ]);
 
-      console.log("[AdminPlacement] GET /api/companies", companiesRes.data);
-      console.log("[AdminPlacement] GET /api/drives", drivesRes.data);
-      console.log("[AdminPlacement] GET /api/admin/placement/analytics", analyticsRes.data);
-
-      setCompanies(Array.isArray(companiesRes.data) ? companiesRes.data : []);
       setDrives(Array.isArray(drivesRes.data) ? drivesRes.data : []);
       setAnalytics(analyticsRes.data || {});
-
-      try {
-        const dashboardRes = await api.get("/api/admin/placement/dashboard");
-        console.log("[AdminPlacement] GET /api/admin/placement/dashboard", dashboardRes.data);
-        setDashboard(dashboardRes.data || {});
-      } catch (dashboardErr) {
-        console.error("[AdminPlacement] dashboard fetch failed", dashboardErr);
-        const status = dashboardErr?.response?.status;
-        if (status === 404) {
-          setDashboardUnavailable(true);
-        } else {
-          setError("Failed to load dashboard data. Please try again.");
-        }
-      }
+      setDashboard(dashboardRes.data || {});
     } catch (err) {
-      console.error("[AdminPlacement] fetchData error", err);
-      setError("Failed to load placement data. Please try again.");
+      setError(readErrorMessage(err, "Failed to load placement data."));
     } finally {
       setLoading(false);
     }
@@ -143,224 +102,113 @@ export default function AdminPlacement() {
     fetchData();
   }, []);
 
-  const validateCompany = () => {
-    if (!companyForm.name.trim()) {
-      return "Company name is required.";
-    }
-    const minCgpa = Number(companyForm.min_cgpa);
-    if (Number.isNaN(minCgpa) || minCgpa < 0 || minCgpa > 10) {
-      return "Min CGPA must be between 0 and 10.";
-    }
-    const packageValue = Number(companyForm.package_lpa);
-    if (!companyForm.package_lpa || Number.isNaN(packageValue) || packageValue <= 0) {
-      return "Package (LPA) must be greater than 0.";
-    }
-    return "";
-  };
-
   const validateDrive = () => {
-    if (!driveForm.title.trim()) {
-      return "Drive title is required.";
-    }
-    if (!driveForm.company_id) {
-      return "Select a company.";
-    }
-    if (!driveForm.drive_date) {
-      return "Drive date is required.";
-    }
-    if (!driveForm.location.trim()) {
-      return "Drive location is required.";
-    }
-    if (driveForm.registration_deadline && driveForm.registration_deadline > driveForm.drive_date) {
-      return "Registration deadline must be on or before drive date.";
-    }
+    if (!driveForm.title.trim()) return "Drive title is required.";
+    if (!driveForm.company_name.trim()) return "Company name is required.";
+    if (!driveForm.role.trim()) return "Role is required.";
+
+    const packageValue = Number(driveForm.package);
+    if (Number.isNaN(packageValue) || packageValue <= 0) return "Package must be greater than 0.";
+
+    const minCgpa = Number(driveForm.min_cgpa);
+    if (Number.isNaN(minCgpa) || minCgpa < 0 || minCgpa > 10) return "Min CGPA must be between 0 and 10.";
+
+    const maxBacklogs = Number(driveForm.max_backlogs);
+    if (Number.isNaN(maxBacklogs) || maxBacklogs < 0) return "Max backlogs must be 0 or higher.";
+
+    if (!driveForm.date) return "Drive date is required.";
+    if (!driveForm.registration_deadline) return "Registration deadline is required.";
+    if (driveForm.registration_deadline > driveForm.date) return "Registration deadline must be on or before drive date.";
+    if (!driveForm.location.trim()) return "Location is required.";
+
+    if (!driveForm.eligible_years.length) return "Select at least one eligible year.";
+    if (!driveForm.branches.length) return "Select at least one branch.";
+
     return "";
-  };
-
-  const submitCompany = async () => {
-    const payload = {
-      name: companyForm.name.trim(),
-      role: companyForm.role.trim() || null,
-      package_lpa: Number(companyForm.package_lpa),
-      min_cgpa: Number(companyForm.min_cgpa),
-      max_backlogs: Number(companyForm.max_backlogs || 0),
-      branches: companyForm.branches,
-      selection_process: companyForm.selection_process,
-    };
-
-    setSubmittingCompany(true);
-    try {
-      if (editingCompany) {
-        const res = await api.put(`/api/companies/${editingCompany.id}`, payload);
-        console.log(`[AdminPlacement] PUT /api/companies/${editingCompany.id}`, res.data);
-        showToast("Company updated successfully");
-      } else {
-        const res = await api.post("/api/companies", payload);
-        console.log("[AdminPlacement] POST /api/companies", res.data);
-        showToast("Company created successfully");
-      }
-      closeCompanyModal();
-      await fetchData();
-    } catch (err) {
-      console.error("[AdminPlacement] submitCompany error", err);
-      setError("Failed to create. Please try again.");
-    } finally {
-      setSubmittingCompany(false);
-    }
   };
 
   const submitDrive = async () => {
     const payload = {
       title: driveForm.title.trim(),
-      company_id: Number(driveForm.company_id),
-      drive_date: driveForm.drive_date,
-      mode: driveForm.mode,
+      company_name: driveForm.company_name.trim(),
+      role: driveForm.role.trim(),
+      package: Number(driveForm.package),
+      min_cgpa: Number(driveForm.min_cgpa),
+      max_backlogs: Number(driveForm.max_backlogs),
+      date: driveForm.date,
       location: driveForm.location.trim(),
-      registration_deadline: driveForm.registration_deadline || null,
-      eligible_years: driveForm.eligible_years,
-      status: driveForm.status,
+      registration_deadline: driveForm.registration_deadline,
+      eligible_years: driveForm.eligible_years.map((y) => Number(y)),
       branches: driveForm.branches,
+      selection_process: driveForm.selection_process,
+      mode: driveForm.mode,
+      status: driveForm.status,
     };
 
-    setSubmittingDrive(true);
     try {
-      const res = await api.post("/api/drives", payload);
-      console.log("[AdminPlacement] POST /api/drives", res.data);
+      setSubmittingDrive(true);
+      setError("");
+
+      await axios.post(`${BASE_URL}/api/drives`, payload, { headers: authHeaders });
+
+      setShowSuccess(true);
       setShowDriveForm(false);
-      setDriveForm(DRIVE_DEFAULT);
-      showToast("Drive created successfully");
-      await fetchData();
+
+      window.setTimeout(async () => {
+        setShowSuccess(false);
+        setDriveForm(DRIVE_DEFAULT);
+        await fetchData();
+      }, 2000);
     } catch (err) {
-      console.error("[AdminPlacement] submitDrive error", err);
-      setError("Failed to create. Please try again.");
+      setError(readErrorMessage(err, "Failed to create drive"));
     } finally {
       setSubmittingDrive(false);
+      setShowConfirm(false);
     }
   };
 
-  const onCompanySubmitClick = (e) => {
-    e.preventDefault();
-    const validationError = validateCompany();
-    if (validationError) {
-      setError(validationError);
-      return;
-    }
-
-    setConfirmConfig({
-      open: true,
-      title: editingCompany ? "Confirm Company Update" : "Confirm Company Creation",
-      message: "Are you sure you want to create this company/drive?",
-      onConfirm: submitCompany,
-    });
-  };
-
-  const onDriveSubmitClick = (e) => {
+  const openCreateConfirm = (e) => {
     e.preventDefault();
     const validationError = validateDrive();
     if (validationError) {
       setError(validationError);
       return;
     }
-
-    setConfirmConfig({
-      open: true,
-      title: "Confirm Drive Creation",
-      message: "Are you sure you want to create this company/drive?",
-      onConfirm: submitDrive,
-    });
+    setShowConfirm(true);
   };
 
-  const deleteCompany = async (companyId) => {
-    setConfirmConfig({
-      open: true,
-      title: "Confirm Delete",
-      message: "Are you sure you want to delete this company?",
-      onConfirm: async () => {
-        try {
-          const res = await api.delete(`/api/companies/${companyId}`);
-          console.log(`[AdminPlacement] DELETE /api/companies/${companyId}`, res.data);
-          showToast("Company deleted successfully");
-          await fetchData();
-        } catch (err) {
-          console.error("[AdminPlacement] deleteCompany error", err);
-          setError("Failed to create. Please try again.");
-        }
-      },
-    });
+  const closeDrive = async (driveId) => {
+    try {
+      await axios.put(`${BASE_URL}/api/drives/${driveId}/close`, {}, { headers: authHeaders });
+      await fetchData();
+    } catch (err) {
+      setError(readErrorMessage(err, "Failed to close drive."));
+    }
   };
 
   const notifyStudents = async (driveId) => {
     try {
-      const res = await api.post(`/api/drives/${driveId}/notify-students`, {});
-      console.log(`[AdminPlacement] POST /api/drives/${driveId}/notify-students`, res.data);
-      showToast("Students notified successfully");
+      await axios.post(`${BASE_URL}/api/drives/${driveId}/notify-students`, {}, { headers: authHeaders });
     } catch (err) {
-      console.error("[AdminPlacement] notifyStudents error", err);
-      setError("Failed to create. Please try again.");
+      setError(readErrorMessage(err, "Failed to notify students."));
     }
-  };
-
-  const closeDrive = async (driveId) => {
-    setConfirmConfig({
-      open: true,
-      title: "Confirm Close Drive",
-      message: "Are you sure you want to close this drive?",
-      onConfirm: async () => {
-        try {
-          const res = await api.put(`/api/drives/${driveId}/close`);
-          console.log(`[AdminPlacement] PUT /api/drives/${driveId}/close`, res.data);
-          showToast("Drive closed successfully");
-          await fetchData();
-        } catch (err) {
-          console.error("[AdminPlacement] closeDrive error", err);
-          setError("Failed to create. Please try again.");
-        }
-      },
-    });
   };
 
   const uploadResults = async (driveId, file) => {
-    if (!file) {
-      return;
-    }
+    if (!file) return;
     try {
       const formData = new FormData();
       formData.append("file", file);
-      const res = await api.post(`/api/drives/${driveId}/upload-results`, formData, {
-        headers: { "Content-Type": "multipart/form-data" },
+      await axios.post(`${BASE_URL}/api/drives/${driveId}/upload-results`, formData, {
+        headers: {
+          ...authHeaders,
+          "Content-Type": "multipart/form-data",
+        },
       });
-      console.log(`[AdminPlacement] POST /api/drives/${driveId}/upload-results`, res.data);
-      showToast("Results uploaded successfully");
       await fetchData();
     } catch (err) {
-      console.error("[AdminPlacement] uploadResults error", err);
-      setError("Failed to create. Please try again.");
+      setError(readErrorMessage(err, "Failed to upload results."));
     }
-  };
-
-  const startEditCompany = (company) => {
-    setEditingCompany(company);
-    setCompanyForm({
-      name: company.name || "",
-      role: company.role || "",
-      package_lpa: company.package_lpa ?? "",
-      min_cgpa: company.min_cgpa ?? "",
-      max_backlogs: company.max_backlogs ?? "",
-      branches: company.branches || [],
-      selection_process: company.selection_process || [],
-    });
-    setShowCompanyForm(true);
-  };
-
-  const closeCompanyModal = () => {
-    setShowCompanyForm(false);
-    setEditingCompany(null);
-    setCompanyForm(COMPANY_DEFAULT);
-  };
-
-  const closeDriveModal = () => {
-    setShowDriveForm(false);
-    setDriveForm(DRIVE_DEFAULT);
   };
 
   if (loading) {
@@ -370,72 +218,18 @@ export default function AdminPlacement() {
   return (
     <div className="space-y-8 pb-8">
       <div className="rounded-3xl border bg-white p-6 shadow-sm">
-        <h1 className="text-3xl font-semibold text-slate-900">Placement Control Center</h1>
-        <p className="mt-2 text-sm text-slate-600">Real-time placement operations, analytics, and execution management.</p>
+        <h1 className="text-3xl font-semibold text-slate-900">Placement Drive Control Center</h1>
+        <p className="mt-2 text-sm text-slate-600">Create and monitor real placement drives with clean workflow and live analytics.</p>
       </div>
 
-      {dashboardUnavailable && <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">Dashboard data not available</div>}
       {error && <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         <KpiCard label="Total Companies" value={dashboard.total_companies || 0} />
-        <KpiCard label="Active Drives" value={dashboard.active_drives || 0} />
-        <KpiCard label="Total Eligible Students" value={dashboard.total_eligible_students || 0} />
-        <KpiCard label="Total Selections" value={dashboard.total_selections || 0} />
-        <KpiCard label="Success Rate %" value={`${Number(dashboard.success_rate || 0).toFixed(2)}%`} />
-      </section>
-
-      <section className="rounded-3xl border bg-white p-6 shadow-sm">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-xl font-semibold text-slate-900">Company Management</h2>
-          <button onClick={() => setShowCompanyForm(true)} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">
-            Add Company
-          </button>
-        </div>
-
-        {companies.length === 0 ? (
-          <p className="text-sm text-slate-500">No companies available yet.</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full border-collapse text-left text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 text-slate-600">
-                  <th className="px-3 py-2 font-semibold">Company Name</th>
-                  <th className="px-3 py-2 font-semibold">Role</th>
-                  <th className="px-3 py-2 font-semibold">Package</th>
-                  <th className="px-3 py-2 font-semibold">Min CGPA</th>
-                  <th className="px-3 py-2 font-semibold">Max Backlogs</th>
-                  <th className="px-3 py-2 font-semibold">Drives Count</th>
-                  <th className="px-3 py-2 font-semibold">Success Rate</th>
-                  <th className="px-3 py-2 font-semibold">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {companies.map((company) => (
-                  <tr key={company.id} className="border-b border-slate-100">
-                    <td className="px-3 py-2 text-slate-800">{company.name}</td>
-                    <td className="px-3 py-2 text-slate-700">{company.role || "N/A"}</td>
-                    <td className="px-3 py-2 text-slate-700">{company.package_lpa == null ? "N/A" : `${company.package_lpa} LPA`}</td>
-                    <td className="px-3 py-2 text-slate-700">{company.min_cgpa}</td>
-                    <td className="px-3 py-2 text-slate-700">{company.max_backlogs}</td>
-                    <td className="px-3 py-2 text-slate-700">{company.drives_count || 0}</td>
-                    <td className="px-3 py-2 text-slate-700">{Number(company.success_rate || 0).toFixed(2)}%</td>
-                    <td className="px-3 py-2">
-                      <div className="flex gap-2">
-                        <button className="rounded-lg bg-slate-100 px-2 py-1 text-xs" onClick={() => startEditCompany(company)}>
-                          Edit
-                        </button>
-                        <button className="rounded-lg bg-red-100 px-2 py-1 text-xs text-red-700" onClick={() => deleteCompany(company.id)}>
-                          Delete
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <KpiCard label="Total Drives" value={drives.length} />
+        <KpiCard label="Eligible Students" value={dashboard.total_eligible_students || 0} />
+        <KpiCard label="Selected Students" value={dashboard.total_selections || 0} />
+        <KpiCard label="Success Rate" value={`${Number(dashboard.success_rate || 0).toFixed(2)}%`} />
       </section>
 
       <section className="rounded-3xl border bg-white p-6 shadow-sm">
@@ -453,12 +247,13 @@ export default function AdminPlacement() {
             <table className="min-w-full border-collapse text-left text-sm">
               <thead>
                 <tr className="border-b border-slate-200 text-slate-600">
-                  <th className="px-3 py-2 font-semibold">Drive Title</th>
+                  <th className="px-3 py-2 font-semibold">Title</th>
                   <th className="px-3 py-2 font-semibold">Company</th>
+                  <th className="px-3 py-2 font-semibold">Role</th>
+                  <th className="px-3 py-2 font-semibold">Package</th>
                   <th className="px-3 py-2 font-semibold">Date</th>
-                  <th className="px-3 py-2 font-semibold">Mode</th>
                   <th className="px-3 py-2 font-semibold">Status</th>
-                  <th className="px-3 py-2 font-semibold">Eligible Students</th>
+                  <th className="px-3 py-2 font-semibold">Eligible</th>
                   <th className="px-3 py-2 font-semibold">Applied</th>
                   <th className="px-3 py-2 font-semibold">Selected</th>
                   <th className="px-3 py-2 font-semibold">Actions</th>
@@ -467,10 +262,11 @@ export default function AdminPlacement() {
               <tbody>
                 {drives.map((drive) => (
                   <tr key={drive.id} className="border-b border-slate-100">
-                    <td className="px-3 py-2 text-slate-800">{drive.title || "Untitled Drive"}</td>
-                    <td className="px-3 py-2 text-slate-700">{drive.company_name}</td>
+                    <td className="px-3 py-2 text-slate-800">{drive.title || "Untitled"}</td>
+                    <td className="px-3 py-2 text-slate-700">{drive.company_name || "N/A"}</td>
+                    <td className="px-3 py-2 text-slate-700">{drive.role || "N/A"}</td>
+                    <td className="px-3 py-2 text-slate-700">{drive.package ? `${drive.package} LPA` : "N/A"}</td>
                     <td className="px-3 py-2 text-slate-700">{drive.drive_date || "N/A"}</td>
-                    <td className="px-3 py-2 text-slate-700">{drive.mode || "N/A"}</td>
                     <td className="px-3 py-2 text-slate-700">{drive.status || "open"}</td>
                     <td className="px-3 py-2 text-slate-700">{drive.eligible_count || 0}</td>
                     <td className="px-3 py-2 text-slate-700">{drive.applied_count || 0}</td>
@@ -501,7 +297,7 @@ export default function AdminPlacement() {
       </section>
 
       <section className="grid gap-4 xl:grid-cols-3">
-        <ChartCard title="Selection rate per company">
+        <ChartCard title="Selection Rate by Company">
           <ResponsiveContainer width="100%" height={250}>
             <BarChart data={selectionRateBars}>
               <CartesianGrid strokeDasharray="3 3" />
@@ -513,7 +309,7 @@ export default function AdminPlacement() {
           </ResponsiveContainer>
         </ChartCard>
 
-        <ChartCard title="Branch-wise performance">
+        <ChartCard title="Branch-wise Performance">
           <ResponsiveContainer width="100%" height={250}>
             <BarChart data={branchBars}>
               <CartesianGrid strokeDasharray="3 3" />
@@ -525,7 +321,7 @@ export default function AdminPlacement() {
           </ResponsiveContainer>
         </ChartCard>
 
-        <ChartCard title="CGPA vs selection">
+        <ChartCard title="CGPA vs Selection">
           <ResponsiveContainer width="100%" height={250}>
             <ScatterChart>
               <CartesianGrid strokeDasharray="3 3" />
@@ -542,71 +338,52 @@ export default function AdminPlacement() {
         </ChartCard>
       </section>
 
-      {showCompanyForm && (
-        <Modal title={editingCompany ? "Edit Company" : "Add Company"} onClose={closeCompanyModal}>
-          <form className="space-y-4" onSubmit={onCompanySubmitClick}>
-            <Field required label="Company Name" value={companyForm.name} onChange={(value) => setCompanyForm((prev) => ({ ...prev, name: value }))} />
-            <Field label="Role" value={companyForm.role} onChange={(value) => setCompanyForm((prev) => ({ ...prev, role: value }))} />
-            <Field required label="Package (LPA)" type="number" step="0.01" value={companyForm.package_lpa} onChange={(value) => setCompanyForm((prev) => ({ ...prev, package_lpa: value }))} />
-            <Field required label="Min CGPA" type="number" step="0.01" value={companyForm.min_cgpa} onChange={(value) => setCompanyForm((prev) => ({ ...prev, min_cgpa: value }))} />
-            <Field required label="Max Backlogs" type="number" value={companyForm.max_backlogs} onChange={(value) => setCompanyForm((prev) => ({ ...prev, max_backlogs: value }))} />
-
-            <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Branches</label>
-            <MultiSelectChips options={BRANCH_OPTIONS} selected={companyForm.branches} onToggle={(value) => setCompanyForm((prev) => ({ ...prev, branches: toggleInArray(prev.branches, value) }))} />
-
-            <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Selection Process</label>
-            <TagInput values={companyForm.selection_process} onChange={(values) => setCompanyForm((prev) => ({ ...prev, selection_process: values }))} />
-
-            <div className="sticky bottom-0 border-t border-slate-200 bg-white pt-3">
-              <button disabled={submittingCompany} type="submit" className="w-full rounded-xl bg-indigo-600 px-4 py-2 text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50">
-                {submittingCompany ? "Saving..." : editingCompany ? "Update Company" : "Create Company"}
-              </button>
-            </div>
-          </form>
-        </Modal>
-      )}
-
       {showDriveForm && (
-        <Modal title="Create Drive" onClose={closeDriveModal}>
-          <form className="space-y-4" onSubmit={onDriveSubmitClick}>
-            <Field required label="Drive Title" value={driveForm.title} onChange={(value) => setDriveForm((prev) => ({ ...prev, title: value }))} />
+        <Modal title="Create Drive" onClose={() => setShowDriveForm(false)}>
+          <form className="space-y-5" onSubmit={openCreateConfirm}>
+            <section className="space-y-3 rounded-2xl border border-slate-200 p-4">
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-600">Section 1: Company Info</h3>
+              <Field required label="Drive Title" value={driveForm.title} onChange={(value) => setDriveForm((prev) => ({ ...prev, title: value }))} />
+              <Field required label="Company Name" value={driveForm.company_name} onChange={(value) => setDriveForm((prev) => ({ ...prev, company_name: value }))} />
+              <Field required label="Role" value={driveForm.role} onChange={(value) => setDriveForm((prev) => ({ ...prev, role: value }))} />
+              <Field required label="Package (LPA)" type="number" step="0.01" value={driveForm.package} onChange={(value) => setDriveForm((prev) => ({ ...prev, package: value }))} />
+              <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Selection Process (optional)</label>
+              <TagInput values={driveForm.selection_process} onChange={(values) => setDriveForm((prev) => ({ ...prev, selection_process: values }))} />
+            </section>
 
-            <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Company *</label>
-            <select required className="w-full rounded-xl border border-slate-300 px-3 py-2" value={driveForm.company_id} onChange={(e) => setDriveForm((prev) => ({ ...prev, company_id: e.target.value }))}>
-              <option value="">Select company</option>
-              {companies.map((company) => (
-                <option key={company.id} value={company.id}>
-                  {company.name}
-                </option>
-              ))}
-            </select>
+            <section className="space-y-3 rounded-2xl border border-slate-200 p-4">
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-600">Section 2: Eligibility</h3>
+              <Field required label="Min CGPA" type="number" step="0.01" value={driveForm.min_cgpa} onChange={(value) => setDriveForm((prev) => ({ ...prev, min_cgpa: value }))} />
+              <Field required label="Max Backlogs" type="number" value={driveForm.max_backlogs} onChange={(value) => setDriveForm((prev) => ({ ...prev, max_backlogs: value }))} />
 
-            <Field required label="Date" type="date" value={driveForm.drive_date} onChange={(value) => setDriveForm((prev) => ({ ...prev, drive_date: value }))} />
-            <Field required label="Location" value={driveForm.location} onChange={(value) => setDriveForm((prev) => ({ ...prev, location: value }))} />
-            <Field label="Registration Deadline" type="date" value={driveForm.registration_deadline} onChange={(value) => setDriveForm((prev) => ({ ...prev, registration_deadline: value }))} />
+              <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Eligible Years</label>
+              <YearToggle selected={driveForm.eligible_years} onToggle={(year) => setDriveForm((prev) => ({ ...prev, eligible_years: toggleInArray(prev.eligible_years, year) }))} />
 
-            <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Eligible Years</label>
-            <YearToggle selected={driveForm.eligible_years} onToggle={(year) => setDriveForm((prev) => ({ ...prev, eligible_years: toggleInArray(prev.eligible_years, year) }))} />
+              <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Branches</label>
+              <MultiSelectChips options={BRANCH_OPTIONS} selected={driveForm.branches} onToggle={(value) => setDriveForm((prev) => ({ ...prev, branches: toggleInArray(prev.branches, value) }))} />
+            </section>
 
-            <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Branches</label>
-            <MultiSelectChips options={BRANCH_OPTIONS} selected={driveForm.branches} onToggle={(value) => setDriveForm((prev) => ({ ...prev, branches: toggleInArray(prev.branches, value) }))} />
+            <section className="space-y-3 rounded-2xl border border-slate-200 p-4">
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-600">Section 3: Drive Info</h3>
+              <Field required label="Date" type="date" value={driveForm.date} onChange={(value) => setDriveForm((prev) => ({ ...prev, date: value }))} />
+              <Field required label="Registration Deadline" type="date" value={driveForm.registration_deadline} onChange={(value) => setDriveForm((prev) => ({ ...prev, registration_deadline: value }))} />
+              <Field required label="Location" value={driveForm.location} onChange={(value) => setDriveForm((prev) => ({ ...prev, location: value }))} />
 
-            <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Mode</label>
-            <select className="w-full rounded-xl border border-slate-300 px-3 py-2" value={driveForm.mode} onChange={(e) => setDriveForm((prev) => ({ ...prev, mode: e.target.value }))}>
-              <option value="online">Online</option>
-              <option value="offline">Offline</option>
-              <option value="hybrid">Hybrid</option>
-            </select>
+              <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Mode</label>
+              <select className="w-full rounded-xl border border-slate-300 px-3 py-2" value={driveForm.mode} onChange={(e) => setDriveForm((prev) => ({ ...prev, mode: e.target.value }))}>
+                <option value="online">Online</option>
+                <option value="offline">Offline</option>
+              </select>
 
-            <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Status</label>
-            <select className="w-full rounded-xl border border-slate-300 px-3 py-2" value={driveForm.status} onChange={(e) => setDriveForm((prev) => ({ ...prev, status: e.target.value }))}>
-              <option value="open">Open</option>
-              <option value="scheduled">Scheduled</option>
-              <option value="closed">Closed</option>
-            </select>
+              <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Status</label>
+              <select className="w-full rounded-xl border border-slate-300 px-3 py-2" value={driveForm.status} onChange={(e) => setDriveForm((prev) => ({ ...prev, status: e.target.value }))}>
+                <option value="open">Open</option>
+                <option value="closed">Closed</option>
+              </select>
+            </section>
 
             <div className="sticky bottom-0 border-t border-slate-200 bg-white pt-3">
-              <button disabled={submittingDrive} type="submit" className="w-full rounded-xl bg-emerald-600 px-4 py-2 text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50">
+              <button disabled={submittingDrive} type="submit" className="w-full rounded-xl bg-emerald-600 px-4 py-2 text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60">
                 {submittingDrive ? "Creating..." : "Create Drive"}
               </button>
             </div>
@@ -614,22 +391,34 @@ export default function AdminPlacement() {
         </Modal>
       )}
 
-      {confirmConfig.open && (
+      {showConfirm && (
         <ConfirmModal
-          title={confirmConfig.title}
-          message={confirmConfig.message}
-          onCancel={() => setConfirmConfig({ open: false, title: "", message: "", onConfirm: null })}
-          onConfirm={async () => {
-            const action = confirmConfig.onConfirm;
-            setConfirmConfig({ open: false, title: "", message: "", onConfirm: null });
-            if (action) {
-              await action();
-            }
-          }}
+          title="Confirm Drive Creation"
+          message={`Create drive ${driveForm.title.trim()} for ${driveForm.company_name.trim()}?`}
+          onCancel={() => setShowConfirm(false)}
+          onConfirm={submitDrive}
+          loading={submittingDrive}
         />
       )}
 
-      {toast.visible && <Toast type={toast.type} message={toast.message} />}
+      {showSuccess && <SuccessModal />}
+    </div>
+  );
+}
+
+function SuccessModal() {
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/50 p-4">
+      <div
+        className="w-full max-w-sm rounded-2xl bg-white p-8 text-center shadow-2xl"
+        style={{
+          animation: "success-pop 300ms ease-out",
+        }}
+      >
+        <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-emerald-100 text-3xl text-emerald-700">✓</div>
+        <p className="text-lg font-semibold text-slate-900">Drive Created Successfully</p>
+      </div>
+      <style>{`@keyframes success-pop { from { opacity: 0; transform: scale(0.8);} to { opacity: 1; transform: scale(1);} }`}</style>
     </div>
   );
 }
@@ -668,30 +457,29 @@ function Modal({ title, onClose, children }) {
   );
 }
 
-function ConfirmModal({ title, message, onCancel, onConfirm }) {
+function ConfirmModal({ title, message, onCancel, onConfirm, loading }) {
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/50 p-4">
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/50 p-4">
       <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
         <h4 className="text-lg font-semibold text-slate-900">{title}</h4>
         <p className="mt-2 text-sm text-slate-600">{message}</p>
         <div className="mt-5 flex justify-end gap-2">
-          <button onClick={onCancel} className="rounded-xl border border-slate-300 px-4 py-2 text-sm text-slate-700">Cancel</button>
-          <button onClick={onConfirm} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white">Confirm</button>
+          <button onClick={onCancel} className="rounded-xl border border-slate-300 px-4 py-2 text-sm text-slate-700" disabled={loading}>
+            Cancel
+          </button>
+          <button onClick={onConfirm} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60" disabled={loading}>
+            {loading ? "Creating..." : "Confirm"}
+          </button>
         </div>
       </div>
     </div>
   );
 }
 
-function Toast({ type, message }) {
-  const bgClass = type === "success" ? "bg-emerald-600" : "bg-red-600";
-  return <div className={`fixed bottom-6 right-6 z-[70] rounded-xl px-4 py-3 text-sm font-semibold text-white shadow-lg ${bgClass}`}>{`✔ ${message}`}</div>;
-}
-
 function Field({ label, value, onChange, required = false, type = "text", step }) {
   return (
     <div>
-      <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+      <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
         {label}
         {required ? " *" : ""}
       </label>
@@ -745,17 +533,11 @@ function TagInput({ values, onChange }) {
 
   const addTag = () => {
     const trimmed = input.trim();
-    if (!trimmed) {
-      return;
-    }
+    if (!trimmed) return;
     if (!values.includes(trimmed)) {
       onChange([...values, trimmed]);
     }
     setInput("");
-  };
-
-  const removeTag = (tag) => {
-    onChange(values.filter((item) => item !== tag));
   };
 
   return (
@@ -764,7 +546,7 @@ function TagInput({ values, onChange }) {
         {values.map((tag) => (
           <span key={tag} className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-700">
             {tag}
-            <button type="button" className="ml-2 text-slate-500" onClick={() => removeTag(tag)}>
+            <button type="button" className="ml-2 text-slate-500" onClick={() => onChange(values.filter((item) => item !== tag))}>
               x
             </button>
           </span>
@@ -781,7 +563,7 @@ function TagInput({ values, onChange }) {
             }
           }}
           className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm"
-          placeholder="Add process step"
+          placeholder="Add step"
         />
         <button type="button" className="rounded-lg bg-slate-200 px-3 py-2 text-sm" onClick={addTag}>
           Add

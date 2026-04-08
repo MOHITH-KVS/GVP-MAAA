@@ -8,6 +8,8 @@ export default function Placement() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [summary, setSummary] = useState({ eligible: 0, upcoming: 0, completed: 0, offers: 0 });
+  const [placementData, setPlacementData] = useState({ summary: { total: 0, eligible: 0, applied: 0, selected: 0 }, drives: [] });
+  const [applyBusyByDrive, setApplyBusyByDrive] = useState({});
   const [eligibleCompanies, setEligibleCompanies] = useState([]);
   const [upcomingDrives, setUpcomingDrives] = useState([]);
   const [pastDrives, setPastDrives] = useState([]);
@@ -44,7 +46,8 @@ export default function Placement() {
         }
       };
 
-      const [summaryResult, eligibleResult, upcomingResult, pastResult, intelligenceResult] = await Promise.all([
+      const [placementResult, summaryResult, eligibleResult, upcomingResult, pastResult, intelligenceResult] = await Promise.all([
+        safeGet("/api/student/placement"),
         safeGet("/api/student/placement-summary"),
         safeGet("/api/student/eligible-companies"),
         safeGet("/api/student/upcoming-drives"),
@@ -52,6 +55,7 @@ export default function Placement() {
         safeGet("/api/student/placement-intelligence"),
       ]);
 
+      console.log("[StudentPlacement] GET /api/student/placement", placementResult);
       console.log("[StudentPlacement] GET /api/student/placement-summary", summaryResult);
       console.log("[StudentPlacement] GET /api/student/eligible-companies", eligibleResult);
       console.log("[StudentPlacement] GET /api/student/upcoming-drives", upcomingResult);
@@ -62,13 +66,28 @@ export default function Placement() {
         return;
       }
 
+      const placementPayload =
+        placementResult.ok && placementResult.data && Array.isArray(placementResult.data.drives)
+          ? placementResult.data
+          : { summary: { total: 0, eligible: 0, applied: 0, selected: 0 }, drives: [] };
+
       const summaryData = summaryResult.ok ? summaryResult.data : { eligible: 0, upcoming: 0, completed: 0, offers: 0 };
       const eligibleData = Array.isArray(eligibleResult.data) ? eligibleResult.data : [];
       const upcomingData = Array.isArray(upcomingResult.data) ? upcomingResult.data : [];
       const pastData = Array.isArray(pastResult.data) ? pastResult.data : [];
       const intelligenceData = intelligenceResult.ok ? intelligenceResult.data : null;
 
-      setSummary(summaryData);
+      setSummary(
+        placementResult.ok
+          ? {
+              eligible: placementPayload?.summary?.eligible || 0,
+              upcoming: placementPayload?.summary?.applied || 0,
+              completed: pastData.length,
+              offers: placementPayload?.summary?.selected || 0,
+            }
+          : summaryData
+      );
+      setPlacementData(placementPayload);
       setEligibleCompanies(eligibleData);
       setUpcomingDrives(upcomingData);
       setPastDrives(pastData);
@@ -79,6 +98,7 @@ export default function Placement() {
           summaryData?.upcoming ||
           summaryData?.completed ||
           summaryData?.offers ||
+            (placementPayload?.drives || []).length ||
           eligibleData.length ||
           upcomingData.length ||
           pastData.length
@@ -103,6 +123,33 @@ export default function Placement() {
     };
   }, [studentId]);
 
+  const applyForDrive = async (driveId) => {
+    setApplyBusyByDrive((prev) => ({ ...prev, [driveId]: true }));
+    try {
+      await api.post(`/api/student/apply/${driveId}`);
+      setPlacementData((prev) => ({
+        ...prev,
+        drives: (prev.drives || []).map((drive) =>
+          drive.drive_id === driveId
+            ? {
+                ...drive,
+                applied: true,
+                status: (drive.status || "").toLowerCase() === "not applied" ? "applied" : drive.status,
+              }
+            : drive
+        ),
+        summary: {
+          ...(prev.summary || {}),
+          applied: (prev.summary?.applied || 0) + 1,
+        },
+      }));
+    } catch (err) {
+      setError(err?.response?.data?.detail || "Unable to apply for this drive right now.");
+    } finally {
+      setApplyBusyByDrive((prev) => ({ ...prev, [driveId]: false }));
+    }
+  };
+
   const readiness = intelligence?.readiness || null;
   const interviews = intelligence?.interviews || null;
   const prediction = intelligence?.prediction || null;
@@ -116,6 +163,10 @@ export default function Placement() {
   const readinessStatus = readiness?.status || "Not Ready";
   const readinessReasons = readiness?.reasons || [];
   const suggestions = readiness?.suggestions || [];
+  const placementDrives = placementData?.drives || [];
+  const probabilityReasons = successProbability?.reasons || [];
+  const improvementActions = successProbability?.improvement_actions || [];
+  const probabilityComponents = successProbability?.components || { cgpa: 0, attendance: 0, backlogs: 0, skills: 0 };
 
   const allEmpty = useMemo(
     () =>
@@ -175,6 +226,85 @@ export default function Placement() {
         <MetricCard label="Completed interviews" value={summary.completed} hint="Past drive participation" />
         <MetricCard label="Offers" value={summary.offers} hint="Final selected outcomes" />
       </section>
+
+      <Section title="Drive applications" subtitle="Apply directly to eligible drives with live probability and skill match">
+        <div className="grid gap-4 lg:grid-cols-2">
+          {placementDrives.length ? (
+            placementDrives.map((drive) => {
+              const eligible = Boolean(drive.is_eligible);
+              const alreadyApplied = Boolean(drive.applied);
+              const busy = Boolean(applyBusyByDrive[drive.drive_id]);
+              return (
+                <Panel key={drive.student_drive_id || drive.drive_id}>
+                  <div className="space-y-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <h3 className="text-lg font-semibold text-slate-900">{drive.company_name}</h3>
+                        <p className="text-sm text-slate-500">{drive.title || "Placement Drive"}</p>
+                      </div>
+                      <EligibilityBadge eligible={eligible} />
+                    </div>
+                    <div className="space-y-1 text-sm text-slate-600">
+                      <p>Date: {formatDate(drive.drive_date)}</p>
+                      <p>Mode: {drive.mode || "N/A"} · Location: {drive.location || "TBD"}</p>
+                      <p>Probability: {Math.round(drive.probability_score || 0)}% · Skill match: {Math.round(drive.skill_match || 0)}%</p>
+                      <p>Status: {drive.status || "Not Applied"} · Result: {drive.final_result || "pending"}</p>
+                      <p>Why: {(drive.reasons && drive.reasons[0]) || "Profile is under evaluation."}</p>
+                      <p>Action: {drive.action_to_improve || "Keep preparing for the next round."}</p>
+                    </div>
+                    {Array.isArray(drive.required_skills) && drive.required_skills.length > 0 ? (
+                      <div className="flex flex-wrap gap-2">
+                        {drive.required_skills.map((skill) => (
+                          <Pill
+                            key={`${drive.drive_id}-${skill}`}
+                            text={skill}
+                            tone={(drive.matched_skills || []).includes(skill) ? "emerald" : "amber"}
+                          />
+                        ))}
+                      </div>
+                    ) : null}
+                    <div>
+                      <button
+                        type="button"
+                        disabled={!eligible || alreadyApplied || busy}
+                        onClick={() => applyForDrive(drive.drive_id)}
+                        className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                      >
+                        {alreadyApplied ? "Applied" : busy ? "Applying..." : "Apply"}
+                      </button>
+                    </div>
+                  </div>
+                </Panel>
+              );
+            })
+          ) : (
+            <p className="text-sm text-slate-500">No placement drives assigned to your profile yet.</p>
+          )}
+        </div>
+      </Section>
+
+      <Section title="Probability insights" subtitle="Explainable score from CGPA, attendance, backlogs, and skills">
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Panel>
+            <PanelTitle title="Probability breakdown" />
+            <div className="space-y-3">
+              <ProbabilityBar label="CGPA" value={probabilityComponents.cgpa} />
+              <ProbabilityBar label="Attendance" value={probabilityComponents.attendance} />
+              <ProbabilityBar label="Backlogs" value={probabilityComponents.backlogs} />
+              <ProbabilityBar label="Skills" value={probabilityComponents.skills} accent />
+            </div>
+          </Panel>
+
+          <Panel>
+            <PanelTitle title="Why this score" />
+            <div className="space-y-3">
+              <StatValue value={`${Math.round(successProbability?.current_probability || 0)}% current`} />
+              <StatValue value={`${Math.round(successProbability?.improved_probability || 0)}% improved`} small />
+              {probabilityReasons.length ? probabilityReasons.map((reason) => <ReasonItem key={reason} text={reason} />) : <InlineEmpty text="No explanation available yet." />}
+            </div>
+          </Panel>
+        </div>
+      </Section>
 
       <Section title="Company eligibility" subtitle="Live eligibility against stored company rules">
         <div className="grid gap-4 lg:grid-cols-2">
@@ -303,9 +433,9 @@ export default function Placement() {
 
               <Panel>
                 <PanelTitle title="Priority suggestions" />
-                {suggestions.length ? (
+                {improvementActions.length ? (
                   <div className="space-y-3">
-                    {suggestions.map((item) => (
+                    {improvementActions.map((item) => (
                       <ActionChip key={item} text={item} />
                     ))}
                   </div>
