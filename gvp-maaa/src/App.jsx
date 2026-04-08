@@ -45,6 +45,7 @@ import Alerts from "./pages/Admin/Alerts";
 import Insights from "./pages/Admin/Insights";
 import Settings from "./pages/Admin/Settings";
 import AdminPlacement from "./pages/Admin/Placement";
+import PlacementDriveDetails from "./pages/Admin/PlacementDriveDetails";
 
 export default function App() {
   return (
@@ -98,6 +99,7 @@ export default function App() {
           <Route path="alerts" element={<Alerts />} />
           <Route path="insights" element={<Insights />} />
           <Route path="placement" element={<AdminPlacement />} />
+          <Route path="placement/drives/:id" element={<PlacementDriveDetails />} />
           <Route path="settings" element={<ErrorBoundary><Settings /></ErrorBoundary>} />
         </Route>
 
