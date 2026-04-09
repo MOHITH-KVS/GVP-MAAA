@@ -29,6 +29,7 @@ except ImportError:
     def generate_recommendations(*args, **kwargs): return []
 from models import (  # type: ignore
     Base,
+    Department,
     Alert,
     AlertRecipient,
     Timetable,
@@ -113,6 +114,8 @@ DEPARTMENT_MAP = {
     15: "MECH",
     1: "CIVIL"
 }
+
+DEPARTMENTS_CACHE_TTL_SECONDS = 15 * 60
 
 BRANCH_TO_DEPARTMENT = {name: id for id, name in DEPARTMENT_MAP.items()}
 
@@ -232,6 +235,8 @@ app.mount(
 
 settings_cache = {}
 settings_cache_loaded = False
+departments_cache: List[Dict[str, Any]] = []
+departments_cache_expires_at: Optional[datetime] = None
 
 
 def refresh_settings_cache():
@@ -246,6 +251,95 @@ def refresh_settings_cache():
         settings_cache_loaded = False
     finally:
         db.close()
+
+
+def _invalidate_departments_cache() -> None:
+    global departments_cache, departments_cache_expires_at
+    departments_cache = []
+    departments_cache_expires_at = None
+
+
+def _normalize_department_value(value: Optional[str]) -> str:
+    return str(value or "").strip().upper()
+
+
+def _load_departments(db: Session, force_refresh: bool = False) -> List[Dict[str, Any]]:
+    global departments_cache, departments_cache_expires_at
+    now = datetime.utcnow()
+
+    if (
+        not force_refresh
+        and departments_cache
+        and departments_cache_expires_at is not None
+        and now < departments_cache_expires_at
+    ):
+        return departments_cache
+
+    try:
+        rows = db.query(Department).order_by(func.upper(Department.name).asc(), Department.id.asc()).all()
+        serialized = [
+            {
+                "id": int(row.id),
+                "name": _normalize_department_value(row.name),
+            }
+            for row in rows
+            if _normalize_department_value(row.name)
+        ]
+    except Exception:
+        serialized = [
+            {"id": index + 1, "name": name}
+            for index, name in enumerate(["CSE", "ECE", "EEE", "MECH", "CIVIL", "CSM"])
+        ]
+
+    departments_cache = serialized
+    departments_cache_expires_at = now + timedelta(seconds=DEPARTMENTS_CACHE_TTL_SECONDS)
+    return serialized
+
+
+def _resolve_assignment_department(value: Optional[str], db: Session) -> Optional[str]:
+    normalized = _normalize_department_value(value)
+    if not normalized:
+        raise HTTPException(status_code=400, detail="department is required")
+    if normalized == "ALL":
+        return None
+
+    allowed_departments = {item["name"] for item in _load_departments(db)}
+    if normalized not in allowed_departments:
+        raise HTTPException(status_code=400, detail="Invalid department value")
+    return normalized
+
+
+def _format_assignment_department(value: Optional[str]) -> str:
+    normalized = _normalize_department_value(value)
+    if not normalized or normalized == "ALL":
+        return "ALL"
+    return normalized
+
+
+def _get_teacher_department_scope(drive_id: int, user_id: int, db: Session) -> Optional[set[str]]:
+    today = datetime.utcnow().date()
+    rows = (
+        db.query(DriveFacultyMap)
+        .filter(
+            DriveFacultyMap.drive_id == drive_id,
+            DriveFacultyMap.faculty_id == user_id,
+            DriveFacultyMap.is_active.is_(True),
+            DriveFacultyMap.assigned_from <= today,
+            DriveFacultyMap.assigned_to >= today,
+        )
+        .all()
+    )
+
+    if not rows:
+        return None
+
+    scoped_departments: set[str] = set()
+    for row in rows:
+        normalized = _normalize_department_value(row.department)
+        if not normalized or normalized == "ALL":
+            return set()
+        scoped_departments.add(normalized)
+    return scoped_departments
 
 
 def ensure_student_insights_columns():
@@ -269,6 +363,94 @@ def ensure_student_insights_columns():
 def ensure_placement_schema():
     db = SessionLocal()
     try:
+        db.execute(text("""
+            CREATE TABLE IF NOT EXISTS departments (
+                id SERIAL PRIMARY KEY,
+                name VARCHAR(100)
+            );
+        """))
+
+        db.execute(text("""
+            ALTER TABLE departments
+            ADD COLUMN IF NOT EXISTS id SERIAL,
+            ADD COLUMN IF NOT EXISTS name VARCHAR(100);
+        """))
+
+        db.execute(text("""
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='departments' AND column_name='department'
+                ) THEN
+                    UPDATE departments
+                    SET name = COALESCE(name, department::TEXT)
+                    WHERE name IS NULL OR BTRIM(name) = '';
+                END IF;
+
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='departments' AND column_name='dept_name'
+                ) THEN
+                    UPDATE departments
+                    SET name = COALESCE(name, dept_name::TEXT)
+                    WHERE name IS NULL OR BTRIM(name) = '';
+                END IF;
+
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='departments' AND column_name='branch'
+                ) THEN
+                    UPDATE departments
+                    SET name = COALESCE(name, branch::TEXT)
+                    WHERE name IS NULL OR BTRIM(name) = '';
+                END IF;
+            END $$;
+        """))
+
+        db.execute(text("""
+            UPDATE departments
+            SET name = UPPER(BTRIM(name))
+            WHERE name IS NOT NULL;
+        """))
+
+        db.execute(text("""
+            DELETE FROM departments
+            WHERE name IS NULL OR BTRIM(name) = '';
+        """))
+
+        db.execute(text("""
+            DELETE FROM departments a
+            USING departments b
+            WHERE a.id > b.id
+              AND UPPER(BTRIM(a.name)) = UPPER(BTRIM(b.name));
+        """))
+
+        db.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM information_schema.table_constraints
+                    WHERE table_name = 'departments'
+                      AND constraint_name = 'departments_name_key'
+                ) THEN
+                    ALTER TABLE departments ADD CONSTRAINT departments_name_key UNIQUE (name);
+                END IF;
+            END $$;
+        """))
+
+        db.execute(text("""
+            ALTER TABLE departments
+            ALTER COLUMN name SET NOT NULL;
+        """))
+
+        db.execute(text("""
+            INSERT INTO departments (name)
+            VALUES ('CSE'), ('ECE'), ('EEE'), ('MECH'), ('CIVIL'), ('CSM')
+            ON CONFLICT (name) DO NOTHING;
+        """))
+
         db.execute(text("""
             ALTER TABLE users
             ADD COLUMN IF NOT EXISTS role VARCHAR(50);
@@ -697,6 +879,7 @@ def ensure_placement_schema():
         """))
 
         db.commit()
+        _invalidate_departments_cache()
     except Exception as e:
         print("Placement schema migration failed:", e)
         db.rollback()
@@ -2862,6 +3045,14 @@ def get_faculty_list(
     ]
 
 
+@app.get("/api/departments")
+def get_departments(
+    _: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return _load_departments(db)
+
+
 @app.get("/api/auth/me")
 def get_auth_me(
     current_user: dict = Depends(get_current_user),
@@ -3257,9 +3448,7 @@ def assign_faculty_to_drive(
         if assigned_to < assigned_from:
             raise HTTPException(status_code=400, detail="assigned_to must be on or after assigned_from")
 
-        department_value = str(item.department or "").strip().upper()
-        if not department_value:
-            raise HTTPException(status_code=400, detail="department is required")
+        department_value = _resolve_assignment_department(item.department, db)
 
         db.add(
             DriveFacultyMap(
@@ -3293,7 +3482,7 @@ def assign_faculty_to_drive(
                 "faculty_id": user.user_id,
                 "name": user.name,
                 "email": user.email,
-                "department": mapping.department,
+                "department": _format_assignment_department(mapping.department),
                 "assigned_from": mapping.assigned_from.isoformat() if mapping.assigned_from else None,
                 "assigned_to": mapping.assigned_to.isoformat() if mapping.assigned_to else None,
                 "assigned_by": assigned_by_user.name if assigned_by_user else None,
@@ -3713,6 +3902,9 @@ def get_drive_details(
         raise HTTPException(status_code=404, detail="Drive not found")
 
     can_update = _can_update_drive_students(drive_id, current_user, db)
+    teacher_department_scope: Optional[set[str]] = None
+    if _normalized_role(current_user) == "teacher":
+        teacher_department_scope = _get_teacher_department_scope(drive_id, int(current_user["user_id"]), db)
 
     rows = (
         db.query(StudentDrive, Student, User)
@@ -3763,6 +3955,8 @@ def get_drive_details(
                 updated_by_name = updater.name
 
         branch_name = DEPARTMENT_MAP.get(int(user.department_id or 0), str(user.department_id or "N/A"))
+        if teacher_department_scope and str(branch_name or "").strip().upper() not in teacher_department_scope:
+            continue
         current_round = int((app_row.current_round if app_row else sd.current_round) or 0)
         final_result = str((app_row.final_status if app_row else sd.final_result) or "pending")
         application_status = str((app_row.application_status if app_row else ("applied" if sd.applied else "not_applied")) or "not_applied")
@@ -3819,7 +4013,7 @@ def get_drive_details(
                 "faculty_id": user.user_id,
                 "name": user.name,
                 "email": user.email,
-                "department": mapping.department,
+                "department": _format_assignment_department(mapping.department),
                 "assigned_from": mapping.assigned_from.isoformat() if mapping.assigned_from else None,
                 "assigned_to": mapping.assigned_to.isoformat() if mapping.assigned_to else None,
                 "assigned_by": assigned_by_user.name if assigned_by_user else None,
@@ -3883,6 +4077,10 @@ def get_drive_students_filtered(
         raise HTTPException(status_code=404, detail="Drive not found")
 
     can_update = _can_update_drive_students(drive_id, current_user, db)
+    teacher_department_scope: Optional[set[str]] = None
+    if _normalized_role(current_user) == "teacher":
+        teacher_department_scope = _get_teacher_department_scope(drive_id, int(current_user["user_id"]), db)
+
     rows = (
         db.query(StudentDrive, Student, User)
         .join(Student, Student.student_id == StudentDrive.student_id)
@@ -3902,6 +4100,8 @@ def get_drive_students_filtered(
             .first()
         )
         branch_name = DEPARTMENT_MAP.get(int(user.department_id or 0), str(user.department_id or "N/A"))
+        if teacher_department_scope and str(branch_name or "").strip().upper() not in teacher_department_scope:
+            continue
         final_status = str((app_row.final_status if app_row else sd.final_result) or "pending").lower()
         app_status = str((app_row.application_status if app_row else ("applied" if sd.applied else "not_applied")) or "not_applied").lower()
 

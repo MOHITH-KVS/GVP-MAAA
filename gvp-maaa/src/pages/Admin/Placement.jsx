@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
+import ActionDropdown from "../../components/placement/ActionDropdown";
 import {
   Bar,
   BarChart,
@@ -20,7 +21,7 @@ const YEAR_OPTIONS = [1, 2, 3, 4];
 
 const ASSIGNMENT_FORM_DEFAULT = {
   faculty_id: "",
-  department: "",
+  department: "ALL",
   assigned_from: "",
   assigned_to: "",
 };
@@ -76,15 +77,15 @@ export default function AdminPlacement() {
   const [editingDrive, setEditingDrive] = useState(null);
   const [previewAction, setPreviewAction] = useState(null);
   const [openActionMenuDriveId, setOpenActionMenuDriveId] = useState(null);
+  const [actionMenuPosition, setActionMenuPosition] = useState({ x: 0, y: 0 });
   const [showAssignmentModal, setShowAssignmentModal] = useState(false);
   const [assignmentModalBusy, setAssignmentModalBusy] = useState(false);
   const [assignmentMode, setAssignmentMode] = useState("faculty");
   const [assignmentDrive, setAssignmentDrive] = useState(null);
   const [assignmentForm, setAssignmentForm] = useState(ASSIGNMENT_FORM_DEFAULT);
   const [facultyList, setFacultyList] = useState([]);
+  const [departments, setDepartments] = useState([]);
   const [existingAssignments, setExistingAssignments] = useState({ assigned_faculty: [], coordinator_assignments: [] });
-
-  const actionMenuRef = useRef(null);
 
   const authHeaders = useMemo(() => {
     const token = localStorage.getItem("access_token");
@@ -187,15 +188,27 @@ export default function AdminPlacement() {
     };
   }, []);
 
-  useEffect(() => {
-    const onDocumentClick = (event) => {
-      if (actionMenuRef.current && !actionMenuRef.current.contains(event.target)) {
-        setOpenActionMenuDriveId(null);
-      }
-    };
-    document.addEventListener("mousedown", onDocumentClick);
-    return () => document.removeEventListener("mousedown", onDocumentClick);
-  }, []);
+  const closeActionDropdown = () => setOpenActionMenuDriveId(null);
+
+  const openActionDropdown = (event, drive) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    let x = rect.right - 180;
+    let y = rect.bottom + 8;
+
+    if (window.innerWidth - rect.right < 200) {
+      x = rect.left - 180;
+    }
+
+    if (window.innerHeight - rect.bottom < 150) {
+      y = rect.top - 150;
+    }
+
+    x = Math.max(8, Math.min(x, window.innerWidth - 196));
+    y = Math.max(8, Math.min(y, window.innerHeight - 180));
+
+    setActionMenuPosition({ x, y });
+    setOpenActionMenuDriveId(drive.id);
+  };
 
   const validateDrive = () => {
     if (!driveForm.title.trim()) return "Drive title is required.";
@@ -340,20 +353,22 @@ export default function AdminPlacement() {
     setOpenActionMenuDriveId(null);
     setAssignmentMode(mode);
     setAssignmentDrive(drive);
-    setAssignmentForm(ASSIGNMENT_FORM_DEFAULT);
+    setAssignmentForm({ ...ASSIGNMENT_FORM_DEFAULT, department: mode === "faculty" ? "ALL" : "" });
     setShowAssignmentModal(true);
     setAssignmentModalBusy(true);
     setError("");
     try {
-      const [detailsRes, facultyRes] = await Promise.all([
+      const [detailsRes, facultyRes, departmentsRes] = await Promise.all([
         axios.get(`${BASE_URL}/api/drives/${drive.id}/details`, { headers: authHeaders }),
         axios.get(`${BASE_URL}/api/faculty/list`, { headers: authHeaders }),
+        axios.get(`${BASE_URL}/api/departments`, { headers: authHeaders }),
       ]);
       setExistingAssignments({
         assigned_faculty: detailsRes?.data?.assigned_faculty || [],
         coordinator_assignments: detailsRes?.data?.coordinator_assignments || [],
       });
       setFacultyList(Array.isArray(facultyRes.data) ? facultyRes.data : []);
+      setDepartments(Array.isArray(departmentsRes.data) ? departmentsRes.data : []);
     } catch (err) {
       setError(readErrorMessage(err, "Unable to load assignment data."));
     } finally {
@@ -426,7 +441,7 @@ export default function AdminPlacement() {
             assignments: [
               {
                 faculty_id: facultyId,
-                department: assignmentForm.department,
+                department: assignmentForm.department || "ALL",
                 assigned_from: assignmentForm.assigned_from,
                 assigned_to: assignmentForm.assigned_to,
               },
@@ -568,6 +583,8 @@ export default function AdminPlacement() {
     return <div className="rounded-3xl border bg-white p-8 text-sm text-slate-500 shadow-sm">Loading placement data...</div>;
   }
 
+  const activeDropdownDrive = drives.find((item) => item.id === openActionMenuDriveId) || null;
+
   return (
     <div className="space-y-8 pb-8">
       <div className="rounded-3xl border bg-white p-6 shadow-sm">
@@ -632,7 +649,7 @@ export default function AdminPlacement() {
                     <td className="px-3 py-2 text-slate-700">{drive.applied_count || 0}</td>
                     <td className="px-3 py-2 text-slate-700">{drive.selected_count || 0}</td>
                     <td className="px-3 py-2">
-                      <div className="relative flex flex-wrap gap-2" ref={openActionMenuDriveId === drive.id ? actionMenuRef : null}>
+                      <div className="flex flex-wrap gap-2">
                         <button className="rounded-lg bg-slate-100 px-2 py-1 text-xs" onClick={() => navigate(`/admin/placement/drives/${drive.id}`)}>
                           Details
                         </button>
@@ -645,46 +662,16 @@ export default function AdminPlacement() {
                         <button
                           type="button"
                           className="rounded-lg bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700"
-                          onClick={() => setOpenActionMenuDriveId((prev) => (prev === drive.id ? null : drive.id))}
+                          onClick={(event) => {
+                            if (openActionMenuDriveId === drive.id) {
+                              closeActionDropdown();
+                              return;
+                            }
+                            openActionDropdown(event, drive);
+                          }}
                         >
                           ⋮
                         </button>
-
-                        {openActionMenuDriveId === drive.id && (
-                          <div className="absolute right-0 top-8 z-30 w-48 rounded-xl border border-slate-200 bg-white p-1 shadow-lg">
-                            <button
-                              type="button"
-                              onClick={() => openAssignmentModal(drive, "faculty")}
-                              className="w-full rounded-lg px-3 py-2 text-left text-xs text-slate-700 hover:bg-slate-100"
-                            >
-                              Assign Faculty
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => openAssignmentModal(drive, "coordinator")}
-                              className="w-full rounded-lg px-3 py-2 text-left text-xs text-slate-700 hover:bg-slate-100"
-                            >
-                              Assign Coordinator
-                            </button>
-                            {String(drive.status || "open").toLowerCase() === "closed" ? (
-                              <button
-                                type="button"
-                                onClick={() => reopenDrive(drive)}
-                                className="w-full rounded-lg px-3 py-2 text-left text-xs text-emerald-700 hover:bg-emerald-50"
-                              >
-                                {actionBusyByDrive[`reopen-${drive.id}`] ? "Previewing..." : "Reopen"}
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => closeDrive(drive)}
-                                className="w-full rounded-lg px-3 py-2 text-left text-xs text-rose-700 hover:bg-rose-50"
-                              >
-                                {actionBusyByDrive[`close-${drive.id}`] ? "Previewing..." : "Close"}
-                              </button>
-                            )}
-                          </div>
-                        )}
                       </div>
                     </td>
                   </tr>
@@ -736,6 +723,40 @@ export default function AdminPlacement() {
           </ResponsiveContainer>
         </ChartCard>
       </section>
+
+      <ActionDropdown
+        isOpen={Boolean(activeDropdownDrive)}
+        position={actionMenuPosition}
+        onClose={closeActionDropdown}
+        onAssignFaculty={() => {
+          if (!activeDropdownDrive) return;
+          openAssignmentModal(activeDropdownDrive, "faculty");
+        }}
+        onAssignCoordinator={() => {
+          if (!activeDropdownDrive) return;
+          openAssignmentModal(activeDropdownDrive, "coordinator");
+        }}
+        onToggleClose={() => {
+          if (!activeDropdownDrive) return;
+          if (String(activeDropdownDrive.status || "open").toLowerCase() === "closed") {
+            reopenDrive(activeDropdownDrive);
+            closeActionDropdown();
+            return;
+          }
+          closeDrive(activeDropdownDrive);
+          closeActionDropdown();
+        }}
+        isClosed={String(activeDropdownDrive?.status || "open").toLowerCase() === "closed"}
+        closeLabel={
+          String(activeDropdownDrive?.status || "open").toLowerCase() === "closed"
+            ? actionBusyByDrive[`reopen-${activeDropdownDrive?.id}`]
+              ? "Previewing..."
+              : "Reopen"
+            : actionBusyByDrive[`close-${activeDropdownDrive?.id}`]
+              ? "Previewing..."
+              : "Close"
+        }
+      />
 
       {showDriveForm && (
         <Modal title={editingDrive ? "Edit Drive" : "Create Drive"} onClose={() => { setShowDriveForm(false); setEditingDrive(null); }}>
@@ -820,6 +841,7 @@ export default function AdminPlacement() {
           mode={assignmentMode}
           loading={assignmentModalBusy}
           facultyList={facultyList}
+          departments={departments}
           form={assignmentForm}
           assignments={existingAssignments}
           onFormChange={(next) => setAssignmentForm((prev) => ({ ...prev, ...next }))}
@@ -899,6 +921,7 @@ function AssignmentModal({
   mode,
   loading,
   facultyList,
+  departments,
   form,
   assignments,
   onFormChange,
@@ -909,6 +932,11 @@ function AssignmentModal({
   onRemoveExisting,
 }) {
   const isFacultyMode = mode === "faculty";
+  const normalizedDepartments = Array.isArray(departments)
+    ? departments
+        .map((dep) => String(dep?.name || "").trim().toUpperCase())
+        .filter((name, index, arr) => Boolean(name) && arr.indexOf(name) === index)
+    : [];
 
   const assignmentRows = isFacultyMode
     ? (assignments.assigned_faculty || []).map((row) => ({ ...row, role: "Faculty" }))
@@ -936,8 +964,7 @@ function AssignmentModal({
               className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
               value={form.faculty_id}
               onChange={(e) => {
-                const selected = facultyList.find((item) => Number(item.id) === Number(e.target.value));
-                onFormChange({ faculty_id: e.target.value, department: selected?.department || "" });
+                onFormChange({ faculty_id: e.target.value });
               }}
             >
               <option value="">Select faculty</option>
@@ -961,12 +988,22 @@ function AssignmentModal({
 
           <div>
             <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Department</label>
-            <input
-              value={form.department || ""}
-              disabled={!isFacultyMode}
-              onChange={(e) => onFormChange({ department: e.target.value })}
-              className={`mt-1 w-full rounded-xl border px-3 py-2 text-sm ${isFacultyMode ? "border-slate-300" : "border-slate-200 bg-slate-100 text-slate-600"}`}
-            />
+            {isFacultyMode ? (
+              <select
+                value={form.department || "ALL"}
+                onChange={(e) => onFormChange({ department: e.target.value })}
+                className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+              >
+                <option value="ALL">All Departments</option>
+                {normalizedDepartments.map((depName) => (
+                  <option key={depName} value={depName}>
+                    {depName}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input value="N/A" disabled className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-600" />
+            )}
           </div>
 
           <div>
@@ -1030,7 +1067,7 @@ function AssignmentModal({
                     <tr key={`${item.role}-${item.id}`} className="border-b border-slate-100">
                       <td className="px-3 py-2">{item.name || item.faculty_name || item.faculty_email || item.faculty_id}</td>
                       <td className="px-3 py-2">{item.role}</td>
-                      <td className="px-3 py-2">{item.department || "N/A"}</td>
+                      <td className="px-3 py-2">{item.role === "Faculty" ? formatDepartmentLabel(item.department) : "N/A"}</td>
                       <td className="px-3 py-2">
                         <input
                           type="date"
@@ -1102,6 +1139,12 @@ function AssignmentModal({
       </div>
     </Modal>
   );
+}
+
+function formatDepartmentLabel(value) {
+  const normalized = String(value || "").trim().toUpperCase();
+  if (!normalized || normalized === "ALL") return "All Departments";
+  return normalized;
 }
 
 function SuccessModal({ message }) {
