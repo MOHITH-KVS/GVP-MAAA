@@ -2889,6 +2889,11 @@ def get_auth_me(
     is_active = len(active_rows) > 0
     assignment_state = "active" if is_active else ("expired" if is_assigned else "not_assigned")
     active_drive_ids = _active_coordinator_drive_ids(user_id=user_id, db=db) if is_active else []
+    latest_assigned_to = None
+    if assignment_rows:
+        dated_rows = [row for row in assignment_rows if row.assigned_to is not None]
+        if dated_rows:
+            latest_assigned_to = max(dated_rows, key=lambda row: row.assigned_to).assigned_to
 
     return {
         "user_id": user.user_id,
@@ -2904,6 +2909,7 @@ def get_auth_me(
                 "assignment_state": assignment_state,
                 "active_drive_ids": active_drive_ids,
                 "active_scope": "global" if any(row.drive_id is None for row in active_rows) else "drive",
+                "last_assigned_to": latest_assigned_to.isoformat() if latest_assigned_to else None,
             }
         },
     }
@@ -2915,9 +2921,12 @@ def get_faculty_coordinator_drives(
     db: Session = Depends(get_db),
 ):
     user_id = int(current_user["user_id"])
+    if not is_active_coordinator(user_id=user_id, db=db):
+        raise HTTPException(status_code=403, detail="Coordinator assignment is not active")
+
     drive_ids = _active_coordinator_drive_ids(user_id=user_id, db=db)
     if not drive_ids:
-        return {"drives": [], "active": False}
+        return {"drives": [], "active": True}
 
     drives = (
         db.query(PlacementDrive)

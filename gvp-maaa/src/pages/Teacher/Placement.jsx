@@ -3,7 +3,7 @@ import api from "../../utils/api";
 
 const FINAL_STATUS_OPTIONS = ["pending", "selected", "rejected"];
 
-export default function TeacherPlacement() {
+export default function TeacherPlacement({ forceReadOnly = false, forceReadOnlyReason = "" }) {
   const [drives, setDrives] = useState([]);
   const [selectedDriveId, setSelectedDriveId] = useState("");
   const [students, setStudents] = useState([]);
@@ -69,6 +69,8 @@ export default function TeacherPlacement() {
     }
   };
 
+  const effectiveReadOnly = forceReadOnly || !canUpdate;
+
   return (
     <div className="space-y-6 pb-10">
       <div className="rounded-3xl border bg-white p-6 shadow-sm">
@@ -100,9 +102,9 @@ export default function TeacherPlacement() {
 
       <section className="rounded-3xl border bg-white p-6 shadow-sm">
         <h2 className="mb-4 text-xl font-semibold text-slate-900">Drive Students</h2>
-        {!canUpdate && (
+        {effectiveReadOnly && (
           <p className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-            Read-only mode: only admin or faculty assigned to this drive can update status.
+            {forceReadOnlyReason || "Read-only mode: only admin or faculty assigned to this drive can update status."}
           </p>
         )}
 
@@ -141,7 +143,7 @@ export default function TeacherPlacement() {
                         value={editState[row.student_id]?.current_round ?? row.current_round ?? 0}
                         onChange={(e) => setEditState((prev) => ({ ...prev, [row.student_id]: { ...(prev[row.student_id] || {}), current_round: Number(e.target.value) } }))}
                         className="rounded-lg border border-slate-300 px-2 py-1"
-                        disabled={!canUpdate}
+                        disabled={effectiveReadOnly}
                       >
                         {[0, 1, 2, 3, 4, 5].map((num) => <option key={num} value={num}>{num}</option>)}
                       </select>
@@ -151,7 +153,7 @@ export default function TeacherPlacement() {
                         value={editState[row.student_id]?.final_result ?? row.final_result ?? "pending"}
                         onChange={(e) => setEditState((prev) => ({ ...prev, [row.student_id]: { ...(prev[row.student_id] || {}), final_result: e.target.value } }))}
                         className="rounded-lg border border-slate-300 px-2 py-1"
-                        disabled={!canUpdate}
+                        disabled={effectiveReadOnly}
                       >
                         {FINAL_STATUS_OPTIONS.map((option) => (
                           <option key={option} value={option}>{option}</option>
@@ -162,7 +164,7 @@ export default function TeacherPlacement() {
                     <td className="px-3 py-2">
                       <button
                         onClick={() => handleUpdate(row)}
-                        disabled={!canUpdate || busyUpdateId === row.student_id}
+                        disabled={effectiveReadOnly || busyUpdateId === row.student_id}
                         className="rounded-lg bg-emerald-600 px-3 py-1 text-xs font-semibold text-white disabled:opacity-50"
                       >
                         {busyUpdateId === row.student_id ? "Updating..." : "Update"}

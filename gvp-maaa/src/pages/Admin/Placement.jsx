@@ -18,6 +18,13 @@ const BASE_URL = "http://127.0.0.1:8000";
 const BRANCH_OPTIONS = ["CSE", "CSM", "ECE", "EEE", "MECH", "CIVIL"];
 const YEAR_OPTIONS = [1, 2, 3, 4];
 
+const ASSIGNMENT_FORM_DEFAULT = {
+  faculty_id: "",
+  department: "",
+  assigned_from: "",
+  assigned_to: "",
+};
+
 const DRIVE_DEFAULT = {
   title: "",
   company_name: "",
@@ -68,6 +75,16 @@ export default function AdminPlacement() {
   const [driveForm, setDriveForm] = useState(DRIVE_DEFAULT);
   const [editingDrive, setEditingDrive] = useState(null);
   const [previewAction, setPreviewAction] = useState(null);
+  const [openActionMenuDriveId, setOpenActionMenuDriveId] = useState(null);
+  const [showAssignmentModal, setShowAssignmentModal] = useState(false);
+  const [assignmentModalBusy, setAssignmentModalBusy] = useState(false);
+  const [assignmentMode, setAssignmentMode] = useState("faculty");
+  const [assignmentDrive, setAssignmentDrive] = useState(null);
+  const [assignmentForm, setAssignmentForm] = useState(ASSIGNMENT_FORM_DEFAULT);
+  const [facultyList, setFacultyList] = useState([]);
+  const [existingAssignments, setExistingAssignments] = useState({ assigned_faculty: [], coordinator_assignments: [] });
+
+  const actionMenuRef = useRef(null);
 
   const authHeaders = useMemo(() => {
     const token = localStorage.getItem("access_token");
@@ -168,6 +185,16 @@ export default function AdminPlacement() {
         window.clearTimeout(successTimerRef.current);
       }
     };
+  }, []);
+
+  useEffect(() => {
+    const onDocumentClick = (event) => {
+      if (actionMenuRef.current && !actionMenuRef.current.contains(event.target)) {
+        setOpenActionMenuDriveId(null);
+      }
+    };
+    document.addEventListener("mousedown", onDocumentClick);
+    return () => document.removeEventListener("mousedown", onDocumentClick);
   }, []);
 
   const validateDrive = () => {
@@ -292,7 +319,222 @@ export default function AdminPlacement() {
     await loadPreview("reopen", drive);
   };
 
-  const confirmPreviewAction = async () => {
+  const toIsoDateTime = (value, endOfDay = false) => {
+    if (!value) return null;
+    const normalized = value.length <= 10 ? `${value}${endOfDay ? "T23:59" : "T00:00"}` : value;
+    const parsed = new Date(normalized);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return parsed.toISOString();
+  };
+
+  const intervalsOverlap = (startA, endA, startB, endB) => {
+    const aStart = new Date(startA).getTime();
+    const aEnd = new Date(endA).getTime();
+    const bStart = new Date(startB).getTime();
+    const bEnd = new Date(endB).getTime();
+    if ([aStart, aEnd, bStart, bEnd].some((item) => Number.isNaN(item))) return false;
+    return aStart <= bEnd && bStart <= aEnd;
+  };
+
+  const openAssignmentModal = async (drive, mode) => {
+    setOpenActionMenuDriveId(null);
+    setAssignmentMode(mode);
+    setAssignmentDrive(drive);
+    setAssignmentForm(ASSIGNMENT_FORM_DEFAULT);
+    setShowAssignmentModal(true);
+    setAssignmentModalBusy(true);
+    setError("");
+    try {
+      const [detailsRes, facultyRes] = await Promise.all([
+        axios.get(`${BASE_URL}/api/drives/${drive.id}/details`, { headers: authHeaders }),
+        axios.get(`${BASE_URL}/api/faculty/list`, { headers: authHeaders }),
+      ]);
+      setExistingAssignments({
+        assigned_faculty: detailsRes?.data?.assigned_faculty || [],
+        coordinator_assignments: detailsRes?.data?.coordinator_assignments || [],
+      });
+      setFacultyList(Array.isArray(facultyRes.data) ? facultyRes.data : []);
+    } catch (err) {
+      setError(readErrorMessage(err, "Unable to load assignment data."));
+    } finally {
+      setAssignmentModalBusy(false);
+    }
+  };
+
+  const validateAssignment = () => {
+    if (!assignmentForm.faculty_id || !assignmentForm.assigned_from || !assignmentForm.assigned_to) {
+      return "Faculty and date range are required.";
+    }
+    if (assignmentMode === "faculty" && !assignmentForm.department) {
+      return "Department is required for faculty assignment.";
+    }
+
+    const fromIso = toIsoDateTime(assignmentForm.assigned_from, false);
+    const toIso = toIsoDateTime(assignmentForm.assigned_to, true);
+    if (!fromIso || !toIso) {
+      return "Invalid assignment date values.";
+    }
+    if (new Date(toIso).getTime() <= new Date(fromIso).getTime()) {
+      return "assigned_to must be greater than assigned_from.";
+    }
+
+    const facultyId = Number(assignmentForm.faculty_id);
+    const roleRows = assignmentMode === "faculty" ? existingAssignments.assigned_faculty : existingAssignments.coordinator_assignments;
+
+    const duplicate = roleRows.some((row) => {
+      const sameFaculty = Number(row.faculty_id) === facultyId;
+      const rowFrom = row.assigned_from || row.assigned_from_date;
+      const rowTo = row.assigned_to || row.assigned_to_date;
+      return sameFaculty && rowFrom === assignmentForm.assigned_from && rowTo === assignmentForm.assigned_to;
+    });
+    if (duplicate) {
+      return `Duplicate ${assignmentMode} assignment exists for selected faculty and range.`;
+    }
+
+    const overlap = roleRows.some((row) => {
+      if (Number(row.faculty_id) !== facultyId) return false;
+      if (row.is_active === false) return false;
+      const rowFrom = row.assigned_from || row.assigned_from_date;
+      const rowTo = row.assigned_to || row.assigned_to_date;
+      if (!rowFrom || !rowTo) return false;
+      return intervalsOverlap(toIsoDateTime(rowFrom, false), toIsoDateTime(rowTo, true), fromIso, toIso);
+    });
+    if (overlap) {
+      return `Overlapping ${assignmentMode} assignment exists for selected faculty.`;
+    }
+
+    return "";
+  };
+
+  const submitAssignment = async () => {
+    if (!assignmentDrive) return;
+
+    const validationError = validateAssignment();
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+
+    const facultyId = Number(assignmentForm.faculty_id);
+    setAssignmentModalBusy(true);
+    setError("");
+    try {
+      if (assignmentMode === "faculty") {
+        const response = await axios.post(
+          `${BASE_URL}/api/drives/${assignmentDrive.id}/assign-faculty`,
+          {
+            assignments: [
+              {
+                faculty_id: facultyId,
+                department: assignmentForm.department,
+                assigned_from: assignmentForm.assigned_from,
+                assigned_to: assignmentForm.assigned_to,
+              },
+            ],
+          },
+          { headers: authHeaders }
+        );
+        setExistingAssignments((prev) => ({ ...prev, assigned_faculty: response?.data?.assigned_faculty || prev.assigned_faculty }));
+      } else {
+        await axios.post(
+          `${BASE_URL}/api/admin/coordinator/assign`,
+          {
+            faculty_id: facultyId,
+            drive_id: Number(assignmentDrive.id),
+            assigned_from: toIsoDateTime(assignmentForm.assigned_from, false),
+            assigned_to: toIsoDateTime(assignmentForm.assigned_to, true),
+          },
+          { headers: authHeaders }
+        );
+
+        const detailsRes = await axios.get(`${BASE_URL}/api/drives/${assignmentDrive.id}/details`, { headers: authHeaders });
+        setExistingAssignments((prev) => ({
+          ...prev,
+          coordinator_assignments: detailsRes?.data?.coordinator_assignments || prev.coordinator_assignments,
+        }));
+      }
+      setAssignmentForm(ASSIGNMENT_FORM_DEFAULT);
+      showSuccessModal(`${assignmentMode === "faculty" ? "Faculty" : "Coordinator"} assigned successfully`);
+      await fetchData();
+    } catch (err) {
+      setError(readErrorMessage(err, "Failed to save assignment."));
+    } finally {
+      setAssignmentModalBusy(false);
+    }
+  };
+
+  const updateExistingAssignment = async (assignment, type) => {
+    if (!assignmentDrive) return;
+    setAssignmentModalBusy(true);
+    setError("");
+    try {
+      if (type === "faculty") {
+        if (!assignment.assigned_from || !assignment.assigned_to || assignment.assigned_to < assignment.assigned_from) {
+          throw new Error("Faculty assignment dates are invalid.");
+        }
+        await axios.put(
+          `${BASE_URL}/api/drives/${assignmentDrive.id}/faculty/${assignment.id}`,
+          {
+            assigned_from: assignment.assigned_from,
+            assigned_to: assignment.assigned_to,
+            is_active: assignment.is_active,
+          },
+          { headers: authHeaders }
+        );
+      } else {
+        const fromIso = toIsoDateTime(assignment.assigned_from, false);
+        const toIso = toIsoDateTime(assignment.assigned_to, true);
+        if (!toIso || (fromIso && new Date(toIso).getTime() <= new Date(fromIso).getTime())) {
+          throw new Error("Coordinator assignment dates are invalid.");
+        }
+        await axios.put(
+          `${BASE_URL}/api/admin/coordinator/assignments/${assignment.id}/extend`,
+          {
+            assigned_from: fromIso,
+            assigned_to: toIso,
+          },
+          { headers: authHeaders }
+        );
+      }
+
+      const detailsRes = await axios.get(`${BASE_URL}/api/drives/${assignmentDrive.id}/details`, { headers: authHeaders });
+      setExistingAssignments({
+        assigned_faculty: detailsRes?.data?.assigned_faculty || [],
+        coordinator_assignments: detailsRes?.data?.coordinator_assignments || [],
+      });
+      showSuccessModal("Assignment updated");
+    } catch (err) {
+      setError(readErrorMessage(err, "Failed to update assignment."));
+    } finally {
+      setAssignmentModalBusy(false);
+    }
+  };
+
+  const removeExistingAssignment = async (assignment, type) => {
+    if (!assignmentDrive) return;
+    setAssignmentModalBusy(true);
+    setError("");
+    try {
+      if (type === "faculty") {
+        await axios.delete(`${BASE_URL}/api/drives/${assignmentDrive.id}/faculty/${assignment.id}`, { headers: authHeaders });
+      } else {
+        await axios.delete(`${BASE_URL}/api/admin/coordinator/assignments/${assignment.id}`, { headers: authHeaders });
+      }
+
+      const detailsRes = await axios.get(`${BASE_URL}/api/drives/${assignmentDrive.id}/details`, { headers: authHeaders });
+      setExistingAssignments({
+        assigned_faculty: detailsRes?.data?.assigned_faculty || [],
+        coordinator_assignments: detailsRes?.data?.coordinator_assignments || [],
+      });
+      showSuccessModal("Assignment removed");
+    } catch (err) {
+      setError(readErrorMessage(err, "Failed to remove assignment."));
+    } finally {
+      setAssignmentModalBusy(false);
+    }
+  };
+ 
+   const confirmPreviewAction = async () => {
     if (!previewAction) return;
 
     const { kind, driveId, payload } = previewAction;
@@ -390,7 +632,7 @@ export default function AdminPlacement() {
                     <td className="px-3 py-2 text-slate-700">{drive.applied_count || 0}</td>
                     <td className="px-3 py-2 text-slate-700">{drive.selected_count || 0}</td>
                     <td className="px-3 py-2">
-                      <div className="flex flex-wrap gap-2">
+                      <div className="relative flex flex-wrap gap-2" ref={openActionMenuDriveId === drive.id ? actionMenuRef : null}>
                         <button className="rounded-lg bg-slate-100 px-2 py-1 text-xs" onClick={() => navigate(`/admin/placement/drives/${drive.id}`)}>
                           Details
                         </button>
@@ -400,14 +642,48 @@ export default function AdminPlacement() {
                         <button className="rounded-lg bg-amber-100 px-2 py-1 text-xs text-amber-700" onClick={() => openEditDrive(drive)}>
                           Edit
                         </button>
-                        {drive.status === "closed" ? (
-                          <button className="rounded-lg bg-emerald-100 px-2 py-1 text-xs text-emerald-700" onClick={() => reopenDrive(drive)}>
-                            {actionBusyByDrive[`reopen-${drive.id}`] ? "Previewing..." : "Reopen"}
-                          </button>
-                        ) : (
-                          <button className="rounded-lg bg-red-100 px-2 py-1 text-xs text-red-700" onClick={() => closeDrive(drive)}>
-                            {actionBusyByDrive[`close-${drive.id}`] ? "Previewing..." : "Close"}
-                          </button>
+                        <button
+                          type="button"
+                          className="rounded-lg bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700"
+                          onClick={() => setOpenActionMenuDriveId((prev) => (prev === drive.id ? null : drive.id))}
+                        >
+                          ⋮
+                        </button>
+
+                        {openActionMenuDriveId === drive.id && (
+                          <div className="absolute right-0 top-8 z-30 w-48 rounded-xl border border-slate-200 bg-white p-1 shadow-lg">
+                            <button
+                              type="button"
+                              onClick={() => openAssignmentModal(drive, "faculty")}
+                              className="w-full rounded-lg px-3 py-2 text-left text-xs text-slate-700 hover:bg-slate-100"
+                            >
+                              Assign Faculty
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => openAssignmentModal(drive, "coordinator")}
+                              className="w-full rounded-lg px-3 py-2 text-left text-xs text-slate-700 hover:bg-slate-100"
+                            >
+                              Assign Coordinator
+                            </button>
+                            {String(drive.status || "open").toLowerCase() === "closed" ? (
+                              <button
+                                type="button"
+                                onClick={() => reopenDrive(drive)}
+                                className="w-full rounded-lg px-3 py-2 text-left text-xs text-emerald-700 hover:bg-emerald-50"
+                              >
+                                {actionBusyByDrive[`reopen-${drive.id}`] ? "Previewing..." : "Reopen"}
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => closeDrive(drive)}
+                                className="w-full rounded-lg px-3 py-2 text-left text-xs text-rose-700 hover:bg-rose-50"
+                              >
+                                {actionBusyByDrive[`close-${drive.id}`] ? "Previewing..." : "Close"}
+                              </button>
+                            )}
+                          </div>
                         )}
                       </div>
                     </td>
@@ -538,6 +814,23 @@ export default function AdminPlacement() {
         />
       )}
 
+      {showAssignmentModal && assignmentDrive && (
+        <AssignmentModal
+          drive={assignmentDrive}
+          mode={assignmentMode}
+          loading={assignmentModalBusy}
+          facultyList={facultyList}
+          form={assignmentForm}
+          assignments={existingAssignments}
+          onFormChange={(next) => setAssignmentForm((prev) => ({ ...prev, ...next }))}
+          onClose={() => setShowAssignmentModal(false)}
+          onSubmit={submitAssignment}
+          onAssignmentsChange={setExistingAssignments}
+          onSaveExisting={updateExistingAssignment}
+          onRemoveExisting={removeExistingAssignment}
+        />
+      )}
+
       {showSuccess && <SuccessModal message={successMessage} />}
     </div>
   );
@@ -546,6 +839,9 @@ export default function AdminPlacement() {
 function PreviewModal({ action, onCancel, onConfirm, loading }) {
   const preview = action.preview || {};
   const changedFields = preview.changed_fields || {};
+  const participation = preview.eligible
+    ? `${((Number(preview.applied || 0) * 100) / Number(preview.eligible || 1)).toFixed(2)}%`
+    : "0.00%";
   const previewTitle =
     action.kind === "notify"
       ? "Preview Notify"
@@ -563,9 +859,11 @@ function PreviewModal({ action, onCancel, onConfirm, loading }) {
         ]
       : action.kind === "close"
         ? [
-            `Eligible students: ${preview.eligible ?? 0}`,
-            `Applied students: ${preview.applied ?? 0}`,
+            `Total eligible students: ${preview.eligible ?? 0}`,
+            `Total applied students: ${preview.applied ?? 0}`,
+            `Participation: ${participation}`,
             `Selected students: ${preview.selected ?? 0}`,
+            "Are you sure you want to close this drive?",
           ]
         : action.kind === "reopen"
           ? ["This will reopen the drive and clear the closed state."]
@@ -593,6 +891,216 @@ function PreviewModal({ action, onCancel, onConfirm, loading }) {
         </div>
       </div>
     </div>
+  );
+}
+
+function AssignmentModal({
+  drive,
+  mode,
+  loading,
+  facultyList,
+  form,
+  assignments,
+  onFormChange,
+  onClose,
+  onSubmit,
+  onAssignmentsChange,
+  onSaveExisting,
+  onRemoveExisting,
+}) {
+  const isFacultyMode = mode === "faculty";
+
+  const assignmentRows = isFacultyMode
+    ? (assignments.assigned_faculty || []).map((row) => ({ ...row, role: "Faculty" }))
+    : (assignments.coordinator_assignments || []).map((row) => ({
+        ...row,
+        role: "Coordinator",
+        assigned_from: row.assigned_from ? row.assigned_from.slice(0, 10) : "",
+        assigned_to: row.assigned_to ? row.assigned_to.slice(0, 10) : "",
+        department: row.department || "N/A",
+      }));
+
+  const withStatus = assignmentRows.map((row) => {
+    const end = row.assigned_to ? new Date(row.assigned_to) : null;
+    const active = Boolean(row.is_active) && end && end.getTime() >= Date.now();
+    return { ...row, computed_status: active ? "Active" : "Expired" };
+  });
+
+  return (
+    <Modal title={isFacultyMode ? "Assign Faculty" : "Assign Coordinator"} onClose={onClose}>
+      <div className="space-y-4">
+        <div className="grid gap-3 md:grid-cols-2">
+          <div>
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Faculty</label>
+            <select
+              className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+              value={form.faculty_id}
+              onChange={(e) => {
+                const selected = facultyList.find((item) => Number(item.id) === Number(e.target.value));
+                onFormChange({ faculty_id: e.target.value, department: selected?.department || "" });
+              }}
+            >
+              <option value="">Select faculty</option>
+              {facultyList.map((faculty) => (
+                <option key={faculty.id} value={faculty.id}>
+                  {faculty.name} ({faculty.department || "N/A"})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Drive</label>
+            <input value={`${drive.company_name || "Company"} - ${drive.title || "Drive"}`} disabled className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-700" />
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Assignment Type</label>
+            <input value={isFacultyMode ? "Faculty" : "Coordinator"} disabled className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-700" />
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Department</label>
+            <input
+              value={form.department || ""}
+              disabled={!isFacultyMode}
+              onChange={(e) => onFormChange({ department: e.target.value })}
+              className={`mt-1 w-full rounded-xl border px-3 py-2 text-sm ${isFacultyMode ? "border-slate-300" : "border-slate-200 bg-slate-100 text-slate-600"}`}
+            />
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Assigned From</label>
+            <input
+              type="date"
+              value={form.assigned_from}
+              onChange={(e) => onFormChange({ assigned_from: e.target.value })}
+              className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+            />
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Assigned To</label>
+            <input
+              type="date"
+              value={form.assigned_to}
+              onChange={(e) => onFormChange({ assigned_to: e.target.value })}
+              className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+            />
+          </div>
+        </div>
+
+        <div className="flex justify-end">
+          <button
+            type="button"
+            disabled={loading}
+            onClick={onSubmit}
+            className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+          >
+            {loading ? "Saving..." : `Assign ${isFacultyMode ? "Faculty" : "Coordinator"}`}
+          </button>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200">
+          <div className="border-b border-slate-200 px-4 py-3">
+            <p className="text-sm font-semibold text-slate-900">Existing Assignments</p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-full border-collapse text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 text-slate-600">
+                  <th className="px-3 py-2">Faculty Name</th>
+                  <th className="px-3 py-2">Role</th>
+                  <th className="px-3 py-2">Department</th>
+                  <th className="px-3 py-2">From</th>
+                  <th className="px-3 py-2">To</th>
+                  <th className="px-3 py-2">Status</th>
+                  <th className="px-3 py-2">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {withStatus.length === 0 ? (
+                  <tr>
+                    <td className="px-3 py-3 text-slate-500" colSpan={7}>
+                      No assignments found for this role.
+                    </td>
+                  </tr>
+                ) : (
+                  withStatus.map((item) => (
+                    <tr key={`${item.role}-${item.id}`} className="border-b border-slate-100">
+                      <td className="px-3 py-2">{item.name || item.faculty_name || item.faculty_email || item.faculty_id}</td>
+                      <td className="px-3 py-2">{item.role}</td>
+                      <td className="px-3 py-2">{item.department || "N/A"}</td>
+                      <td className="px-3 py-2">
+                        <input
+                          type="date"
+                          value={item.assigned_from || ""}
+                          onChange={(e) => {
+                            if (item.role === "Faculty") {
+                              onAssignmentsChange((prev) => ({
+                                ...prev,
+                                assigned_faculty: (prev.assigned_faculty || []).map((row) => (row.id === item.id ? { ...row, assigned_from: e.target.value } : row)),
+                              }));
+                            } else {
+                              onAssignmentsChange((prev) => ({
+                                ...prev,
+                                coordinator_assignments: (prev.coordinator_assignments || []).map((row) => (row.id === item.id ? { ...row, assigned_from: e.target.value } : row)),
+                              }));
+                            }
+                          }}
+                          className="rounded-lg border border-slate-300 px-2 py-1"
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <input
+                          type="date"
+                          value={item.assigned_to || ""}
+                          onChange={(e) => {
+                            if (item.role === "Faculty") {
+                              onAssignmentsChange((prev) => ({
+                                ...prev,
+                                assigned_faculty: (prev.assigned_faculty || []).map((row) => (row.id === item.id ? { ...row, assigned_to: e.target.value } : row)),
+                              }));
+                            } else {
+                              onAssignmentsChange((prev) => ({
+                                ...prev,
+                                coordinator_assignments: (prev.coordinator_assignments || []).map((row) => (row.id === item.id ? { ...row, assigned_to: e.target.value } : row)),
+                              }));
+                            }
+                          }}
+                          className="rounded-lg border border-slate-300 px-2 py-1"
+                        />
+                      </td>
+                      <td className="px-3 py-2">{item.computed_status}</td>
+                      <td className="px-3 py-2">
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            disabled={loading}
+                            onClick={() => onSaveExisting(item, item.role === "Faculty" ? "faculty" : "coordinator")}
+                            className="rounded-lg bg-emerald-600 px-2 py-1 text-xs font-semibold text-white disabled:opacity-50"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            disabled={loading}
+                            onClick={() => onRemoveExisting(item, item.role === "Faculty" ? "faculty" : "coordinator")}
+                            className="rounded-lg bg-rose-600 px-2 py-1 text-xs font-semibold text-white disabled:opacity-50"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

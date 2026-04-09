@@ -234,6 +234,11 @@ export default function Placement() {
               const notEligible = !Boolean(drive.is_eligible);
               const busy = Boolean(applyBusyByDrive[drive.drive_id]);
               const applied = Boolean(drive.applied);
+              const today = new Date();
+              const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+              const deadlineDate = drive.registration_deadline ? new Date(drive.registration_deadline) : null;
+              const deadlinePassed = Boolean(deadlineDate && !Number.isNaN(deadlineDate.getTime()) && deadlineDate < todayStart);
+              const effectivelyClosed = String(drive.status || "").toLowerCase() === "closed" || deadlinePassed;
 
               return (
                 <article key={drive.drive_id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
@@ -261,11 +266,18 @@ export default function Placement() {
                     </div>
                   ) : null}
 
+                  {effectivelyClosed ? (
+                    <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
+                      This drive is closed because the registration deadline has passed.
+                    </div>
+                  ) : null}
+
                   <div className="mt-4 flex flex-wrap gap-2">
                     <button
                       type="button"
-                      disabled={applied || busy}
+                      disabled={applied || busy || effectivelyClosed}
                       onClick={() => {
+                        if (effectivelyClosed) return;
                         if (notEligible) {
                           setConfirmForceApplyDrive(drive);
                           return;
@@ -274,7 +286,7 @@ export default function Placement() {
                       }}
                       className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
                     >
-                      {applied ? "Applied" : busy ? "Applying..." : "Apply"}
+                      {applied ? "Applied" : effectivelyClosed ? "Closed" : busy ? "Applying..." : "Apply"}
                     </button>
 
                     <button
