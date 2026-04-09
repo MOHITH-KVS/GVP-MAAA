@@ -15,6 +15,7 @@ import Alerts from "../pages/Teacher/Alerts";
 import Logout from "../pages/Logout";
 import TeacherProfilePage from "../pages/Teacher/TeacherProfilePage";
 import Placement from "../pages/Teacher/Placement";
+import PlacementCoordinator from "../pages/Teacher/PlacementCoordinator";
 
 /* ICONS */
 import DashboardIcon from "@mui/icons-material/Dashboard";
@@ -64,6 +65,7 @@ export default function TeacherDashboard() {
     "insights",
     "alerts",
     "placement",
+    "placement-coordinator",
   ];
 
   const resolvePageFromPath = (pathname) => {
@@ -219,6 +221,13 @@ export default function TeacherDashboard() {
                 active={activePage === "placement"}
                 onClick={() => goToPage("placement")}
               />
+              <MenuItem
+                icon={WorkIcon}
+                label="Placement Coordinator"
+                open={sidebarOpen}
+                active={activePage === "placement-coordinator"}
+                onClick={() => goToPage("placement-coordinator")}
+              />
             </SidebarSection>
 
             <div className="mt-6 mb-6">
@@ -296,6 +305,7 @@ export default function TeacherDashboard() {
             {activePage === "events" && <Events />}
             {activePage === "insights" && <Insights />}
             {activePage === "placement" && <Placement />}
+            {activePage === "placement-coordinator" && <PlacementCoordinator />}
             {activePage === "alerts" && (
               <Alerts
                 alerts={alerts}

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pydantic import BaseModel
-from typing import List, Optional, Any, Union
+from typing import List, Optional, Any, Union, Dict
 from datetime import datetime, date
 
 DateType = date
@@ -257,10 +257,85 @@ class DriveCreate(BaseModel):
     mode: str
     status: str
     selection_process: Optional[List[str]] = None
+    apply_link: Optional[str] = None
+    details_pdf: Optional[str] = None
+
+
+class DriveUpdate(BaseModel):
+    title: Optional[str] = None
+    company_name: Optional[str] = None
+    role: Optional[str] = None
+    package: Optional[float] = None
+    min_cgpa: Optional[float] = None
+    max_backlogs: Optional[int] = None
+    date: Optional[DateType] = None
+    location: Optional[str] = None
+    registration_deadline: Optional[DateType] = None
+    apply_link: Optional[str] = None
+    details_pdf: Optional[str] = None
+    eligible_years: Optional[List[int]] = None
+    branches: Optional[List[str]] = None
+    mode: Optional[str] = None
+    status: Optional[str] = None
+    selection_process: Optional[List[str]] = None
+
+
+class DrivePreviewResponse(BaseModel):
+    total_students: int
+    eligible_count: int
+    branch_wise_count: Dict[str, int]
+    recipients: Optional[List[Dict[str, Any]]] = None
+    stats: Optional[Dict[str, Any]] = None
+
+
+class DriveClosePreviewResponse(BaseModel):
+    total_students: int
+    eligible: int
+    applied: int
+    selected: int
+
+
+class DriveEditPreviewResponse(BaseModel):
+    old_data: Dict[str, Any]
+    new_data: Dict[str, Any]
+    changed_fields: Dict[str, Dict[str, Any]]
+
+
+class PlacementDriveFeedbackCreate(BaseModel):
+    round_reached: str
+    difficulty: str
+    issues_faced: Optional[str] = None
+    comment: Optional[str] = None
+    rating: Optional[int] = None
+
+
+class FacultyAssignmentItem(BaseModel):
+    faculty_id: int
+    department: str
+    assigned_from: DateType
+    assigned_to: DateType
 
 
 class AssignFacultyRequest(BaseModel):
-    faculty_ids: List[int]
+    assignments: List[FacultyAssignmentItem]
+
+
+class FacultyAssignmentUpdateRequest(BaseModel):
+    assigned_from: Optional[DateType] = None
+    assigned_to: Optional[DateType] = None
+    is_active: Optional[bool] = None
+
+
+class CoordinatorAssignRequest(BaseModel):
+    faculty_id: int
+    drive_id: Optional[int] = None
+    assigned_from: datetime
+    assigned_to: datetime
+
+
+class CoordinatorExtendRequest(BaseModel):
+    assigned_from: Optional[datetime] = None
+    assigned_to: datetime
 
 
 class DriveStudentUpdateRequest(BaseModel):

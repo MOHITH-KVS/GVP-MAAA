@@ -1,728 +1,507 @@
 import { useEffect, useMemo, useState } from "react";
-
 import api from "../../utils/api";
 
-const EMPTY_MESSAGE = "No placement drives available yet";
+const EMPTY_STATE_TEXT = "No placement drives available yet.";
 
 export default function Placement() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [summary, setSummary] = useState({ eligible: 0, upcoming: 0, completed: 0, offers: 0 });
-  const [placementData, setPlacementData] = useState({ summary: { total: 0, eligible: 0, applied: 0, selected: 0 }, drives: [] });
+  const [summary, setSummary] = useState({
+    total_drives: 0,
+    eligible_drives: 0,
+    not_eligible_count: 0,
+    applied: 0,
+    selected: 0,
+    rejected: 0,
+  });
+  const [drives, setDrives] = useState([]);
+  const [snapshot, setSnapshot] = useState({
+    eligible_drives_count: 0,
+    not_eligible_count: 0,
+    main_issue: "No major issue identified.",
+    next_action: "Keep applying and preparing.",
+  });
+  const [prediction, setPrediction] = useState({ probability: 0, reasons: [] });
+  const [suggestions, setSuggestions] = useState([]);
+  const [feedbackInsights, setFeedbackInsights] = useState({
+    has_feedback: false,
+    common_failure_round: null,
+    common_difficulty: null,
+    common_issue: null,
+  });
+
   const [applyBusyByDrive, setApplyBusyByDrive] = useState({});
-  const [eligibleCompanies, setEligibleCompanies] = useState([]);
-  const [upcomingDrives, setUpcomingDrives] = useState([]);
-  const [pastDrives, setPastDrives] = useState([]);
-  const [intelligence, setIntelligence] = useState(null);
+  const [confirmForceApplyDrive, setConfirmForceApplyDrive] = useState(null);
+  const [feedbackDrive, setFeedbackDrive] = useState(null);
+  const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
+  const [feedbackForm, setFeedbackForm] = useState({
+    round_reached: "",
+    difficulty: "medium",
+    issues_faced: "",
+    comment: "",
+    rating: "",
+  });
+
+  const [showSuccess, setShowSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState("Action completed successfully");
 
   const user = JSON.parse(localStorage.getItem("user") || "{}");
   const studentId = user?.user_id || user?.student_id || user?.id || null;
 
-  useEffect(() => {
-    let active = true;
+  const showSuccessModal = (message) => {
+    setSuccessMessage(message || "Action completed successfully");
+    setShowSuccess(true);
+    window.setTimeout(() => setShowSuccess(false), 2000);
+  };
 
-    const loadPlacementData = async () => {
-      if (!studentId) {
-        if (active) {
-          setLoading(false);
-          setError(EMPTY_MESSAGE);
-        }
-        return;
-      }
+  const fetchDashboardData = async () => {
+    if (!studentId) {
+      setLoading(false);
+      setError("Student login is required.");
+      return;
+    }
 
-      setLoading(true);
-      setError("");
+    setLoading(true);
+    setError("");
 
-      const safeGet = async (path) => {
-        try {
-          const response = await api.get(path);
-          return { ok: true, data: response.data };
-        } catch (requestError) {
-          return {
-            ok: false,
-            status: requestError?.response?.status,
-            data: requestError?.response?.data ?? null,
-          };
-        }
-      };
-
-      const [placementResult, summaryResult, eligibleResult, upcomingResult, pastResult, intelligenceResult] = await Promise.all([
-        safeGet("/api/student/placement"),
-        safeGet("/api/student/placement-summary"),
-        safeGet("/api/student/eligible-companies"),
-        safeGet("/api/student/upcoming-drives"),
-        safeGet("/api/student/past-drives"),
-        safeGet("/api/student/placement-intelligence"),
+    try {
+      const [summaryRes, placementRes, intelligenceRes] = await Promise.all([
+        api.get(`/api/student/${studentId}/placement-summary`),
+        api.get("/api/student/placement"),
+        api.get("/api/student/placement-intelligence"),
       ]);
 
-      console.log("[StudentPlacement] GET /api/student/placement", placementResult);
-      console.log("[StudentPlacement] GET /api/student/placement-summary", summaryResult);
-      console.log("[StudentPlacement] GET /api/student/eligible-companies", eligibleResult);
-      console.log("[StudentPlacement] GET /api/student/upcoming-drives", upcomingResult);
-      console.log("[StudentPlacement] GET /api/student/past-drives", pastResult);
-      console.log("[StudentPlacement] GET /api/student/placement-intelligence", intelligenceResult);
+      const summaryData = summaryRes.data || {};
+      const placementData = placementRes.data || {};
+      const drivesData = Array.isArray(placementData.drives) ? placementData.drives : [];
+      const intelligenceData = intelligenceRes.data || {};
 
-      if (!active) {
-        return;
-      }
+      const mainIssue =
+        (Array.isArray(intelligenceData?.readiness?.reasons) && intelligenceData.readiness.reasons[0]) ||
+        intelligenceData?.feedback_insights?.common_issue ||
+        "No major issue identified.";
 
-      const placementPayload =
-        placementResult.ok && placementResult.data && Array.isArray(placementResult.data.drives)
-          ? placementResult.data
-          : { summary: { total: 0, eligible: 0, applied: 0, selected: 0 }, drives: [] };
+      const nextAction =
+        (Array.isArray(intelligenceData?.action_plan?.priority_actions) && intelligenceData.action_plan.priority_actions[0]) ||
+        (Array.isArray(intelligenceData?.recommendations) && intelligenceData.recommendations[0]) ||
+        "Keep applying and preparing.";
 
-      const summaryData = summaryResult.ok ? summaryResult.data : { eligible: 0, upcoming: 0, completed: 0, offers: 0 };
-      const eligibleData = Array.isArray(eligibleResult.data) ? eligibleResult.data : [];
-      const upcomingData = Array.isArray(upcomingResult.data) ? upcomingResult.data : [];
-      const pastData = Array.isArray(pastResult.data) ? pastResult.data : [];
-      const intelligenceData = intelligenceResult.ok ? intelligenceResult.data : null;
+      const cleanSummary = {
+        total_drives: Number(summaryData.total_drives || drivesData.length || 0),
+        eligible_drives: Number(summaryData.eligible_drives || 0),
+        not_eligible_count: Number(summaryData.not_eligible_count || 0),
+        applied: Number(summaryData.applied || 0),
+        selected: Number(summaryData.selected || 0),
+        rejected: Number(summaryData.rejected || 0),
+      };
 
-      setSummary(
-        placementResult.ok
-          ? {
-              eligible: placementPayload?.summary?.eligible || 0,
-              upcoming: placementPayload?.summary?.applied || 0,
-              completed: pastData.length,
-              offers: placementPayload?.summary?.selected || 0,
-            }
-          : summaryData
-      );
-      setPlacementData(placementPayload);
-      setEligibleCompanies(eligibleData);
-      setUpcomingDrives(upcomingData);
-      setPastDrives(pastData);
-      setIntelligence(intelligenceData);
-
-      const hasAnyData = Boolean(
-        summaryData?.eligible ||
-          summaryData?.upcoming ||
-          summaryData?.completed ||
-          summaryData?.offers ||
-            (placementPayload?.drives || []).length ||
-          eligibleData.length ||
-          upcomingData.length ||
-          pastData.length
-      );
-
-      if (!hasAnyData) {
-        setError(EMPTY_MESSAGE);
-      }
-
-      setLoading(false);
-    };
-
-    loadPlacementData().catch(() => {
-      if (active) {
-        setError(EMPTY_MESSAGE);
-        setLoading(false);
-      }
-    });
-
-    return () => {
-      active = false;
-    };
-  }, [studentId]);
-
-  const applyForDrive = async (driveId) => {
-    setApplyBusyByDrive((prev) => ({ ...prev, [driveId]: true }));
-    try {
-      await api.post(`/api/student/apply/${driveId}`);
-      setPlacementData((prev) => ({
-        ...prev,
-        drives: (prev.drives || []).map((drive) =>
-          drive.drive_id === driveId
-            ? {
-                ...drive,
-                applied: true,
-                status: (drive.status || "").toLowerCase() === "not applied" ? "applied" : drive.status,
-              }
-            : drive
-        ),
-        summary: {
-          ...(prev.summary || {}),
-          applied: (prev.summary?.applied || 0) + 1,
-        },
-      }));
+      setSummary(cleanSummary);
+      setDrives(drivesData);
+      setSnapshot({
+        eligible_drives_count: cleanSummary.eligible_drives,
+        not_eligible_count: cleanSummary.not_eligible_count,
+        main_issue: mainIssue,
+        next_action: nextAction,
+      });
+      setPrediction({
+        probability: Number(intelligenceData?.prediction?.probability || 0),
+        reasons: Array.isArray(intelligenceData?.prediction?.reasons) ? intelligenceData.prediction.reasons : [],
+      });
+      setSuggestions(Array.isArray(intelligenceData?.recommendations) ? intelligenceData.recommendations : []);
+      setFeedbackInsights(intelligenceData?.feedback_insights || {});
     } catch (err) {
-      setError(err?.response?.data?.detail || "Unable to apply for this drive right now.");
+      setError(err?.response?.data?.detail || "Unable to load placement dashboard.");
     } finally {
-      setApplyBusyByDrive((prev) => ({ ...prev, [driveId]: false }));
+      setLoading(false);
     }
   };
 
-  const readiness = intelligence?.readiness || null;
-  const interviews = intelligence?.interviews || null;
-  const prediction = intelligence?.prediction || null;
-  const skills = intelligence?.skill_gap || { missing_skills: [], weak_skills: [], strong_skills: [] };
-  const actionPlan = intelligence?.action_plan || { weekly_plan: [], priority_actions: [] };
-  const successProbability = intelligence?.success_probability || null;
-  const recommendations = intelligence?.recommendations || [];
-  const opportunitySummary = intelligence?.opportunity_summary || { missed_opportunities: 0, selected_drives: 0, rejected_drives: 0 };
-  const importantAlerts = intelligence?.important_alerts || [];
+  useEffect(() => {
+    fetchDashboardData();
+  }, [studentId]);
 
-  const readinessScore = readiness?.readiness_score ?? 0;
-  const breakdown = readiness?.breakdown || { cgpa: 0, skills: 0, interview: 0, consistency: 0 };
-  const readinessStatus = readiness?.status || "Not Ready";
-  const readinessReasons = readiness?.reasons || [];
-  const suggestions = readiness?.suggestions || [];
-  const placementDrives = placementData?.drives || [];
-  const probabilityReasons = successProbability?.reasons || [];
-  const improvementActions = successProbability?.improvement_actions || [];
-  const probabilityComponents = successProbability?.components || { cgpa: 0, attendance: 0, backlogs: 0, skills: 0 };
+  const applyToDrive = async (drive, forceApply = false) => {
+    setApplyBusyByDrive((prev) => ({ ...prev, [drive.drive_id]: true }));
+    setError("");
+    try {
+      const payload = forceApply ? { force_apply: true } : {};
+      const res = await api.post(`/api/student/apply/${drive.drive_id}`, payload);
+      const applicationType = res?.data?.application_type || "normal";
 
-  const allEmpty = useMemo(
-    () =>
-      !loading &&
-      error === EMPTY_MESSAGE &&
-      !summary.eligible &&
-      !summary.upcoming &&
-      !summary.completed &&
-      !summary.offers &&
-      !eligibleCompanies.length &&
-      !upcomingDrives.length &&
-      !pastDrives.length,
-    [eligibleCompanies.length, error, loading, pastDrives.length, summary, upcomingDrives.length]
-  );
+      setDrives((prev) =>
+        prev.map((item) =>
+          item.drive_id === drive.drive_id
+            ? {
+                ...item,
+                applied: true,
+                status: "applied",
+                application_type: applicationType,
+              }
+            : item
+        )
+      );
 
-  if (loading) {
-    return <LoadingState />;
-  }
+      setSummary((prev) => ({
+        ...prev,
+        applied: prev.applied + (drive.applied ? 0 : 1),
+      }));
 
-  if (allEmpty) {
-    return <EmptyState message={error || EMPTY_MESSAGE} />;
-  }
+      const hasExternalApplyLink = Boolean(drive.apply_link && /^https?:\/\//i.test(String(drive.apply_link)));
+      if (hasExternalApplyLink) {
+        window.open(drive.apply_link, "_blank", "noopener,noreferrer");
+      }
+
+      showSuccessModal(applicationType === "force_apply" ? "Applied with eligibility warning" : "Applied successfully");
+    } catch (err) {
+      setError(err?.response?.data?.detail || "Unable to apply for this drive right now.");
+    } finally {
+      setApplyBusyByDrive((prev) => ({ ...prev, [drive.drive_id]: false }));
+      setConfirmForceApplyDrive(null);
+    }
+  };
+
+  const submitFeedback = async () => {
+    if (!feedbackDrive) return;
+    if (!feedbackForm.round_reached.trim()) {
+      setError("Round reached is required.");
+      return;
+    }
+
+    setFeedbackSubmitting(true);
+    setError("");
+    try {
+      await api.post(`/api/student/drives/${feedbackDrive.drive_id}/feedback`, {
+        round_reached: feedbackForm.round_reached.trim(),
+        difficulty: feedbackForm.difficulty,
+        issues_faced: feedbackForm.issues_faced.trim() || null,
+        comment: feedbackForm.comment.trim() || null,
+        rating: feedbackForm.rating ? Number(feedbackForm.rating) : null,
+      });
+
+      setFeedbackDrive(null);
+      setFeedbackForm({ round_reached: "", difficulty: "medium", issues_faced: "", comment: "", rating: "" });
+      showSuccessModal("Drive feedback submitted");
+      await fetchDashboardData();
+    } catch (err) {
+      setError(err?.response?.data?.detail || "Unable to submit feedback right now.");
+    } finally {
+      setFeedbackSubmitting(false);
+    }
+  };
+
+  const completionStats = useMemo(() => {
+    const total = Math.max(1, summary.applied);
+    return {
+      selection_rate: Math.round((summary.selected * 100) / total),
+      rejection_rate: Math.round((summary.rejected * 100) / total),
+    };
+  }, [summary]);
+
+  if (loading) return <LoadingState />;
 
   return (
     <div className="space-y-6 pb-10">
-      <div className="rounded-[28px] border border-slate-200/70 bg-gradient-to-br from-white via-slate-50 to-emerald-50/60 p-6 shadow-[0_20px_60px_rgba(15,23,42,0.08)]">
-        <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
-          <div className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-500">Placement Intelligence</p>
-            <h1 className="text-3xl font-semibold text-slate-900 md:text-4xl">Career readiness, backed by live data</h1>
-            <p className="max-w-2xl text-sm leading-6 text-slate-600">
-              See where you stand, which companies you can apply to, what is blocking you, and the next best action to improve your selection odds.
-            </p>
-          </div>
+      {error && <ErrorBanner message={error} />}
 
-          <div className="flex items-center gap-4 rounded-3xl border border-slate-200 bg-white/85 p-4 shadow-sm backdrop-blur">
-            <ScoreRing score={readinessScore} />
-            <div className="space-y-2">
-              <StatusBadge status={readinessStatus} />
-              <p className="text-sm text-slate-500">Overall readiness</p>
-              <p className="text-lg font-semibold text-slate-900">{Math.round(readinessScore)}%</p>
-              <p className="text-xs text-slate-500">Last updated: {formatDate(readiness?.last_updated)}</p>
-            </div>
-          </div>
+      <section className="rounded-[28px] border border-slate-200 bg-gradient-to-br from-white to-emerald-50 p-6 shadow-sm">
+        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Career Snapshot</p>
+        <h1 className="mt-2 text-3xl font-semibold text-slate-900">Industrial Placement Dashboard</h1>
+        <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <HeroItem label="Eligible Drives" value={snapshot.eligible_drives_count} />
+          <HeroItem label="Not Eligible" value={snapshot.not_eligible_count} />
+          <HeroItem label="Main Issue" value={snapshot.main_issue} />
+          <HeroItem label="Next Action" value={snapshot.next_action} />
         </div>
-      </div>
-
-      {error && (
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          {error}
-        </div>
-      )}
-
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="Eligible companies" value={summary.eligible} hint="Based on your profile" />
-        <MetricCard label="Upcoming interviews" value={summary.upcoming} hint="Assigned placement drives" />
-        <MetricCard label="Completed interviews" value={summary.completed} hint="Past drive participation" />
-        <MetricCard label="Offers" value={summary.offers} hint="Final selected outcomes" />
       </section>
 
-      <section className="grid gap-4 md:grid-cols-3">
-        <MetricCard label="Missed opportunities" value={opportunitySummary.missed_opportunities || 0} hint="Eligible drives not completed" />
-        <MetricCard label="Selected drives" value={opportunitySummary.selected_drives || 0} hint="Final selected status" />
-        <MetricCard label="Rejected drives" value={opportunitySummary.rejected_drives || 0} hint="Final rejected status" />
-      </section>
+      <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-semibold text-slate-900">Drive List</h2>
+            <p className="mt-1 text-sm text-slate-500">Decision-driven applications with full eligibility context.</p>
+          </div>
+          <div className="text-right text-xs text-slate-500">
+            <p>Applied: {summary.applied}</p>
+            <p>Selected: {summary.selected}</p>
+          </div>
+        </div>
 
-      <Section title="Drive applications" subtitle="Apply directly to eligible drives with live probability and skill match">
-        <div className="grid gap-4 lg:grid-cols-2">
-          {placementDrives.length ? (
-            placementDrives.map((drive) => {
-              const eligible = Boolean(drive.is_eligible);
-              const alreadyApplied = Boolean(drive.applied);
+        {drives.length === 0 ? (
+          <EmptyState message={EMPTY_STATE_TEXT} />
+        ) : (
+          <div className="grid gap-4 lg:grid-cols-2">
+            {drives.map((drive) => {
+              const notEligible = !Boolean(drive.is_eligible);
               const busy = Boolean(applyBusyByDrive[drive.drive_id]);
+              const applied = Boolean(drive.applied);
+
               return (
-                <Panel key={drive.student_drive_id || drive.drive_id}>
-                  <div className="space-y-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <h3 className="text-lg font-semibold text-slate-900">{drive.company_name}</h3>
-                        <p className="text-sm text-slate-500">{drive.title || "Placement Drive"}</p>
-                      </div>
-                      <EligibilityBadge eligible={eligible} />
-                    </div>
-                    <div className="space-y-1 text-sm text-slate-600">
-                      <p>Date: {formatDate(drive.drive_date)}</p>
-                      <p>Mode: {drive.mode || "N/A"} · Location: {drive.location || "TBD"}</p>
-                      <p>Probability: {Math.round(drive.probability_score || 0)}% · Skill match: {Math.round(drive.skill_match || 0)}%</p>
-                      <p>Status: {drive.status || "Not Applied"} · Result: {drive.final_result || "pending"}</p>
-                      <p>Why: {(drive.reasons && drive.reasons[0]) || "Profile is under evaluation."}</p>
-                      <p>Action: {drive.action_to_improve || "Keep preparing for the next round."}</p>
-                    </div>
-                    {Array.isArray(drive.required_skills) && drive.required_skills.length > 0 ? (
-                      <div className="flex flex-wrap gap-2">
-                        {drive.required_skills.map((skill) => (
-                          <Pill
-                            key={`${drive.drive_id}-${skill}`}
-                            text={skill}
-                            tone={(drive.matched_skills || []).includes(skill) ? "emerald" : "amber"}
-                          />
-                        ))}
-                      </div>
-                    ) : null}
-                    <div>
-                      <button
-                        type="button"
-                        disabled={!eligible || alreadyApplied || busy}
-                        onClick={() => applyForDrive(drive.drive_id)}
-                        className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-                      >
-                        {alreadyApplied ? "Applied" : busy ? "Applying..." : "Apply"}
-                      </button>
-                    </div>
-                  </div>
-                </Panel>
-              );
-            })
-          ) : (
-            <p className="text-sm text-slate-500">No placement drives assigned to your profile yet.</p>
-          )}
-        </div>
-      </Section>
-
-      <Section title="Probability insights" subtitle="Explainable score from CGPA, attendance, backlogs, and skills">
-        <div className="grid gap-4 lg:grid-cols-2">
-          <Panel>
-            <PanelTitle title="Probability breakdown" />
-            <div className="space-y-3">
-              <ProbabilityBar label="CGPA" value={probabilityComponents.cgpa} />
-              <ProbabilityBar label="Attendance" value={probabilityComponents.attendance} />
-              <ProbabilityBar label="Backlogs" value={probabilityComponents.backlogs} />
-              <ProbabilityBar label="Skills" value={probabilityComponents.skills} accent />
-            </div>
-          </Panel>
-
-          <Panel>
-            <PanelTitle title="Why this score" />
-            <div className="space-y-3">
-              <StatValue value={`${Math.round(successProbability?.current_probability || 0)}% current`} />
-              <StatValue value={`${Math.round(successProbability?.improved_probability || 0)}% improved`} small />
-              {probabilityReasons.length ? probabilityReasons.map((reason) => <ReasonItem key={reason} text={reason} />) : <InlineEmpty text="No explanation available yet." />}
-            </div>
-          </Panel>
-        </div>
-      </Section>
-
-      <Section title="Important alerts" subtitle="Recent placement notifications linked to your drives">
-        <div className="grid gap-4 lg:grid-cols-2">
-          {importantAlerts.length ? (
-            importantAlerts.map((alert) => (
-              <Panel key={alert.id}>
-                <PanelTitle title={alert.title} />
-                <p className="text-sm text-slate-600">{alert.message}</p>
-                <p className="mt-2 text-xs text-slate-500">Drive ID: {alert.drive_id || "N/A"} · {formatDate(alert.created_at)}</p>
-              </Panel>
-            ))
-          ) : (
-            <p className="text-sm text-slate-500">No important alerts right now.</p>
-          )}
-        </div>
-      </Section>
-
-      <Section title="Company eligibility" subtitle="Live eligibility against stored company rules">
-        <div className="grid gap-4 lg:grid-cols-2">
-          {eligibleCompanies.length ? (
-            eligibleCompanies.map((company) => (
-              <Panel key={company.company_name}>
-                <div className="flex flex-col gap-3">
+                <article key={drive.drive_id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <h3 className="text-lg font-semibold text-slate-900">{company.company_name}</h3>
-                      <p className="text-sm text-slate-500">
-                        Min CGPA {company.min_cgpa} · Max backlogs {company.max_backlogs}
-                      </p>
+                      <h3 className="text-lg font-semibold text-slate-900">{drive.company_name || "Company"}</h3>
+                      <p className="text-sm text-slate-600">{drive.role || "Role not specified"}</p>
                     </div>
-                    <EligibilityBadge eligible={company.eligible} />
+                    <span className={`rounded-full px-3 py-1 text-xs font-semibold ${notEligible ? "bg-rose-100 text-rose-800" : "bg-emerald-100 text-emerald-800"}`}>
+                      {notEligible ? "Not Eligible" : "Eligible"}
+                    </span>
                   </div>
 
-                  {Array.isArray(company.required_skills) && company.required_skills.length > 0 && (
-                    <div className="flex flex-wrap gap-2">
-                      {company.required_skills.map((skill) => (
-                        <Pill key={skill} text={skill} tone="slate" />
-                      ))}
-                    </div>
-                  )}
+                  <div className="mt-3 grid gap-1 text-sm text-slate-700">
+                    <p>Package: {drive.package ? `${drive.package} LPA` : "N/A"}</p>
+                    <p>Date: {formatDateOnly(drive.drive_date)}</p>
+                    <p>Location: {drive.location || "N/A"}</p>
+                    <p>Mode: {drive.mode || "N/A"}</p>
+                    <p>Status: {drive.status || "not applied"}</p>
+                  </div>
 
-                  <div className="space-y-2 text-sm text-slate-600">
-                    {company.reasons.length ? (
-                      company.reasons.map((reason) => <ReasonItem key={`${company.company_name}-${reason}`} text={reason} />)
-                    ) : (
-                      <InlineEmpty text="No eligibility issues found." />
+                  {notEligible ? (
+                    <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                      Why you are not eligible: {(Array.isArray(drive.reasons) && drive.reasons[0]) || "Criteria mismatch"}
+                    </div>
+                  ) : null}
+
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={applied || busy}
+                      onClick={() => {
+                        if (notEligible) {
+                          setConfirmForceApplyDrive(drive);
+                          return;
+                        }
+                        applyToDrive(drive, false);
+                      }}
+                      className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                    >
+                      {applied ? "Applied" : busy ? "Applying..." : "Apply"}
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={!drive.details_pdf}
+                      onClick={() => {
+                        if (drive.details_pdf) {
+                          window.open(drive.details_pdf, "_blank", "noopener,noreferrer");
+                        }
+                      }}
+                      className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      View Details
+                    </button>
+
+                    {(applied || drive.final_result === "selected" || drive.final_result === "rejected") && (
+                      <button
+                        type="button"
+                        onClick={() => setFeedbackDrive(drive)}
+                        className="rounded-xl border border-indigo-300 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700"
+                      >
+                        Submit Feedback
+                      </button>
                     )}
                   </div>
-                </div>
-              </Panel>
-            ))
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h2 className="text-xl font-semibold text-slate-900">Predictions</h2>
+        <div className="mt-4 grid gap-4 md:grid-cols-3">
+          <KpiCard label="Selection Probability" value={`${prediction.probability || 0}%`} />
+          <KpiCard label="Selection Rate" value={`${completionStats.selection_rate}%`} />
+          <KpiCard label="Rejection Rate" value={`${completionStats.rejection_rate}%`} />
+        </div>
+        <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Prediction Reasons</p>
+          {(prediction.reasons || []).length === 0 ? (
+            <p className="mt-2 text-sm text-slate-600">No prediction reasons available yet.</p>
           ) : (
-            <p className="text-sm text-slate-500">No eligible companies based on current CGPA and backlog.</p>
+            <ul className="mt-2 space-y-1 text-sm text-slate-700">
+              {prediction.reasons.slice(0, 4).map((item, idx) => (
+                <li key={`${item}-${idx}`}>• {item}</li>
+              ))}
+            </ul>
           )}
         </div>
-      </Section>
+      </section>
 
-      <Section title="Upcoming interviews" subtitle="Drives assigned to you and not completed yet">
-        <div className="grid gap-4 lg:grid-cols-2">
-          {upcomingDrives.length ? (
-            upcomingDrives.map((drive) => (
-              <Panel key={drive.student_drive_id}>
-                <PanelTitle title={drive.company_name} />
-                <div className="space-y-2 text-sm text-slate-600">
-                  <p>Date: {formatDate(drive.drive_date)}</p>
-                  <p>Mode: {drive.mode || "N/A"}</p>
-                  <p>Status: {drive.status || "assigned"}</p>
-                  <p>Current round: {drive.current_round ?? 0}</p>
-                </div>
-              </Panel>
-            ))
-          ) : (
-            <p className="text-sm text-slate-500">No interviews assigned</p>
-          )}
+      <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h2 className="text-xl font-semibold text-slate-900">Suggestions</h2>
+        <div className="mt-4 grid gap-4 lg:grid-cols-2">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Actionable Suggestions</p>
+            {suggestions.length === 0 ? (
+              <p className="mt-2 text-sm text-slate-600">No suggestions available yet.</p>
+            ) : (
+              <ul className="mt-2 space-y-1 text-sm text-slate-700">
+                {suggestions.slice(0, 6).map((item, idx) => (
+                  <li key={`${item}-${idx}`}>• {item}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Feedback Insights</p>
+            <div className="mt-2 space-y-1 text-sm text-slate-700">
+              <p>Common Failure Round: {feedbackInsights.common_failure_round || "N/A"}</p>
+              <p>Common Difficulty: {feedbackInsights.common_difficulty || "N/A"}</p>
+              <p>Common Issue: {feedbackInsights.common_issue || "N/A"}</p>
+            </div>
+          </div>
         </div>
-      </Section>
+      </section>
 
-      <Section title="Past interviews" subtitle="Completed or closed placement drives">
-        <div className="grid gap-4 lg:grid-cols-2">
-          {pastDrives.length ? (
-            pastDrives.map((drive) => (
-              <Panel key={drive.student_drive_id}>
-                <PanelTitle title={drive.company_name} />
-                <div className="space-y-2 text-sm text-slate-600">
-                  <p>Date: {formatDate(drive.drive_date)}</p>
-                  <p>Mode: {drive.mode || "N/A"}</p>
-                  <p>Status: {drive.status || "completed"}</p>
-                  <p>Final result: {drive.final_result || "pending"}</p>
-                </div>
-              </Panel>
-            ))
-          ) : (
-            <p className="text-sm text-slate-500">No placement drives available yet</p>
-          )}
-        </div>
-      </Section>
+      {confirmForceApplyDrive ? (
+        <ConfirmModal
+          title="Eligibility Warning"
+          message={`You are not eligible for ${confirmForceApplyDrive.company_name}. Do you still want to apply?`}
+          onCancel={() => setConfirmForceApplyDrive(null)}
+          onConfirm={() => applyToDrive(confirmForceApplyDrive, true)}
+          busy={Boolean(applyBusyByDrive[confirmForceApplyDrive.drive_id])}
+        />
+      ) : null}
 
-      {pastDrives.length === 0 ? (
-        <Section title="Placement intelligence" subtitle="Insights appear after interview participation">
-          <p className="text-sm text-slate-500">No placement drives available yet</p>
-        </Section>
-      ) : (
-        <>
-          <Section title="Placement readiness" subtitle="Backend-generated readiness score and component breakdown">
-            <div className="grid gap-4 lg:grid-cols-2">
-              <Panel>
-                <div className="flex items-center gap-4">
-                  <ScoreRing score={readinessScore} />
-                  <div>
-                    <StatusBadge status={readinessStatus} />
-                    <p className="mt-2 text-sm text-slate-500">Readiness score</p>
-                    <p className="text-xl font-semibold text-slate-900">{Math.round(readinessScore)}%</p>
-                  </div>
-                </div>
-              </Panel>
-              <Panel>
-                <PanelTitle title="Breakdown" />
-                <div className="space-y-3">
-                  <ProbabilityBar label="CGPA" value={breakdown.cgpa} />
-                  <ProbabilityBar label="Skills" value={breakdown.skills} />
-                  <ProbabilityBar label="Interview" value={breakdown.interview} />
-                  <ProbabilityBar label="Consistency" value={breakdown.consistency} />
-                </div>
-              </Panel>
-            </div>
-          </Section>
+      {feedbackDrive ? (
+        <FeedbackModal
+          drive={feedbackDrive}
+          form={feedbackForm}
+          setForm={setFeedbackForm}
+          onCancel={() => setFeedbackDrive(null)}
+          onSubmit={submitFeedback}
+          busy={feedbackSubmitting}
+        />
+      ) : null}
 
-          <Section title="What you need to fix" subtitle="Backend-generated reasons and recommendations">
-            <div className="grid gap-4 lg:grid-cols-2">
-              <Panel>
-                <PanelTitle title="Primary reasons" />
-                {readinessReasons.length ? (
-                  <div className="space-y-3">
-                    {readinessReasons.map((reason) => (
-                      <ReasonItem key={reason} text={reason} />
-                    ))}
-                  </div>
-                ) : (
-                  <InlineEmpty text="No blockers identified right now." />
-                )}
-              </Panel>
-
-              <Panel>
-                <PanelTitle title="Priority suggestions" />
-                {improvementActions.length ? (
-                  <div className="space-y-3">
-                    {improvementActions.map((item) => (
-                      <ActionChip key={item} text={item} />
-                    ))}
-                  </div>
-                ) : (
-                  <InlineEmpty text="No suggestions available right now." />
-                )}
-              </Panel>
-            </div>
-          </Section>
-
-          <Section title="Interview intelligence" subtitle="Insights from recent interviews and feedback trends">
-            <div className="grid gap-4 lg:grid-cols-3">
-              <Panel>
-                <PanelTitle title="Last round reached" />
-                <StatValue value={interviews?.last_round_reached || "No interview recorded"} />
-              </Panel>
-              <Panel>
-                <PanelTitle title="Common weak area" />
-                <StatValue value={interviews?.common_weak_area || "No pattern yet"} />
-              </Panel>
-              <Panel>
-                <PanelTitle title="Suggestion" />
-                <StatValue value={interviews?.improvement_suggestion || "Start recording interview feedback"} small />
-              </Panel>
-            </div>
-          </Section>
-
-          <Section title="Prediction" subtitle="Selection probability from CGPA, success-rate, and attendance">
-            <div className="grid gap-4 lg:grid-cols-2">
-              <Panel>
-                <PanelTitle title="Probability outlook" />
-                <div className="space-y-4">
-                  <ProbabilityBar label="Current probability" value={prediction?.current_probability ?? 0} />
-                  <ProbabilityBar label="Improved probability" value={prediction?.improved_probability ?? 0} accent />
-                </div>
-              </Panel>
-              <Panel>
-                <PanelTitle title="Readiness band" />
-                <StatValue value={successProbability?.readiness || "N/A"} />
-                <p className="mt-3 text-sm text-slate-600">Model score: {Math.round(successProbability?.score || 0)}</p>
-              </Panel>
-            </div>
-          </Section>
-
-          <Section title="Skill gap" subtitle="Skills missing or weak based on company requirements and feedback">
-            <div className="grid gap-4 lg:grid-cols-3">
-              <SkillColumn title="Missing skills" items={skills?.missing_skills || []} tone="rose" emptyText="No missing skills recorded." />
-              <SkillColumn title="Weak skills" items={skills?.weak_skills || []} tone="amber" emptyText="No weak skills recorded." />
-              <SkillColumn title="Strong skills" items={skills?.strong_skills || []} tone="emerald" emptyText="No strong skills recorded." />
-            </div>
-          </Section>
-
-          <Section title="Action plan" subtitle="Real weekly and priority actions">
-            <div className="grid gap-4 lg:grid-cols-2">
-              <Panel>
-                <PanelTitle title="Weekly plan" />
-                {actionPlan?.weekly_plan?.length ? (
-                  <ul className="space-y-3">
-                    {actionPlan.weekly_plan.map((task) => (
-                      <ListItem key={task} text={task} />
-                    ))}
-                  </ul>
-                ) : (
-                  <InlineEmpty text="No weekly plan available right now." />
-                )}
-              </Panel>
-              <Panel>
-                <PanelTitle title="Priority actions" />
-                {actionPlan?.priority_actions?.length ? (
-                  <ul className="space-y-3">
-                    {actionPlan.priority_actions.map((task) => (
-                      <ListItem key={task} text={task} />
-                    ))}
-                  </ul>
-                ) : (
-                  <InlineEmpty text="No priority tasks available right now." />
-                )}
-              </Panel>
-            </div>
-          </Section>
-
-          <Section title="Recommendations" subtitle="Actionable placement guidance">
-            <Panel>
-              {recommendations.length ? (
-                <div className="space-y-3">
-                  {recommendations.map((item) => (
-                    <ReasonItem key={item} text={item} />
-                  ))}
-                </div>
-              ) : (
-                <InlineEmpty text="No recommendations available right now." />
-              )}
-            </Panel>
-          </Section>
-        </>
-      )}
+      {showSuccess ? <SuccessModal message={successMessage} /> : null}
     </div>
   );
 }
 
 function LoadingState() {
+  return <div className="rounded-3xl border border-slate-200 bg-white p-8 text-slate-600 shadow-sm">Loading placement dashboard...</div>;
+}
+
+function HeroItem({ label, value }) {
   return (
-    <div className="rounded-3xl border border-slate-200 bg-white/80 p-8 text-slate-600 shadow-sm">
-      Loading placement intelligence...
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{label}</p>
+      <p className="mt-2 text-sm font-semibold text-slate-900">{value}</p>
+    </div>
+  );
+}
+
+function KpiCard({ label, value }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{label}</p>
+      <p className="mt-2 text-3xl font-semibold text-slate-900">{value}</p>
     </div>
   );
 }
 
 function EmptyState({ message }) {
+  return <p className="mt-4 text-sm text-slate-500">{message}</p>;
+}
+
+function ErrorBanner({ message }) {
+  return <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{message}</div>;
+}
+
+function ConfirmModal({ title, message, onCancel, onConfirm, busy }) {
   return (
-    <div className="rounded-[28px] border border-slate-200 bg-white p-8 text-center shadow-sm">
-      <h1 className="text-2xl font-semibold text-slate-900">Placement Intelligence</h1>
-      <p className="mt-3 text-sm text-slate-600">{message}</p>
-    </div>
-  );
-}
-
-function Section({ title, subtitle, children }) {
-  return (
-    <section className="space-y-3">
-      <div>
-        <h2 className="text-lg font-semibold text-slate-900">{title}</h2>
-        {subtitle ? <p className="text-sm text-slate-500">{subtitle}</p> : null}
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function Panel({ children }) {
-  return <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">{children}</div>;
-}
-
-function PanelTitle({ title }) {
-  return <h3 className="mb-4 text-sm font-semibold uppercase tracking-[0.24em] text-slate-500">{title}</h3>;
-}
-
-function MetricCard({ label, value, hint }) {
-  return (
-    <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-      <p className="text-xs font-medium uppercase tracking-[0.22em] text-slate-500">{label}</p>
-      <p className="mt-3 text-3xl font-semibold text-slate-900">{value ?? 0}</p>
-      <p className="mt-2 text-sm text-slate-500">{hint}</p>
-    </div>
-  );
-}
-
-function ScoreRing({ score }) {
-  const safeScore = Math.max(0, Math.min(100, Math.round(score || 0)));
-  return (
-    <div
-      className="flex h-24 w-24 items-center justify-center rounded-full"
-      style={{
-        background: `conic-gradient(#0f766e ${safeScore}%, #e2e8f0 ${safeScore}% 100%)`,
-      }}
-    >
-      <div className="flex h-20 w-20 items-center justify-center rounded-full bg-white text-center shadow-sm">
-        <div>
-          <p className="text-2xl font-semibold text-slate-900">{safeScore}</p>
-          <p className="text-[11px] uppercase tracking-[0.22em] text-slate-500">Score</p>
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/55 p-4">
+      <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+        <h4 className="text-lg font-semibold text-slate-900">{title}</h4>
+        <p className="mt-2 text-sm text-slate-600">{message}</p>
+        <div className="mt-5 flex justify-end gap-2">
+          <button onClick={onCancel} className="rounded-xl border border-slate-300 px-4 py-2 text-sm" disabled={busy}>
+            Cancel
+          </button>
+          <button onClick={onConfirm} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white" disabled={busy}>
+            {busy ? "Applying..." : "Confirm Apply"}
+          </button>
         </div>
       </div>
     </div>
   );
 }
 
-function StatusBadge({ status }) {
-  const tone =
-    status === "Ready"
-      ? "bg-emerald-100 text-emerald-800"
-      : status === "Borderline"
-        ? "bg-amber-100 text-amber-800"
-        : "bg-rose-100 text-rose-800";
-
-  return <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${tone}`}>{status}</span>;
-}
-
-function EligibilityBadge({ eligible }) {
-  const tone = eligible ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800";
-  return <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${tone}`}>{eligible ? "Eligible" : "Not eligible"}</span>;
-}
-
-function ReasonItem({ text }) {
-  return <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">{text}</div>;
-}
-
-function ActionChip({ text }) {
-  return <div className="rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-700">{text}</div>;
-}
-
-function InlineEmpty({ text }) {
-  return <p className="text-sm text-slate-500">{text}</p>;
-}
-
-function StatValue({ value, small = false }) {
-  return <p className={small ? "text-sm font-semibold text-slate-900" : "text-lg font-semibold text-slate-900"}>{value}</p>;
-}
-
-function ProbabilityBar({ label, value, accent = false }) {
-  const safeValue = Math.max(0, Math.min(100, Math.round(value || 0)));
+function FeedbackModal({ drive, form, setForm, onCancel, onSubmit, busy }) {
   return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between text-sm text-slate-600">
-        <span>{label}</span>
-        <span className="font-semibold text-slate-900">{safeValue}%</span>
-      </div>
-      <div className="h-3 rounded-full bg-slate-100">
-        <div
-          className={`h-3 rounded-full ${accent ? "bg-emerald-500" : "bg-slate-700"}`}
-          style={{ width: `${safeValue}%` }}
-        />
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/55 p-4">
+      <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl">
+        <h4 className="text-lg font-semibold text-slate-900">Drive Feedback</h4>
+        <p className="mt-1 text-sm text-slate-600">
+          {drive.company_name} - {drive.role}
+        </p>
+
+        <div className="mt-4 space-y-3">
+          <Field label="Round Reached" value={form.round_reached} onChange={(value) => setForm((prev) => ({ ...prev, round_reached: value }))} required />
+          <label className="block text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Difficulty</label>
+          <select
+            className="w-full rounded-xl border border-slate-300 px-3 py-2"
+            value={form.difficulty}
+            onChange={(e) => setForm((prev) => ({ ...prev, difficulty: e.target.value }))}
+          >
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+          </select>
+          <Field label="Issues Faced" value={form.issues_faced} onChange={(value) => setForm((prev) => ({ ...prev, issues_faced: value }))} />
+          <Field label="Comment" value={form.comment} onChange={(value) => setForm((prev) => ({ ...prev, comment: value }))} />
+          <Field label="Rating (1-5)" type="number" value={form.rating} onChange={(value) => setForm((prev) => ({ ...prev, rating: value }))} />
+        </div>
+
+        <div className="mt-5 flex justify-end gap-2">
+          <button onClick={onCancel} className="rounded-xl border border-slate-300 px-4 py-2 text-sm" disabled={busy}>
+            Cancel
+          </button>
+          <button onClick={onSubmit} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white" disabled={busy}>
+            {busy ? "Submitting..." : "Submit Feedback"}
+          </button>
+        </div>
       </div>
     </div>
   );
 }
 
-function SkillColumn({ title, items, tone, emptyText }) {
+function Field({ label, value, onChange, required = false, type = "text" }) {
   return (
-    <Panel>
-      <PanelTitle title={title} />
-      <div className="flex flex-wrap gap-2">
-        {items.length ? (
-          items.map((skill) => (
-            <Pill key={skill} text={skill} tone={tone} />
-          ))
-        ) : (
-          <InlineEmpty text={emptyText} />
-        )}
+    <div>
+      <label className="block text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+        {label}
+        {required ? " *" : ""}
+      </label>
+      <input
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2"
+      />
+    </div>
+  );
+}
+
+function SuccessModal({ message }) {
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/55 p-4">
+      <div className="w-full max-w-sm rounded-2xl bg-white p-8 text-center shadow-2xl" style={{ animation: "placement-success-pop 300ms ease-out" }}>
+        <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-emerald-100 text-3xl text-emerald-700">✓</div>
+        <p className="text-lg font-semibold text-slate-900">Success</p>
+        <p className="mt-1 text-sm text-slate-600">{message || "Action completed successfully"}</p>
       </div>
-    </Panel>
+      <style>{`@keyframes placement-success-pop { from { opacity: 0; transform: scale(0.8);} to { opacity: 1; transform: scale(1);} }`}</style>
+    </div>
   );
 }
 
-function Pill({ text, tone = "slate" }) {
-  const tones = {
-    slate: "border-slate-200 bg-slate-50 text-slate-700",
-    rose: "border-rose-200 bg-rose-50 text-rose-800",
-    amber: "border-amber-200 bg-amber-50 text-amber-800",
-    emerald: "border-emerald-200 bg-emerald-50 text-emerald-800",
-  };
-
-  return <span className={`rounded-full border px-3 py-1 text-xs font-medium ${tones[tone] || tones.slate}`}>{text}</span>;
-}
-
-function ListItem({ text }) {
-  return (
-    <li className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-      <span className="mt-1 h-2 w-2 rounded-full bg-emerald-500" />
-      <span>{text}</span>
-    </li>
-  );
-}
-
-function formatDate(value) {
-  if (!value) {
-    return "Not updated yet";
-  }
+function formatDateOnly(value) {
+  if (!value) return "N/A";
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "Not updated yet";
-  }
-  return new Intl.DateTimeFormat("en-IN", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(date);
+  if (Number.isNaN(date.getTime())) return "N/A";
+  return new Intl.DateTimeFormat("en-IN", { dateStyle: "medium" }).format(date);
 }

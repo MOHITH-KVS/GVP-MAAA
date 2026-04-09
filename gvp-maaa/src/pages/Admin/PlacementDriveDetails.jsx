@@ -2,23 +2,47 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import api from "../../utils/api";
 
+const BRANCH_OPTIONS = ["CSE", "CSM", "ECE", "EEE", "MECH", "CIVIL"];
+const YEAR_OPTIONS = [1, 2, 3, 4];
+const SECTION_OPTIONS = ["A", "B", "C", "D"];
+const STATUS_OPTIONS = ["not_applied", "applied", "in_progress", "selected", "rejected"];
+
 export default function PlacementDriveDetails() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [tableLoading, setTableLoading] = useState(false);
   const [error, setError] = useState("");
-  const [data, setData] = useState({ drive: null, assigned_faculty: [], eligible_students: [], applied_students: [], interview_progress: [], selection_results: [] });
+  const [data, setData] = useState({ drive: null, assigned_faculty: [], coordinator_assignments: [], eligible_students: [], applied_students: [], interview_progress: [], selection_results: [] });
   const [students, setStudents] = useState([]);
   const [facultyList, setFacultyList] = useState([]);
-  const [selectedFacultyIds, setSelectedFacultyIds] = useState([]);
+  const [assignmentForm, setAssignmentForm] = useState({ faculty_id: "", department: "", assigned_from: "", assigned_to: "" });
+  const [pendingAssignments, setPendingAssignments] = useState([]);
   const [busyAssign, setBusyAssign] = useState(false);
+  const [busyCoordinator, setBusyCoordinator] = useState(false);
   const [busyAction, setBusyAction] = useState(false);
   const [confirmAction, setConfirmAction] = useState(null);
+  const [showPreview, setShowPreview] = useState(false);
+  const [previewAction, setPreviewAction] = useState(null);
   const [successMessage, setSuccessMessage] = useState("");
   const [showSuccess, setShowSuccess] = useState(false);
   const [filters, setFilters] = useState({ branch: "", year: "", section: "", status: "" });
   const [editState, setEditState] = useState({});
+  const [coordinatorForm, setCoordinatorForm] = useState({ faculty_id: "", assigned_from: "", assigned_to: "" });
+
+  const toDateTimeInput = (value) => {
+    if (!value) return "";
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return "";
+    return parsed.toISOString().slice(0, 16);
+  };
+
+  const toIsoString = (value) => {
+    if (!value) return null;
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return parsed.toISOString();
+  };
 
   const filterQuery = useMemo(() => {
     const params = new URLSearchParams();
@@ -64,7 +88,7 @@ export default function PlacementDriveDetails() {
       if (!id) return;
       setTableLoading(true);
       try {
-        const url = filterQuery ? `/api/drives/${id}/students?${filterQuery}` : `/api/drives/${id}/students`;
+        const url = filterQuery ? `/api/drives/${id}/eligible-students?${filterQuery}` : `/api/drives/${id}/eligible-students`;
         const res = await api.get(url);
         setStudents(Array.isArray(res.data?.students) ? res.data.students : []);
       } catch (err) {
@@ -77,21 +101,169 @@ export default function PlacementDriveDetails() {
   }, [id, filterQuery]);
 
   const handleAssignFaculty = async () => {
-    if (!selectedFacultyIds.length) {
-      setError("Select faculty to assign.");
+    if (!pendingAssignments.length) {
+      setError("Add at least one assignment item.");
       return;
     }
     setBusyAssign(true);
     setError("");
     try {
-      const res = await api.post(`/api/drives/${id}/assign-faculty`, { faculty_ids: selectedFacultyIds });
+      const res = await api.post(`/api/drives/${id}/assign-faculty`, { assignments: pendingAssignments });
       setData((prev) => ({ ...prev, assigned_faculty: res.data?.assigned_faculty || prev.assigned_faculty }));
-      setSelectedFacultyIds([]);
+      setPendingAssignments([]);
+      setAssignmentForm({ faculty_id: "", department: "", assigned_from: "", assigned_to: "" });
       showSuccessModal("Faculty assigned successfully");
     } catch (err) {
       setError(err?.response?.data?.detail || "Failed to assign faculty.");
     } finally {
       setBusyAssign(false);
+    }
+  };
+
+  const addAssignmentItem = () => {
+    if (!assignmentForm.faculty_id || !assignmentForm.department || !assignmentForm.assigned_from || !assignmentForm.assigned_to) {
+      setError("Faculty, department, from date and to date are required.");
+      return;
+    }
+    if (assignmentForm.assigned_to < assignmentForm.assigned_from) {
+      setError("To date must be on or after from date.");
+      return;
+    }
+
+    setPendingAssignments((prev) => [
+      ...prev,
+      {
+        faculty_id: Number(assignmentForm.faculty_id),
+        department: assignmentForm.department,
+        assigned_from: assignmentForm.assigned_from,
+        assigned_to: assignmentForm.assigned_to,
+      },
+    ]);
+    setAssignmentForm({ faculty_id: "", department: "", assigned_from: "", assigned_to: "" });
+  };
+
+  const updateFacultyAssignment = async (mapping) => {
+    setBusyAssign(true);
+    setError("");
+    try {
+      await api.put(`/api/drives/${id}/faculty/${mapping.id}`, {
+        assigned_from: mapping.assigned_from,
+        assigned_to: mapping.assigned_to,
+        is_active: mapping.is_active,
+      });
+      showSuccessModal("Faculty validity updated");
+    } catch (err) {
+      setError(err?.response?.data?.detail || "Failed to update faculty assignment.");
+    } finally {
+      setBusyAssign(false);
+    }
+  };
+
+  const removeFacultyAssignment = async (mappingId) => {
+    setBusyAssign(true);
+    setError("");
+    try {
+      await api.delete(`/api/drives/${id}/faculty/${mappingId}`);
+      setData((prev) => ({
+        ...prev,
+        assigned_faculty: (prev.assigned_faculty || []).map((item) => (item.id === mappingId ? { ...item, is_active: false } : item)),
+      }));
+      showSuccessModal("Faculty assignment removed");
+    } catch (err) {
+      setError(err?.response?.data?.detail || "Failed to remove faculty assignment.");
+    } finally {
+      setBusyAssign(false);
+    }
+  };
+
+  const handleAssignCoordinator = async () => {
+    if (!coordinatorForm.faculty_id || !coordinatorForm.assigned_from || !coordinatorForm.assigned_to) {
+      setError("Coordinator faculty and date range are required.");
+      return;
+    }
+
+    const assignedFrom = toIsoString(coordinatorForm.assigned_from);
+    const assignedTo = toIsoString(coordinatorForm.assigned_to);
+    if (!assignedFrom || !assignedTo) {
+      setError("Invalid coordinator assignment dates.");
+      return;
+    }
+    if (assignedTo < assignedFrom) {
+      setError("Coordinator end time must be on or after start time.");
+      return;
+    }
+
+    setBusyCoordinator(true);
+    setError("");
+    try {
+      const res = await api.post("/api/admin/coordinator/assign", {
+        faculty_id: Number(coordinatorForm.faculty_id),
+        drive_id: Number(id),
+        assigned_from: assignedFrom,
+        assigned_to: assignedTo,
+      });
+      const newAssignment = res.data?.assignment;
+      setData((prev) => ({
+        ...prev,
+        coordinator_assignments: newAssignment ? [newAssignment, ...(prev.coordinator_assignments || [])] : prev.coordinator_assignments,
+      }));
+      setCoordinatorForm({ faculty_id: "", assigned_from: "", assigned_to: "" });
+      showSuccessModal("Coordinator assigned successfully");
+    } catch (err) {
+      setError(err?.response?.data?.detail || "Failed to assign coordinator.");
+    } finally {
+      setBusyCoordinator(false);
+    }
+  };
+
+  const updateCoordinatorAssignment = async (assignment) => {
+    const assignedFrom = toIsoString(assignment.assigned_from);
+    const assignedTo = toIsoString(assignment.assigned_to);
+    if (!assignedTo) {
+      setError("Coordinator end time is required.");
+      return;
+    }
+    if (assignedFrom && assignedTo < assignedFrom) {
+      setError("Coordinator end time must be on or after start time.");
+      return;
+    }
+
+    setBusyCoordinator(true);
+    setError("");
+    try {
+      const res = await api.put(`/api/admin/coordinator/assignments/${assignment.id}/extend`, {
+        assigned_from: assignedFrom,
+        assigned_to: assignedTo,
+      });
+      const updated = res.data?.assignment;
+      if (updated) {
+        setData((prev) => ({
+          ...prev,
+          coordinator_assignments: (prev.coordinator_assignments || []).map((item) => (item.id === updated.id ? updated : item)),
+        }));
+      }
+      showSuccessModal("Coordinator assignment updated");
+    } catch (err) {
+      setError(err?.response?.data?.detail || "Failed to update coordinator assignment.");
+    } finally {
+      setBusyCoordinator(false);
+    }
+  };
+
+  const revokeCoordinatorAssignment = async (assignmentId) => {
+    setBusyCoordinator(true);
+    setError("");
+    try {
+      await api.delete(`/api/admin/coordinator/assignments/${assignmentId}`);
+      setData((prev) => ({
+        ...prev,
+        coordinator_assignments: (prev.coordinator_assignments || []).map((item) => (item.id === assignmentId ? { ...item, is_active: false, active_now: false } : item)),
+      }));
+      showSuccessModal("Coordinator assignment revoked");
+    } catch (err) {
+      setError(err?.response?.data?.detail || "Failed to revoke coordinator assignment.");
+    } finally {
+      setBusyCoordinator(false);
     }
   };
 
@@ -105,11 +277,52 @@ export default function PlacementDriveDetails() {
         final_status: String(state.final_result ?? row.final_result ?? "pending").toLowerCase(),
       });
       showSuccessModal("Student status updated successfully");
-      const url = filterQuery ? `/api/drives/${id}/students?${filterQuery}` : `/api/drives/${id}/students`;
+      const url = filterQuery ? `/api/drives/${id}/eligible-students?${filterQuery}` : `/api/drives/${id}/eligible-students`;
       const refreshed = await api.get(url);
       setStudents(Array.isArray(refreshed.data?.students) ? refreshed.data.students : []);
     } catch (err) {
       setError(err?.response?.data?.detail || "Failed to update student status.");
+    } finally {
+      setBusyAction(false);
+    }
+  };
+
+  const openNotifyPreview = async (type, studentId = null) => {
+    setBusyAction(true);
+    setError("");
+    try {
+      if (type === "notify_bulk") {
+        const previewRes = await api.get(`/api/drives/${id}/notify-preview`);
+        setPreviewAction({ type, preview: previewRes.data || {} });
+      } else if (type === "notify_filtered") {
+        setPreviewAction({
+          type,
+          preview: {
+            total_students: students.length,
+            eligible_count: students.filter((row) => row.is_eligible).length,
+            branch_wise_count: students.reduce((acc, row) => {
+              const branch = row.branch || "N/A";
+              acc[branch] = (acc[branch] || 0) + 1;
+              return acc;
+            }, {}),
+            recipients: students.slice(0, 12),
+          },
+        });
+      } else if (type === "notify_single" && studentId) {
+        const student = students.find((row) => row.student_id === studentId) || {};
+        setPreviewAction({
+          type,
+          studentId,
+          preview: {
+            total_students: 1,
+            eligible_count: student.is_eligible ? 1 : 0,
+            recipients: [student],
+          },
+        });
+      }
+      setShowPreview(true);
+    } catch (err) {
+      setError(err?.response?.data?.detail || "Failed to preview notification.");
     } finally {
       setBusyAction(false);
     }
@@ -148,6 +361,40 @@ export default function PlacementDriveDetails() {
     }
   };
 
+  const executePreviewAction = async () => {
+    if (!previewAction) return;
+    setBusyAction(true);
+    setError("");
+    try {
+      if (previewAction.type === "notify_bulk") {
+        await api.post(`/api/drives/${id}/notify`, {});
+        showSuccessModal("Bulk notification sent");
+      }
+      if (previewAction.type === "notify_filtered") {
+        await api.post(`/api/drives/${id}/notify-filtered`, {
+          branch: filters.branch ? [filters.branch] : [],
+          year: filters.year ? [Number(filters.year)] : [],
+          status: filters.status ? [filters.status] : [],
+        });
+        showSuccessModal("Filtered notification sent");
+      }
+      if (previewAction.type === "notify_single") {
+        await api.post(`/api/students/${previewAction.studentId}/notify`, {
+          title: `Placement Update - ${data.drive?.company_name || "Drive"}`,
+          message: "Your placement status was updated. Check placement page for details.",
+          drive_id: Number(id),
+        });
+        showSuccessModal("Student notification sent");
+      }
+    } catch (err) {
+      setError(err?.response?.data?.detail || "Action failed.");
+    } finally {
+      setBusyAction(false);
+      setShowPreview(false);
+      setPreviewAction(null);
+    }
+  };
+
   const eligibleStudents = students.filter((row) => row.status === "not_applied" || row.status === "applied" || row.status === "in_progress");
   const appliedStudents = students.filter((row) => row.status !== "not_applied");
   const resultStudents = students;
@@ -181,55 +428,256 @@ export default function PlacementDriveDetails() {
               <p>Location: {data.drive?.location || "N/A"}</p>
             </div>
             <div className="mt-4 flex flex-wrap gap-2">
-              <button className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white" onClick={() => setConfirmAction({ type: "notify_bulk" })}>Notify All</button>
-              <button className="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white" onClick={() => setConfirmAction({ type: "notify_filtered" })}>Notify Filtered</button>
+              <button className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white" onClick={() => openNotifyPreview("notify_bulk")}>Notify All</button>
+              <button className="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white" onClick={() => openNotifyPreview("notify_filtered")}>Notify Filtered</button>
             </div>
           </section>
 
           <section className="rounded-3xl border bg-white p-6 shadow-sm">
             <h2 className="text-lg font-semibold text-slate-900">Faculty Assignment</h2>
-            <div className="mt-3 flex flex-col gap-3 md:flex-row md:items-center">
-              <select
-                multiple
-                value={selectedFacultyIds.map(String)}
-                onChange={(e) => setSelectedFacultyIds(Array.from(e.target.selectedOptions).map((item) => Number(item.value)))}
-                className="min-h-28 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm md:max-w-xl"
-              >
+            <div className="mt-3 grid gap-3 md:grid-cols-5">
+              <select value={assignmentForm.faculty_id} onChange={(e) => setAssignmentForm((prev) => ({ ...prev, faculty_id: e.target.value }))} className="rounded-xl border border-slate-300 px-3 py-2 text-sm">
+                <option value="">Select faculty</option>
                 {facultyList.map((faculty) => (
                   <option key={faculty.id} value={faculty.id}>{faculty.name} ({faculty.email})</option>
                 ))}
               </select>
-              <button disabled={busyAssign} onClick={handleAssignFaculty} className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
+              <select value={assignmentForm.department} onChange={(e) => setAssignmentForm((prev) => ({ ...prev, department: e.target.value }))} className="rounded-xl border border-slate-300 px-3 py-2 text-sm">
+                <option value="">Department</option>
+                {BRANCH_OPTIONS.map((branch) => (
+                  <option key={branch} value={branch}>{branch}</option>
+                ))}
+              </select>
+              <input type="date" value={assignmentForm.assigned_from} onChange={(e) => setAssignmentForm((prev) => ({ ...prev, assigned_from: e.target.value }))} className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
+              <input type="date" value={assignmentForm.assigned_to} onChange={(e) => setAssignmentForm((prev) => ({ ...prev, assigned_to: e.target.value }))} className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
+              <button type="button" onClick={addAssignmentItem} className="rounded-xl border border-slate-300 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700">
+                Add
+              </button>
+            </div>
+
+            <div className="mt-4">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Pending Assignments</p>
+              {pendingAssignments.length === 0 ? (
+                <p className="text-sm text-slate-500">No pending assignments.</p>
+              ) : (
+                <div className="space-y-2">
+                  {pendingAssignments.map((item, index) => {
+                    const faculty = facultyList.find((f) => f.id === item.faculty_id);
+                    return (
+                      <div key={`${item.faculty_id}-${index}`} className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+                        <span>{faculty?.name || item.faculty_id} | {item.department} | {item.assigned_from} to {item.assigned_to}</span>
+                        <button type="button" onClick={() => setPendingAssignments((prev) => prev.filter((_, idx) => idx !== index))} className="rounded-lg border border-slate-300 px-2 py-1 text-xs">Remove</button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="mt-4">
+              <button disabled={busyAssign || pendingAssignments.length === 0} onClick={handleAssignFaculty} className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
                 {busyAssign ? "Assigning..." : "Assign Faculty"}
               </button>
             </div>
-            <div className="mt-4 flex flex-wrap gap-2">
-              {(data.assigned_faculty || []).length ? data.assigned_faculty.map((item) => (
-                <span key={item.faculty_id} className="rounded-full border border-slate-300 bg-slate-50 px-3 py-1 text-xs">{item.name}</span>
-              )) : <p className="text-sm text-slate-500">No faculty assigned yet.</p>}
+
+            <div className="mt-5 overflow-x-auto">
+              <table className="min-w-full border-collapse text-left text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200 text-slate-600">
+                    <th className="px-2 py-2">Faculty</th>
+                    <th className="px-2 py-2">Department</th>
+                    <th className="px-2 py-2">From</th>
+                    <th className="px-2 py-2">To</th>
+                    <th className="px-2 py-2">Assigned By</th>
+                    <th className="px-2 py-2">Active</th>
+                    <th className="px-2 py-2">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(data.assigned_faculty || []).map((item) => (
+                    <tr key={item.id} className="border-b border-slate-100">
+                      <td className="px-2 py-2">{item.name}</td>
+                      <td className="px-2 py-2">{item.department || "N/A"}</td>
+                      <td className="px-2 py-2">
+                        <input
+                          type="date"
+                          value={item.assigned_from || ""}
+                          onChange={(e) => setData((prev) => ({
+                            ...prev,
+                            assigned_faculty: (prev.assigned_faculty || []).map((row) => (row.id === item.id ? { ...row, assigned_from: e.target.value } : row)),
+                          }))}
+                          className="rounded-lg border border-slate-300 px-2 py-1"
+                        />
+                      </td>
+                      <td className="px-2 py-2">
+                        <input
+                          type="date"
+                          value={item.assigned_to || ""}
+                          onChange={(e) => setData((prev) => ({
+                            ...prev,
+                            assigned_faculty: (prev.assigned_faculty || []).map((row) => (row.id === item.id ? { ...row, assigned_to: e.target.value } : row)),
+                          }))}
+                          className="rounded-lg border border-slate-300 px-2 py-1"
+                        />
+                      </td>
+                      <td className="px-2 py-2">{item.assigned_by || "System"}</td>
+                      <td className="px-2 py-2">{item.is_active ? "Yes" : "No"}</td>
+                      <td className="px-2 py-2">
+                        <div className="flex gap-2">
+                          <button type="button" className="rounded-lg bg-emerald-600 px-2 py-1 text-xs font-semibold text-white" onClick={() => updateFacultyAssignment(item)}>
+                            Save
+                          </button>
+                          <button type="button" className="rounded-lg bg-rose-600 px-2 py-1 text-xs font-semibold text-white" onClick={() => removeFacultyAssignment(item.id)} disabled={!item.is_active}>
+                            Remove
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </section>
 
           <section className="rounded-3xl border bg-white p-6 shadow-sm">
             <h2 className="text-lg font-semibold text-slate-900">Filters</h2>
             <div className="mt-3 grid gap-3 md:grid-cols-4">
-              <input placeholder="Branch" value={filters.branch} onChange={(e) => setFilters((prev) => ({ ...prev, branch: e.target.value }))} className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
-              <input placeholder="Year" value={filters.year} onChange={(e) => setFilters((prev) => ({ ...prev, year: e.target.value }))} className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
-              <input placeholder="Section" value={filters.section} onChange={(e) => setFilters((prev) => ({ ...prev, section: e.target.value }))} className="rounded-xl border border-slate-300 px-3 py-2 text-sm" />
+              <select value={filters.branch} onChange={(e) => setFilters((prev) => ({ ...prev, branch: e.target.value }))} className="rounded-xl border border-slate-300 px-3 py-2 text-sm">
+                <option value="">All branches</option>
+                {BRANCH_OPTIONS.map((branch) => (
+                  <option key={branch} value={branch}>{branch}</option>
+                ))}
+              </select>
+              <select value={filters.year} onChange={(e) => setFilters((prev) => ({ ...prev, year: e.target.value }))} className="rounded-xl border border-slate-300 px-3 py-2 text-sm">
+                <option value="">All years</option>
+                {YEAR_OPTIONS.map((year) => (
+                  <option key={year} value={year}>{year}</option>
+                ))}
+              </select>
+              <select value={filters.section} onChange={(e) => setFilters((prev) => ({ ...prev, section: e.target.value }))} className="rounded-xl border border-slate-300 px-3 py-2 text-sm">
+                <option value="">All sections</option>
+                {SECTION_OPTIONS.map((section) => (
+                  <option key={section} value={section}>{section}</option>
+                ))}
+              </select>
               <select value={filters.status} onChange={(e) => setFilters((prev) => ({ ...prev, status: e.target.value }))} className="rounded-xl border border-slate-300 px-3 py-2 text-sm">
                 <option value="">All statuses</option>
-                <option value="applied">Applied</option>
-                <option value="selected">Selected</option>
-                <option value="rejected">Rejected</option>
+                {STATUS_OPTIONS.map((status) => (
+                  <option key={status} value={status}>{status}</option>
+                ))}
               </select>
             </div>
           </section>
 
-          <DetailTable title="Eligible Students" rows={eligibleStudents} onEditState={setEditState} editState={editState} onUpdate={handleUpdateStudent} onNotify={(studentId) => setConfirmAction({ type: "notify_single", studentId })} loading={tableLoading || busyAction} />
+          <section className="rounded-3xl border bg-white p-6 shadow-sm">
+            <h2 className="text-lg font-semibold text-slate-900">Assign Placement Coordinator</h2>
+            <div className="mt-3 grid gap-3 md:grid-cols-4">
+              <select
+                value={coordinatorForm.faculty_id}
+                onChange={(e) => setCoordinatorForm((prev) => ({ ...prev, faculty_id: e.target.value }))}
+                className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
+              >
+                <option value="">Select faculty</option>
+                {facultyList.map((faculty) => (
+                  <option key={faculty.id} value={faculty.id}>{faculty.name} ({faculty.email})</option>
+                ))}
+              </select>
+              <input
+                type="datetime-local"
+                value={coordinatorForm.assigned_from}
+                onChange={(e) => setCoordinatorForm((prev) => ({ ...prev, assigned_from: e.target.value }))}
+                className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
+              />
+              <input
+                type="datetime-local"
+                value={coordinatorForm.assigned_to}
+                onChange={(e) => setCoordinatorForm((prev) => ({ ...prev, assigned_to: e.target.value }))}
+                className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
+              />
+              <button
+                type="button"
+                disabled={busyCoordinator}
+                onClick={handleAssignCoordinator}
+                className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+              >
+                {busyCoordinator ? "Assigning..." : "Assign Coordinator"}
+              </button>
+            </div>
 
-          <DetailTable title="Applied Students" rows={appliedStudents} onEditState={setEditState} editState={editState} onUpdate={handleUpdateStudent} onNotify={(studentId) => setConfirmAction({ type: "notify_single", studentId })} loading={tableLoading || busyAction} />
+            <div className="mt-5 overflow-x-auto">
+              <table className="min-w-full border-collapse text-left text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200 text-slate-600">
+                    <th className="px-2 py-2">Faculty</th>
+                    <th className="px-2 py-2">Scope</th>
+                    <th className="px-2 py-2">From</th>
+                    <th className="px-2 py-2">To</th>
+                    <th className="px-2 py-2">Assigned By</th>
+                    <th className="px-2 py-2">Active</th>
+                    <th className="px-2 py-2">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(data.coordinator_assignments || []).map((item) => (
+                    <tr key={item.id} className="border-b border-slate-100">
+                      <td className="px-2 py-2">{item.faculty_name || item.faculty_email || item.faculty_id}</td>
+                      <td className="px-2 py-2">{item.scope === "global" ? "Global" : "Drive"}</td>
+                      <td className="px-2 py-2">
+                        <input
+                          type="datetime-local"
+                          value={toDateTimeInput(item.assigned_from)}
+                          onChange={(e) => setData((prev) => ({
+                            ...prev,
+                            coordinator_assignments: (prev.coordinator_assignments || []).map((row) => (row.id === item.id ? { ...row, assigned_from: e.target.value } : row)),
+                          }))}
+                          className="rounded-lg border border-slate-300 px-2 py-1"
+                        />
+                      </td>
+                      <td className="px-2 py-2">
+                        <input
+                          type="datetime-local"
+                          value={toDateTimeInput(item.assigned_to)}
+                          onChange={(e) => setData((prev) => ({
+                            ...prev,
+                            coordinator_assignments: (prev.coordinator_assignments || []).map((row) => (row.id === item.id ? { ...row, assigned_to: e.target.value } : row)),
+                          }))}
+                          className="rounded-lg border border-slate-300 px-2 py-1"
+                        />
+                      </td>
+                      <td className="px-2 py-2">{item.created_by || "System"}</td>
+                      <td className="px-2 py-2">{item.active_now ? "Active" : item.is_active ? "Scheduled/Expired" : "Revoked"}</td>
+                      <td className="px-2 py-2">
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            disabled={busyCoordinator}
+                            className="rounded-lg bg-emerald-600 px-2 py-1 text-xs font-semibold text-white disabled:opacity-60"
+                            onClick={() => updateCoordinatorAssignment(item)}
+                          >
+                            Save
+                          </button>
+                          <button
+                            type="button"
+                            disabled={busyCoordinator || !item.is_active}
+                            className="rounded-lg bg-rose-600 px-2 py-1 text-xs font-semibold text-white disabled:opacity-60"
+                            onClick={() => revokeCoordinatorAssignment(item.id)}
+                          >
+                            Revoke
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
 
-          <DetailTable title="Interview Progress / Selection Results" rows={resultStudents} onEditState={setEditState} editState={editState} onUpdate={handleUpdateStudent} onNotify={(studentId) => setConfirmAction({ type: "notify_single", studentId })} loading={tableLoading || busyAction} />
+          <DetailTable title="Eligible Students" rows={eligibleStudents} onEditState={setEditState} editState={editState} onUpdate={handleUpdateStudent} onNotify={(studentId) => openNotifyPreview("notify_single", studentId)} loading={tableLoading || busyAction} />
+
+          <DetailTable title="Applied Students" rows={appliedStudents} onEditState={setEditState} editState={editState} onUpdate={handleUpdateStudent} onNotify={(studentId) => openNotifyPreview("notify_single", studentId)} loading={tableLoading || busyAction} />
+
+          <DetailTable title="Interview Progress / Selection Results" rows={resultStudents} onEditState={setEditState} editState={editState} onUpdate={handleUpdateStudent} onNotify={(studentId) => openNotifyPreview("notify_single", studentId)} loading={tableLoading || busyAction} />
         </>
       )}
 
@@ -242,7 +690,54 @@ export default function PlacementDriveDetails() {
         />
       )}
 
+      {showPreview && previewAction && (
+        <PreviewModal action={previewAction} onCancel={() => { setShowPreview(false); setPreviewAction(null); }} onConfirm={executePreviewAction} busy={busyAction} />
+      )}
+
       {showSuccess && <SuccessModal message={successMessage} />}
+    </div>
+  );
+}
+
+function PreviewModal({ action, onCancel, onConfirm, busy }) {
+  const preview = action.preview || {};
+  const items =
+    action.type === "notify_bulk"
+      ? [
+          `Total students: ${preview.total_students ?? 0}`,
+          `Eligible students: ${preview.eligible_count ?? 0}`,
+          `Recipients preview: ${(preview.recipients || []).length}`,
+        ]
+      : action.type === "notify_filtered"
+        ? [
+            `Filtered students: ${preview.total_students ?? 0}`,
+            `Eligible in filter: ${preview.eligible_count ?? 0}`,
+            `Recipients preview: ${(preview.recipients || []).length}`,
+          ]
+        : [
+            `Student: ${(preview.recipients?.[0]?.student_name) || "N/A"}`,
+            `Branch: ${(preview.recipients?.[0]?.branch) || "N/A"}`,
+            `Eligible: ${preview.eligible_count ? "Yes" : "No"}`,
+          ];
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/50 p-4">
+      <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl">
+        <h4 className="text-lg font-semibold text-slate-900">Preview Notification</h4>
+        <div className="mt-4 space-y-2 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+          {items.map((item) => (
+            <div key={item}>{item}</div>
+          ))}
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <button onClick={onCancel} className="rounded-xl border border-slate-300 px-4 py-2 text-sm text-slate-700" disabled={busy}>
+            Cancel
+          </button>
+          <button onClick={onConfirm} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60" disabled={busy}>
+            {busy ? "Sending..." : "Confirm"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

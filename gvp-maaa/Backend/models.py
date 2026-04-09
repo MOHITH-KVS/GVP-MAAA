@@ -151,6 +151,8 @@ class PlacementDrive(Base):
     mode = Column(String(30), nullable=True)
     location = Column(String(255), nullable=True)
     registration_deadline = Column(Date, nullable=True)
+    apply_link = Column(Text, nullable=True)
+    details_pdf = Column(Text, nullable=True)
     eligible_years = Column(ARRAY(Integer), nullable=True)
     status = Column(String(30), default="open")
     branches = Column(ARRAY(String), nullable=True)
@@ -185,11 +187,12 @@ class DriveFacultyMap(Base):
     id = Column(Integer, primary_key=True, index=True)
     drive_id = Column(Integer, ForeignKey("placement_drives.id", ondelete="CASCADE"), nullable=False)
     faculty_id = Column(Integer, ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False)
+    department = Column(String(80), nullable=True)
+    assigned_from = Column(Date, nullable=True)
+    assigned_to = Column(Date, nullable=True)
+    assigned_by = Column(Integer, ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True)
+    is_active = Column(Boolean, default=True)
     assigned_at = Column(DateTime(timezone=True), server_default=func.now())
-
-    __table_args__ = (
-        UniqueConstraint("drive_id", "faculty_id", name="unique_drive_faculty_map"),
-    )
 
 
 class DriveApplication(Base):
@@ -199,6 +202,7 @@ class DriveApplication(Base):
     drive_id = Column(Integer, ForeignKey("placement_drives.id", ondelete="CASCADE"), nullable=False)
     student_id = Column(Integer, ForeignKey("students.student_id", ondelete="CASCADE"), nullable=False)
     application_status = Column(String(30), default="not_applied")
+    application_type = Column(String(30), default="normal")
     current_round = Column(Integer, default=0)
     final_status = Column(String(30), default="pending")
     updated_by = Column(Integer, ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True)
@@ -207,6 +211,31 @@ class DriveApplication(Base):
     __table_args__ = (
         UniqueConstraint("drive_id", "student_id", name="unique_drive_application"),
     )
+
+
+class DriveAuditLog(Base):
+    __tablename__ = "drive_audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    drive_id = Column(Integer, ForeignKey("placement_drives.id", ondelete="CASCADE"), nullable=False)
+    action = Column(String(50), nullable=False)
+    old_data = Column(JSON, nullable=True)
+    new_data = Column(JSON, nullable=True)
+    user_id = Column(Integer, ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True)
+    timestamp = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class DriveCoordinatorMap(Base):
+    __tablename__ = "drive_coordinator_map"
+
+    id = Column(Integer, primary_key=True, index=True)
+    drive_id = Column(Integer, ForeignKey("placement_drives.id", ondelete="CASCADE"), nullable=True)
+    faculty_id = Column(Integer, ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False)
+    assigned_from = Column(DateTime(timezone=True), nullable=False)
+    assigned_to = Column(DateTime(timezone=True), nullable=False)
+    is_active = Column(Boolean, default=True)
+    created_by = Column(Integer, ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class PlacementFeedback(Base):
@@ -218,6 +247,10 @@ class PlacementFeedback(Base):
     faculty_id = Column(Integer, ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True)
     comment = Column(Text, nullable=True)
     rating = Column(Integer, nullable=True)
+    round_reached = Column(String(120), nullable=True)
+    difficulty = Column(String(30), nullable=True)
+    issues_faced = Column(Text, nullable=True)
+    submitted_by = Column(String(30), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     

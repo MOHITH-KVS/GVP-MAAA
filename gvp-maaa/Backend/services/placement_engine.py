@@ -175,6 +175,18 @@ def _interview_success_rate(interviews: List[PlacementInterview]) -> float:
     return round((selected / len(completed)) * 100, 2)
 
 
+def _interview_performance_score(interviews: List[PlacementInterview]) -> float:
+    if not interviews:
+        return 0.0
+
+    success_rate = _interview_success_rate(interviews)
+    round_values = [_round_score(interview.round_reached) for interview in interviews]
+    round_component = (sum(round_values) / len(round_values)) if round_values else 0.0
+
+    # Combine success outcomes with round progression to avoid over-weighting either signal.
+    return round(_clamp((success_rate * 0.7) + (round_component * 0.3)), 2)
+
+
 def _round_score(round_label: Optional[str]) -> int:
     key = _normalize_text(round_label)
     if not key:
@@ -671,10 +683,11 @@ def get_selection_probability(student_id: int, db: Session, context: Optional[Di
     if not context:
         return {
             "has_data": False,
+            "probability": 0,
+            "reasons": [NO_PLACEMENT_DATA_MESSAGE],
             "current_probability": 0,
             "improved_probability": 0,
             "suggestion": NO_PLACEMENT_DATA_MESSAGE,
-            "reasons": [],
             "improvement_actions": [],
         }
 
@@ -767,6 +780,7 @@ def get_selection_probability(student_id: int, db: Session, context: Optional[Di
 
     return {
         "has_data": True,
+        "probability": int(round(current_probability)),
         "current_probability": int(round(current_probability)),
         "improved_probability": int(round(improved_probability)),
         "suggestion": suggestion_map.get(weakest_driver, "Improve the weakest placement signal first."),
