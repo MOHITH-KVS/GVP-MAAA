@@ -2460,7 +2460,7 @@ def _record_assignment_audit(
             action_type=action_type,
             performed_by=performed_by,
             target_id=target_id,
-            metadata=metadata or {},
+            details=metadata or {},
             created_at=datetime.utcnow(),
         )
     )

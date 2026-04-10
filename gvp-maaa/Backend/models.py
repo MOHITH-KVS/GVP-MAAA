@@ -251,7 +251,7 @@ class AuditLog(Base):
     action_type = Column(String(80), nullable=False)
     performed_by = Column(Integer, ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True)
     target_id = Column(Integer, ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True)
-    metadata = Column(JSON, nullable=True)
+    details = Column("metadata", JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
