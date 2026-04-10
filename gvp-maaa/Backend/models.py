@@ -194,6 +194,7 @@ class DriveFacultyMap(Base):
     id = Column(Integer, primary_key=True, index=True)
     drive_id = Column(Integer, ForeignKey("placement_drives.id", ondelete="CASCADE"), nullable=False)
     faculty_id = Column(Integer, ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False)
+    role = Column(String(30), nullable=False, default="faculty")
     department = Column(String(80), nullable=True)
     assigned_from = Column(Date, nullable=True)
     assigned_to = Column(Date, nullable=True)
@@ -230,6 +231,28 @@ class DriveAuditLog(Base):
     new_data = Column(JSON, nullable=True)
     user_id = Column(Integer, ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True)
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class AssignmentHistory(Base):
+    __tablename__ = "assignment_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+    drive_id = Column(Integer, ForeignKey("placement_drives.id", ondelete="CASCADE"), nullable=False)
+    faculty_id = Column(Integer, ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False)
+    role = Column(String(30), nullable=False)
+    action = Column(String(30), nullable=False)
+    timestamp = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    action_type = Column(String(80), nullable=False)
+    performed_by = Column(Integer, ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True)
+    target_id = Column(Integer, ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True)
+    metadata = Column(JSON, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class DriveCoordinatorMap(Base):

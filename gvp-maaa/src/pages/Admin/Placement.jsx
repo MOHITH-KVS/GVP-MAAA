@@ -21,7 +21,6 @@ const YEAR_OPTIONS = [1, 2, 3, 4];
 
 const ASSIGNMENT_FORM_DEFAULT = {
   faculty_id: "",
-  department: "ALL",
   assigned_from: "",
   assigned_to: "",
 };
@@ -83,9 +82,10 @@ export default function AdminPlacement() {
   const [assignmentMode, setAssignmentMode] = useState("faculty");
   const [assignmentDrive, setAssignmentDrive] = useState(null);
   const [assignmentForm, setAssignmentForm] = useState(ASSIGNMENT_FORM_DEFAULT);
+  const [assignmentPreview, setAssignmentPreview] = useState(null);
+  const [showAssignmentConfirm, setShowAssignmentConfirm] = useState(false);
   const [facultyList, setFacultyList] = useState([]);
-  const [departments, setDepartments] = useState([]);
-  const [existingAssignments, setExistingAssignments] = useState({ assigned_faculty: [], coordinator_assignments: [] });
+  const [existingAssignments, setExistingAssignments] = useState({ assigned_faculty: [], coordinator_assignments: [], assignment_history: [], expiry_notifications: [] });
 
   const authHeaders = useMemo(() => {
     const token = localStorage.getItem("access_token");
@@ -353,22 +353,24 @@ export default function AdminPlacement() {
     setOpenActionMenuDriveId(null);
     setAssignmentMode(mode);
     setAssignmentDrive(drive);
-    setAssignmentForm({ ...ASSIGNMENT_FORM_DEFAULT, department: mode === "faculty" ? "ALL" : "" });
+    setAssignmentForm(ASSIGNMENT_FORM_DEFAULT);
+    setAssignmentPreview(null);
+    setShowAssignmentConfirm(false);
     setShowAssignmentModal(true);
     setAssignmentModalBusy(true);
     setError("");
     try {
-      const [detailsRes, facultyRes, departmentsRes] = await Promise.all([
+      const [detailsRes, facultyRes] = await Promise.all([
         axios.get(`${BASE_URL}/api/drives/${drive.id}/details`, { headers: authHeaders }),
         axios.get(`${BASE_URL}/api/faculty/list`, { headers: authHeaders }),
-        axios.get(`${BASE_URL}/api/departments`, { headers: authHeaders }),
       ]);
       setExistingAssignments({
         assigned_faculty: detailsRes?.data?.assigned_faculty || [],
         coordinator_assignments: detailsRes?.data?.coordinator_assignments || [],
+        assignment_history: detailsRes?.data?.assignment_history || [],
+        expiry_notifications: detailsRes?.data?.expiry_notifications || [],
       });
       setFacultyList(Array.isArray(facultyRes.data) ? facultyRes.data : []);
-      setDepartments(Array.isArray(departmentsRes.data) ? departmentsRes.data : []);
     } catch (err) {
       setError(readErrorMessage(err, "Unable to load assignment data."));
     } finally {
@@ -379,9 +381,6 @@ export default function AdminPlacement() {
   const validateAssignment = () => {
     if (!assignmentForm.faculty_id || !assignmentForm.assigned_from || !assignmentForm.assigned_to) {
       return "Faculty and date range are required.";
-    }
-    if (assignmentMode === "faculty" && !assignmentForm.department) {
-      return "Department is required for faculty assignment.";
     }
 
     const fromIso = toIsoDateTime(assignmentForm.assigned_from, false);
@@ -421,6 +420,29 @@ export default function AdminPlacement() {
     return "";
   };
 
+  const continueAssignment = async () => {
+    if (!assignmentDrive) return;
+
+    const validationError = validateAssignment();
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+
+    const facultyId = Number(assignmentForm.faculty_id);
+    const selectedFaculty = facultyList.find((item) => Number(item.id) === facultyId);
+    setAssignmentPreview({
+      faculty_id: facultyId,
+      faculty_name: selectedFaculty?.name || `Faculty #${facultyId}`,
+      role: assignmentMode,
+      drive_title: assignmentDrive.title || assignmentDrive.company_name || "Drive",
+      drive_company: assignmentDrive.company_name || "N/A",
+      assigned_from: assignmentForm.assigned_from,
+      assigned_to: assignmentForm.assigned_to,
+    });
+    setShowAssignmentConfirm(true);
+  };
+
   const submitAssignment = async () => {
     if (!assignmentDrive) return;
 
@@ -434,42 +456,40 @@ export default function AdminPlacement() {
     setAssignmentModalBusy(true);
     setError("");
     try {
-      if (assignmentMode === "faculty") {
-        const response = await axios.post(
-          `${BASE_URL}/api/drives/${assignmentDrive.id}/assign-faculty`,
-          {
-            assignments: [
-              {
-                faculty_id: facultyId,
-                department: assignmentForm.department || "ALL",
-                assigned_from: assignmentForm.assigned_from,
-                assigned_to: assignmentForm.assigned_to,
-              },
-            ],
-          },
-          { headers: authHeaders }
-        );
-        setExistingAssignments((prev) => ({ ...prev, assigned_faculty: response?.data?.assigned_faculty || prev.assigned_faculty }));
-      } else {
-        await axios.post(
-          `${BASE_URL}/api/admin/coordinator/assign`,
-          {
-            faculty_id: facultyId,
-            drive_id: Number(assignmentDrive.id),
-            assigned_from: toIsoDateTime(assignmentForm.assigned_from, false),
-            assigned_to: toIsoDateTime(assignmentForm.assigned_to, true),
-          },
-          { headers: authHeaders }
-        );
+      const response = await fetch(`/api/drives/${assignmentDrive.id}/assign`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...authHeaders,
+        },
+        body: JSON.stringify({
+          faculty_id: facultyId,
+          role: assignmentMode,
+          assigned_from: assignmentForm.assigned_from,
+          assigned_to: assignmentForm.assigned_to,
+        }),
+      });
 
-        const detailsRes = await axios.get(`${BASE_URL}/api/drives/${assignmentDrive.id}/details`, { headers: authHeaders });
-        setExistingAssignments((prev) => ({
-          ...prev,
-          coordinator_assignments: detailsRes?.data?.coordinator_assignments || prev.coordinator_assignments,
-        }));
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload?.detail || "Failed to save assignment.");
       }
+
+      const detailsRes = await axios.get(`${BASE_URL}/api/drives/${assignmentDrive.id}/details`, { headers: authHeaders });
+      setExistingAssignments({
+        assigned_faculty: detailsRes?.data?.assigned_faculty || [],
+        coordinator_assignments: detailsRes?.data?.coordinator_assignments || [],
+        assignment_history: detailsRes?.data?.assignment_history || [],
+        expiry_notifications: detailsRes?.data?.expiry_notifications || [],
+      });
       setAssignmentForm(ASSIGNMENT_FORM_DEFAULT);
-      showSuccessModal(`${assignmentMode === "faculty" ? "Faculty" : "Coordinator"} assigned successfully`);
+      setShowAssignmentConfirm(false);
+      setAssignmentPreview(null);
+      setShowAssignmentModal(false);
+      const selectedFaculty = facultyList.find((item) => Number(item.id) === facultyId);
+      const facultyName = selectedFaculty?.name || "Faculty";
+      const roleLabel = assignmentMode === "faculty" ? "Faculty" : "Coordinator";
+      showSuccessModal(`✅ ${facultyName} assigned as ${roleLabel} successfully`);
       await fetchData();
     } catch (err) {
       setError(readErrorMessage(err, "Failed to save assignment."));
@@ -516,6 +536,8 @@ export default function AdminPlacement() {
       setExistingAssignments({
         assigned_faculty: detailsRes?.data?.assigned_faculty || [],
         coordinator_assignments: detailsRes?.data?.coordinator_assignments || [],
+        assignment_history: detailsRes?.data?.assignment_history || [],
+        expiry_notifications: detailsRes?.data?.expiry_notifications || [],
       });
       showSuccessModal("Assignment updated");
     } catch (err) {
@@ -540,6 +562,8 @@ export default function AdminPlacement() {
       setExistingAssignments({
         assigned_faculty: detailsRes?.data?.assigned_faculty || [],
         coordinator_assignments: detailsRes?.data?.coordinator_assignments || [],
+        assignment_history: detailsRes?.data?.assignment_history || [],
+        expiry_notifications: detailsRes?.data?.expiry_notifications || [],
       });
       showSuccessModal("Assignment removed");
     } catch (err) {
@@ -841,15 +865,27 @@ export default function AdminPlacement() {
           mode={assignmentMode}
           loading={assignmentModalBusy}
           facultyList={facultyList}
-          departments={departments}
           form={assignmentForm}
           assignments={existingAssignments}
           onFormChange={(next) => setAssignmentForm((prev) => ({ ...prev, ...next }))}
-          onClose={() => setShowAssignmentModal(false)}
-          onSubmit={submitAssignment}
+          onClose={() => {
+            setShowAssignmentModal(false);
+            setShowAssignmentConfirm(false);
+            setAssignmentPreview(null);
+          }}
+          onContinue={continueAssignment}
           onAssignmentsChange={setExistingAssignments}
           onSaveExisting={updateExistingAssignment}
           onRemoveExisting={removeExistingAssignment}
+        />
+      )}
+
+      {showAssignmentConfirm && assignmentPreview && (
+        <AssignmentConfirmModal
+          preview={assignmentPreview}
+          busy={assignmentModalBusy}
+          onCancel={() => setShowAssignmentConfirm(false)}
+          onConfirm={submitAssignment}
         />
       )}
 
@@ -921,22 +957,16 @@ function AssignmentModal({
   mode,
   loading,
   facultyList,
-  departments,
   form,
   assignments,
   onFormChange,
   onClose,
-  onSubmit,
+  onContinue,
   onAssignmentsChange,
   onSaveExisting,
   onRemoveExisting,
 }) {
   const isFacultyMode = mode === "faculty";
-  const normalizedDepartments = Array.isArray(departments)
-    ? departments
-        .map((dep) => String(dep?.name || "").trim().toUpperCase())
-        .filter((name, index, arr) => Boolean(name) && arr.indexOf(name) === index)
-    : [];
 
   const assignmentRows = isFacultyMode
     ? (assignments.assigned_faculty || []).map((row) => ({ ...row, role: "Faculty" }))
@@ -945,7 +975,6 @@ function AssignmentModal({
         role: "Coordinator",
         assigned_from: row.assigned_from ? row.assigned_from.slice(0, 10) : "",
         assigned_to: row.assigned_to ? row.assigned_to.slice(0, 10) : "",
-        department: row.department || "N/A",
       }));
 
   const withStatus = assignmentRows.map((row) => {
@@ -954,14 +983,17 @@ function AssignmentModal({
     return { ...row, computed_status: active ? "Active" : "Expired" };
   });
 
+  const historyRows = assignments.assignment_history || [];
+  const expiryNotifications = assignments.expiry_notifications || [];
+
   return (
     <Modal title={isFacultyMode ? "Assign Faculty" : "Assign Coordinator"} onClose={onClose}>
-      <div className="space-y-4">
-        <div className="grid gap-3 md:grid-cols-2">
+      <div className="space-y-4 rounded-xl p-6">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <div>
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Faculty</label>
+            <label className="text-xs font-medium text-slate-500">Faculty</label>
             <select
-              className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+              className="mt-1 h-10 w-full rounded-xl border border-slate-300 px-3 text-sm"
               value={form.faculty_id}
               onChange={(e) => {
                 onFormChange({ faculty_id: e.target.value });
@@ -970,85 +1002,73 @@ function AssignmentModal({
               <option value="">Select faculty</option>
               {facultyList.map((faculty) => (
                 <option key={faculty.id} value={faculty.id}>
-                  {faculty.name} ({faculty.department || "N/A"})
+                  {faculty.name}
                 </option>
               ))}
             </select>
           </div>
 
           <div>
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Drive</label>
-            <input value={`${drive.company_name || "Company"} - ${drive.title || "Drive"}`} disabled className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-700" />
+            <label className="text-xs font-medium text-slate-500">Drive</label>
+            <input value={`${drive.company_name || "Company"} - ${drive.title || "Drive"}`} disabled className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-slate-100 px-3 text-sm text-slate-700" />
           </div>
 
           <div>
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Assignment Type</label>
-            <input value={isFacultyMode ? "Faculty" : "Coordinator"} disabled className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-700" />
+            <label className="text-xs font-medium text-slate-500">Assignment Type</label>
+            <input value={isFacultyMode ? "Faculty" : "Coordinator"} disabled className="mt-1 h-10 w-full rounded-xl border border-slate-200 bg-slate-100 px-3 text-sm text-slate-700" />
           </div>
 
           <div>
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Department</label>
-            {isFacultyMode ? (
-              <select
-                value={form.department || "ALL"}
-                onChange={(e) => onFormChange({ department: e.target.value })}
-                className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
-              >
-                <option value="ALL">All Departments</option>
-                {normalizedDepartments.map((depName) => (
-                  <option key={depName} value={depName}>
-                    {depName}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <input value="N/A" disabled className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-600" />
-            )}
+            <label className="text-xs font-medium text-slate-500">Status</label>
+            <div className="mt-1 flex h-10 items-center">
+              <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">Active</span>
+            </div>
           </div>
 
           <div>
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Assigned From</label>
+            <label className="text-xs font-medium text-slate-500">From</label>
             <input
               type="date"
               value={form.assigned_from}
               onChange={(e) => onFormChange({ assigned_from: e.target.value })}
-              className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+              className="mt-1 h-10 w-full rounded-xl border border-slate-300 px-3 text-sm"
             />
           </div>
 
           <div>
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Assigned To</label>
+            <label className="text-xs font-medium text-slate-500">To</label>
             <input
               type="date"
               value={form.assigned_to}
               onChange={(e) => onFormChange({ assigned_to: e.target.value })}
-              className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+              className="mt-1 h-10 w-full rounded-xl border border-slate-300 px-3 text-sm"
             />
           </div>
         </div>
 
-        <div className="flex justify-end">
+        <div className="flex justify-end pt-1">
           <button
             type="button"
             disabled={loading}
-            onClick={onSubmit}
-            className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+            onClick={onContinue}
+            className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-lg disabled:opacity-60"
           >
-            {loading ? "Saving..." : `Assign ${isFacultyMode ? "Faculty" : "Coordinator"}`}
+            {loading ? "Please wait..." : "Continue"}
           </button>
         </div>
 
-        <div className="rounded-2xl border border-slate-200">
+        <div className="border-t border-slate-200 pt-4" />
+
+        <div className="rounded-xl border border-slate-200 shadow-sm">
           <div className="border-b border-slate-200 px-4 py-3">
             <p className="text-sm font-semibold text-slate-900">Existing Assignments</p>
           </div>
           <div className="overflow-x-auto">
-            <table className="min-w-full border-collapse text-left text-sm">
+            <table className="min-w-full border-collapse text-left text-xs">
               <thead>
                 <tr className="border-b border-slate-200 text-slate-600">
                   <th className="px-3 py-2">Faculty Name</th>
                   <th className="px-3 py-2">Role</th>
-                  <th className="px-3 py-2">Department</th>
                   <th className="px-3 py-2">From</th>
                   <th className="px-3 py-2">To</th>
                   <th className="px-3 py-2">Status</th>
@@ -1058,7 +1078,7 @@ function AssignmentModal({
               <tbody>
                 {withStatus.length === 0 ? (
                   <tr>
-                    <td className="px-3 py-3 text-slate-500" colSpan={7}>
+                    <td className="px-3 py-3 text-slate-500" colSpan={6}>
                       No assignments found for this role.
                     </td>
                   </tr>
@@ -1067,7 +1087,6 @@ function AssignmentModal({
                     <tr key={`${item.role}-${item.id}`} className="border-b border-slate-100">
                       <td className="px-3 py-2">{item.name || item.faculty_name || item.faculty_email || item.faculty_id}</td>
                       <td className="px-3 py-2">{item.role}</td>
-                      <td className="px-3 py-2">{item.role === "Faculty" ? formatDepartmentLabel(item.department) : "N/A"}</td>
                       <td className="px-3 py-2">
                         <input
                           type="date"
@@ -1085,7 +1104,7 @@ function AssignmentModal({
                               }));
                             }
                           }}
-                          className="rounded-lg border border-slate-300 px-2 py-1"
+                          className="h-8 rounded-lg border border-slate-300 px-2"
                         />
                       </td>
                       <td className="px-3 py-2">
@@ -1105,10 +1124,14 @@ function AssignmentModal({
                               }));
                             }
                           }}
-                          className="rounded-lg border border-slate-300 px-2 py-1"
+                          className="h-8 rounded-lg border border-slate-300 px-2"
                         />
                       </td>
-                      <td className="px-3 py-2">{item.computed_status}</td>
+                      <td className="px-3 py-2">
+                        <span className={`rounded-full px-2 py-1 text-[11px] font-semibold ${item.computed_status === "Active" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
+                          {item.computed_status}
+                        </span>
+                      </td>
                       <td className="px-3 py-2">
                         <div className="flex gap-2">
                           <button
@@ -1117,7 +1140,7 @@ function AssignmentModal({
                             onClick={() => onSaveExisting(item, item.role === "Faculty" ? "faculty" : "coordinator")}
                             className="rounded-lg bg-emerald-600 px-2 py-1 text-xs font-semibold text-white disabled:opacity-50"
                           >
-                            Edit
+                            Save
                           </button>
                           <button
                             type="button"
@@ -1136,15 +1159,66 @@ function AssignmentModal({
             </table>
           </div>
         </div>
+
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <div className="rounded-xl border border-slate-200 p-4 shadow-sm">
+            <p className="mb-2 text-sm font-semibold text-slate-900">Role Expiry Notifications</p>
+            {expiryNotifications.length === 0 ? (
+              <p className="text-xs text-slate-500">No expiry alerts right now.</p>
+            ) : (
+              <div className="space-y-2">
+                {expiryNotifications.slice(0, 6).map((item, index) => (
+                  <div key={`${item.faculty_id}-${item.assigned_to}-${index}`} className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    {item.message}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-xl border border-slate-200 p-4 shadow-sm">
+            <p className="mb-2 text-sm font-semibold text-slate-900">Assignment History</p>
+            {historyRows.length === 0 ? (
+              <p className="text-xs text-slate-500">No history records yet.</p>
+            ) : (
+              <div className="max-h-44 space-y-2 overflow-y-auto pr-1">
+                {historyRows.slice(0, 12).map((item) => (
+                  <div key={item.id} className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                    <span className="font-semibold">{item.faculty_name}</span>
+                    {` ${item.action} as ${item.role} • ${item.timestamp ? new Date(item.timestamp).toLocaleString() : "N/A"}`}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </Modal>
   );
 }
 
-function formatDepartmentLabel(value) {
-  const normalized = String(value || "").trim().toUpperCase();
-  if (!normalized || normalized === "ALL") return "All Departments";
-  return normalized;
+function AssignmentConfirmModal({ preview, busy, onCancel, onConfirm }) {
+  return (
+    <div className="fixed inset-0 z-[76] flex items-center justify-center bg-slate-900/55 p-4">
+      <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+        <h4 className="text-lg font-semibold text-slate-900">Confirm Assignment</h4>
+        <div className="mt-4 space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+          <p>Faculty: {preview.faculty_name}</p>
+          <p>Role: {preview.role === "faculty" ? "Faculty" : "Coordinator"}</p>
+          <p>Drive: {preview.drive_company}</p>
+          <p>Duration: {preview.assigned_from} {"->"} {preview.assigned_to}</p>
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <button onClick={onCancel} className="rounded-xl border border-slate-300 px-4 py-2 text-sm text-slate-700" disabled={busy}>
+            Cancel
+          </button>
+          <button onClick={onConfirm} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60" disabled={busy}>
+            {busy ? "Assigning..." : "Confirm Assignment"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function SuccessModal({ message }) {

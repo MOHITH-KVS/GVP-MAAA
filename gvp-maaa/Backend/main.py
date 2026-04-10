@@ -6,10 +6,11 @@ from io import BytesIO
 from fastapi.responses import StreamingResponse  # type: ignore
 from sqlalchemy.orm import Session, aliased  # type: ignore
 from sqlalchemy import text, extract, func, or_, case  # type: ignore
+from sqlalchemy.exc import IntegrityError  # type: ignore
 from typing import Optional, List, Dict, Any
 from security import hash_password, verify_password  # type: ignore
 from mail import send_reset_email  # type: ignore
-from schemas import  AlertCreate, AssignFacultyRequest, AssignSubjectRequest, AttendanceCreate, CoordinatorAssignRequest, CoordinatorExtendRequest, DriveNotifyFilteredRequest, DriveStudentUpdateRequest, DriveUpdate, FacultyAssignmentUpdateRequest, ResetPasswordRequest, StudentNotifyRequest, StudentPromotionRequest, TeacherAdminUpdate, TeacherDeleteRequest,TimetableCreate, TimetableResponse,StudentDeleteRequest,SubjectCreate,AttendanceAnalyticsResponse, MarksUpload, AdminOverviewResponse, DriveCreate, PlacementDriveFeedbackCreate  # type: ignore
+from schemas import  AlertCreate, AssignFacultyRequest, AssignSubjectRequest, AttendanceCreate, CoordinatorAssignRequest, CoordinatorExtendRequest, DriveNotifyFilteredRequest, DriveRoleAssignmentRequest, DriveStudentUpdateRequest, DriveUpdate, FacultyAssignmentUpdateRequest, ResetPasswordRequest, StudentNotifyRequest, StudentPromotionRequest, TeacherAdminUpdate, TeacherDeleteRequest,TimetableCreate, TimetableResponse,StudentDeleteRequest,SubjectCreate,AttendanceAnalyticsResponse, MarksUpload, AdminOverviewResponse, DriveCreate, PlacementDriveFeedbackCreate  # type: ignore
 import schemas  # type: ignore
 from datetime import datetime, timedelta, date
 from database import engine  # type: ignore
@@ -62,6 +63,8 @@ from models import (  # type: ignore
     DriveCoordinatorMap,
     DriveApplication,
     DriveFacultyMap,
+    AssignmentHistory,
+    AuditLog,
     StudentDrive,
 )
 
@@ -96,6 +99,14 @@ from services.placement_engine import (
     get_placement_readiness,
     get_selection_probability,
     get_skill_gap,
+)
+from services.admin_insights_engine import (
+    build_admin_insights,
+    get_admin_departments,
+    get_admin_overview_payload,
+    get_admin_risk_summary,
+    get_recent_admin_alerts,
+    run_admin_action,
 )
 
 
@@ -233,10 +244,34 @@ app.mount(
     name="uploads"
 )
 
+
+@app.middleware("http")
+async def expire_assignment_roles_middleware(request: Request, call_next):
+    # Throttle expiry updates so frequent requests do not cause repetitive writes.
+    global assignment_expiry_last_run_at
+    now = datetime.utcnow()
+    should_run = (
+        assignment_expiry_last_run_at is None
+        or (now - assignment_expiry_last_run_at).total_seconds() >= 60
+    )
+
+    if should_run:
+        db = SessionLocal()
+        try:
+            _expire_assignment_roles(db)
+            assignment_expiry_last_run_at = now
+        except Exception:
+            db.rollback()
+        finally:
+            db.close()
+
+    return await call_next(request)
+
 settings_cache = {}
 settings_cache_loaded = False
 departments_cache: List[Dict[str, Any]] = []
 departments_cache_expires_at: Optional[datetime] = None
+assignment_expiry_last_run_at: Optional[datetime] = None
 
 
 def refresh_settings_cache():
@@ -314,32 +349,6 @@ def _format_assignment_department(value: Optional[str]) -> str:
     if not normalized or normalized == "ALL":
         return "ALL"
     return normalized
-
-
-def _get_teacher_department_scope(drive_id: int, user_id: int, db: Session) -> Optional[set[str]]:
-    today = datetime.utcnow().date()
-    rows = (
-        db.query(DriveFacultyMap)
-        .filter(
-            DriveFacultyMap.drive_id == drive_id,
-            DriveFacultyMap.faculty_id == user_id,
-            DriveFacultyMap.is_active.is_(True),
-            DriveFacultyMap.assigned_from <= today,
-            DriveFacultyMap.assigned_to >= today,
-        )
-        .all()
-    )
-
-    if not rows:
-        return None
-
-    scoped_departments: set[str] = set()
-    for row in rows:
-        normalized = _normalize_department_value(row.department)
-        if not normalized or normalized == "ALL":
-            return set()
-        scoped_departments.add(normalized)
-    return scoped_departments
 
 
 def ensure_student_insights_columns():
@@ -738,11 +747,18 @@ def ensure_placement_schema():
 
         db.execute(text("""
             ALTER TABLE drive_faculty_map
+            ADD COLUMN IF NOT EXISTS role VARCHAR(30) DEFAULT 'faculty',
             ADD COLUMN IF NOT EXISTS department TEXT,
             ADD COLUMN IF NOT EXISTS assigned_from DATE,
             ADD COLUMN IF NOT EXISTS assigned_to DATE,
             ADD COLUMN IF NOT EXISTS assigned_by INT REFERENCES users(user_id) ON DELETE SET NULL,
             ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
+        """))
+
+        db.execute(text("""
+            UPDATE drive_faculty_map
+            SET role = COALESCE(NULLIF(BTRIM(role), ''), 'faculty')
+            WHERE role IS NULL OR BTRIM(role) = '';
         """))
 
         db.execute(text("""
@@ -762,6 +778,29 @@ def ensure_placement_schema():
                 assigned_to = COALESCE(assigned_to, DATE(assigned_at) + 365),
                 is_active = COALESCE(is_active, TRUE)
             WHERE assigned_from IS NULL OR assigned_to IS NULL OR is_active IS NULL;
+        """))
+
+        db.execute(text("""
+            DO $$
+            DECLARE
+                rec RECORD;
+            BEGIN
+                FOR rec IN
+                    SELECT c.conname
+                    FROM pg_constraint c
+                    JOIN pg_class t ON c.conrelid = t.oid
+                    WHERE t.relname = 'drive_faculty_map'
+                      AND c.contype = 'u'
+                      AND ARRAY(
+                        SELECT a.attname
+                        FROM unnest(c.conkey) AS key_col
+                        JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = key_col
+                        ORDER BY a.attname
+                      ) = ARRAY['drive_id', 'faculty_id']
+                LOOP
+                    EXECUTE format('ALTER TABLE drive_faculty_map DROP CONSTRAINT IF EXISTS %I', rec.conname);
+                END LOOP;
+            END $$;
         """))
 
         db.execute(text("""
@@ -788,6 +827,28 @@ def ensure_placement_schema():
                 new_data JSON,
                 user_id INT REFERENCES users(user_id) ON DELETE SET NULL,
                 timestamp TIMESTAMP DEFAULT NOW()
+            );
+        """))
+
+        db.execute(text("""
+            CREATE TABLE IF NOT EXISTS assignment_history (
+                id SERIAL PRIMARY KEY,
+                drive_id INT REFERENCES placement_drives(id) ON DELETE CASCADE,
+                faculty_id INT REFERENCES users(user_id) ON DELETE CASCADE,
+                role VARCHAR(30) NOT NULL,
+                action VARCHAR(30) NOT NULL,
+                timestamp TIMESTAMP DEFAULT NOW()
+            );
+        """))
+
+        db.execute(text("""
+            CREATE TABLE IF NOT EXISTS audit_logs (
+                id SERIAL PRIMARY KEY,
+                action_type VARCHAR(80) NOT NULL,
+                performed_by INT REFERENCES users(user_id) ON DELETE SET NULL,
+                target_id INT REFERENCES users(user_id) ON DELETE SET NULL,
+                metadata JSON,
+                created_at TIMESTAMP DEFAULT NOW()
             );
         """))
 
@@ -2339,6 +2400,72 @@ def _log_drive_audit(db: Session, drive_id: int, action: str, old_data: Optional
     )
 
 
+def _expire_assignment_roles(db: Session) -> int:
+    today = datetime.utcnow().date()
+    now = datetime.utcnow()
+
+    faculty_expired = (
+        db.query(DriveFacultyMap)
+        .filter(
+            DriveFacultyMap.is_active.is_(True),
+            DriveFacultyMap.assigned_to.isnot(None),
+            DriveFacultyMap.assigned_to < today,
+        )
+        .all()
+    )
+
+    coordinator_expired = (
+        db.query(DriveCoordinatorMap)
+        .filter(
+            DriveCoordinatorMap.is_active.is_(True),
+            DriveCoordinatorMap.assigned_to < now,
+        )
+        .all()
+    )
+
+    changed = 0
+    for row in faculty_expired:
+        row.is_active = False
+        changed += 1
+    for row in coordinator_expired:
+        row.is_active = False
+        changed += 1
+
+    if changed:
+        db.commit()
+    return changed
+
+
+def _record_assignment_history(db: Session, drive_id: int, faculty_id: int, role: str, action: str) -> None:
+    db.add(
+        AssignmentHistory(
+            drive_id=int(drive_id),
+            faculty_id=int(faculty_id),
+            role=str(role).lower(),
+            action=str(action).lower(),
+            timestamp=datetime.utcnow(),
+        )
+    )
+
+
+def _record_assignment_audit(
+    db: Session,
+    action_type: str,
+    performed_by: Optional[int],
+    target_id: Optional[int],
+    metadata: Optional[Dict[str, Any]],
+) -> None:
+    db.add(
+        AuditLog(
+            action_type=action_type,
+            performed_by=performed_by,
+            target_id=target_id,
+            metadata=metadata or {},
+            created_at=datetime.utcnow(),
+        )
+    )
+
+
 def _close_expired_drives(db: Session) -> int:
     today = datetime.utcnow().date()
     rows = (
@@ -2569,21 +2696,35 @@ def _is_assigned_faculty_for_drive(drive_id: int, user_id: int, db: Session) -> 
 
 def is_active_coordinator(user_id: int, db: Session, drive_id: Optional[int] = None) -> bool:
     now = datetime.utcnow()
-    query = db.query(DriveCoordinatorMap).filter(
+    today = now.date()
+
+    legacy_query = db.query(DriveCoordinatorMap).filter(
         DriveCoordinatorMap.faculty_id == user_id,
         DriveCoordinatorMap.is_active.is_(True),
         DriveCoordinatorMap.assigned_from <= now,
         DriveCoordinatorMap.assigned_to >= now,
     )
     if drive_id is not None:
-        query = query.filter(
+        legacy_query = legacy_query.filter(
             or_(DriveCoordinatorMap.drive_id == drive_id, DriveCoordinatorMap.drive_id.is_(None))
         )
-    return db.query(query.exists()).scalar()
+
+    unified_query = db.query(DriveFacultyMap).filter(
+        DriveFacultyMap.faculty_id == user_id,
+        DriveFacultyMap.is_active.is_(True),
+        func.lower(func.coalesce(DriveFacultyMap.role, "")) == "coordinator",
+        DriveFacultyMap.assigned_from <= today,
+        DriveFacultyMap.assigned_to >= today,
+    )
+    if drive_id is not None:
+        unified_query = unified_query.filter(DriveFacultyMap.drive_id == drive_id)
+
+    return bool(db.query(legacy_query.exists()).scalar() or db.query(unified_query.exists()).scalar())
 
 
 def _active_coordinator_drive_ids(user_id: int, db: Session) -> List[int]:
     now = datetime.utcnow()
+    today = now.date()
     rows = (
         db.query(DriveCoordinatorMap)
         .filter(
@@ -2604,6 +2745,22 @@ def _active_coordinator_drive_ids(user_id: int, db: Session) -> List[int]:
     for row in rows:
         if row.drive_id is not None:
             result.append(int(row.drive_id))
+
+    mapped_rows = (
+        db.query(DriveFacultyMap)
+        .filter(
+            DriveFacultyMap.faculty_id == user_id,
+            DriveFacultyMap.is_active.is_(True),
+            func.lower(func.coalesce(DriveFacultyMap.role, "")) == "coordinator",
+            DriveFacultyMap.assigned_from <= today,
+            DriveFacultyMap.assigned_to >= today,
+        )
+        .all()
+    )
+    for row in mapped_rows:
+        if row.drive_id is not None:
+            result.append(int(row.drive_id))
+
     return sorted(set(result))
 
 
@@ -3106,6 +3263,17 @@ def get_auth_me(
     }
 
 
+@app.get("/api/user/role")
+def get_user_role_status(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    user_id = int(current_user["user_id"])
+    return {
+        "isCoordinator": bool(is_active_coordinator(user_id=user_id, db=db)),
+    }
+
+
 @app.get("/api/faculty/coordinator/drives")
 def get_faculty_coordinator_drives(
     current_user: dict = Depends(authorize(["teacher", "coordinator", "admin"])),
@@ -3203,6 +3371,20 @@ def assign_placement_coordinator(
         created_by=int(current_user["user_id"]),
     )
     db.add(row)
+    if drive_id is not None:
+        _record_assignment_history(db, drive_id, faculty_id, "coordinator", "assigned")
+    _record_assignment_audit(
+        db,
+        "ASSIGN_COORDINATOR",
+        int(current_user["user_id"]),
+        faculty_id,
+        {
+            "drive_id": drive_id,
+            "role": "coordinator",
+            "from": assigned_from.isoformat() if assigned_from else None,
+            "to": assigned_to.isoformat() if assigned_to else None,
+        },
+    )
     db.commit()
     db.refresh(row)
 
@@ -3232,7 +3414,7 @@ def list_coordinator_assignments(
 def extend_coordinator_assignment(
     assignment_id: int,
     payload: CoordinatorExtendRequest,
-    _: dict = Depends(authorize(["admin"])),
+    current_user: dict = Depends(authorize(["admin"])),
     db: Session = Depends(get_db),
 ):
     row = db.query(DriveCoordinatorMap).filter(DriveCoordinatorMap.id == assignment_id).first()
@@ -3268,6 +3450,20 @@ def extend_coordinator_assignment(
     row.assigned_from = new_from
     row.assigned_to = new_to
     row.is_active = True
+    if row.drive_id is not None:
+        _record_assignment_history(db, row.drive_id, row.faculty_id, "coordinator", "updated")
+    _record_assignment_audit(
+        db,
+        "UPDATE_COORDINATOR_ASSIGNMENT",
+        int(current_user["user_id"]),
+        row.faculty_id,
+        {
+            "drive_id": row.drive_id,
+            "role": "coordinator",
+            "from": new_from.isoformat() if new_from else None,
+            "to": new_to.isoformat() if new_to else None,
+        },
+    )
     db.commit()
     db.refresh(row)
 
@@ -3280,7 +3476,7 @@ def extend_coordinator_assignment(
 @app.delete("/api/admin/coordinator/assignments/{assignment_id}")
 def revoke_coordinator_assignment(
     assignment_id: int,
-    _: dict = Depends(authorize(["admin"])),
+    current_user: dict = Depends(authorize(["admin"])),
     db: Session = Depends(get_db),
 ):
     row = db.query(DriveCoordinatorMap).filter(DriveCoordinatorMap.id == assignment_id).first()
@@ -3288,6 +3484,20 @@ def revoke_coordinator_assignment(
         raise HTTPException(status_code=404, detail="Coordinator assignment not found")
 
     row.is_active = False
+    if row.drive_id is not None:
+        _record_assignment_history(db, row.drive_id, row.faculty_id, "coordinator", "removed")
+    _record_assignment_audit(
+        db,
+        "REMOVE_COORDINATOR_ASSIGNMENT",
+        int(current_user["user_id"]),
+        row.faculty_id,
+        {
+            "drive_id": row.drive_id,
+            "role": "coordinator",
+            "from": row.assigned_from.isoformat() if row.assigned_from else None,
+            "to": row.assigned_to.isoformat() if row.assigned_to else None,
+        },
+    )
     db.commit()
 
     return {
@@ -3395,12 +3605,96 @@ def get_admin_placement_analytics(
 @app.post("/api/drives/{drive_id}/assign")
 def assign_students_to_drive(
     drive_id: int,
-    _: dict = Depends(authorize(["coordinator", "admin", "teacher"])),
+    payload: Optional[DriveRoleAssignmentRequest] = Body(default=None),
+    current_user: dict = Depends(authorize(["coordinator", "admin", "teacher"])),
     db: Session = Depends(get_db),
 ):
     drive = db.query(PlacementDrive).filter(PlacementDrive.id == drive_id).first()
     if not drive:
         raise HTTPException(status_code=404, detail="Drive not found")
+
+    if payload is not None:
+        _expire_assignment_roles(db)
+        role_value = str(payload.role or "").strip().lower()
+        if role_value not in {"faculty", "coordinator"}:
+            raise HTTPException(status_code=400, detail="role must be 'faculty' or 'coordinator'")
+
+        faculty_id = int(payload.faculty_id)
+        assigned_from = payload.assigned_from
+        assigned_to = payload.assigned_to
+        if assigned_to <= assigned_from:
+            raise HTTPException(status_code=400, detail="Invalid date range")
+
+        faculty = (
+            db.query(User)
+            .filter(
+                User.user_id == faculty_id,
+                func.lower(func.coalesce(User.role, "")).in_(["faculty", "teacher"]),
+            )
+            .first()
+        )
+        if not faculty:
+            raise HTTPException(status_code=404, detail="Faculty user not found")
+
+        existing = (
+            db.query(DriveFacultyMap)
+            .filter(
+                DriveFacultyMap.drive_id == drive_id,
+                DriveFacultyMap.faculty_id == faculty_id,
+                DriveFacultyMap.is_active.is_(True),
+                func.lower(func.coalesce(DriveFacultyMap.role, "")) == role_value,
+                DriveFacultyMap.assigned_to >= date.today(),
+            )
+            .first()
+        )
+        if existing:
+            raise HTTPException(status_code=400, detail="Already assigned")
+
+        new_row = DriveFacultyMap(
+            drive_id=drive_id,
+            faculty_id=faculty_id,
+            role=role_value,
+            department=None,
+            assigned_from=assigned_from,
+            assigned_to=assigned_to,
+            assigned_by=int(current_user["user_id"]),
+            is_active=True,
+        )
+        try:
+            db.add(new_row)
+
+            if role_value == "coordinator":
+                db.add(
+                    DriveCoordinatorMap(
+                        drive_id=drive_id,
+                        faculty_id=faculty_id,
+                        assigned_from=datetime.combine(assigned_from, datetime.min.time()),
+                        assigned_to=datetime.combine(assigned_to, datetime.max.time()),
+                        is_active=True,
+                        created_by=int(current_user["user_id"]),
+                    )
+                )
+
+            _record_assignment_history(db, drive_id, faculty_id, role_value, "assigned")
+            _record_assignment_audit(
+                db,
+                "ASSIGN_COORDINATOR" if role_value == "coordinator" else "ASSIGN_FACULTY",
+                int(current_user["user_id"]),
+                faculty_id,
+                {
+                    "drive_id": drive_id,
+                    "role": role_value,
+                    "from": assigned_from.isoformat() if assigned_from else None,
+                    "to": assigned_to.isoformat() if assigned_to else None,
+                },
+            )
+
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(status_code=400, detail="Already assigned")
+
+        return {"message": "Assigned successfully", "drive_id": drive_id}
 
     assigned = _auto_assign_students_for_drive(drive, db)
 
@@ -3448,13 +3742,12 @@ def assign_faculty_to_drive(
         if assigned_to < assigned_from:
             raise HTTPException(status_code=400, detail="assigned_to must be on or after assigned_from")
 
-        department_value = _resolve_assignment_department(item.department, db)
-
         db.add(
             DriveFacultyMap(
                 drive_id=drive_id,
                 faculty_id=faculty_id,
-                department=department_value,
+                role="faculty",
+                department=None,
                 assigned_from=assigned_from,
                 assigned_to=assigned_to,
                 assigned_by=int(current_user["user_id"]),
@@ -3470,7 +3763,10 @@ def assign_faculty_to_drive(
         db.query(DriveFacultyMap, User, assigned_by_alias)
         .join(User, User.user_id == DriveFacultyMap.faculty_id)
         .outerjoin(assigned_by_alias, assigned_by_alias.user_id == DriveFacultyMap.assigned_by)
-        .filter(DriveFacultyMap.drive_id == drive_id)
+        .filter(
+            DriveFacultyMap.drive_id == drive_id,
+            func.lower(func.coalesce(DriveFacultyMap.role, "faculty")) == "faculty",
+        )
         .order_by(DriveFacultyMap.assigned_at.desc(), DriveFacultyMap.id.desc())
         .all()
     )
@@ -3499,7 +3795,7 @@ def update_drive_faculty_assignment(
     drive_id: int,
     mapping_id: int,
     payload: FacultyAssignmentUpdateRequest,
-    _: dict = Depends(authorize(["admin", "coordinator"])),
+    current_user: dict = Depends(authorize(["admin", "coordinator"])),
     db: Session = Depends(get_db),
 ):
     mapping = (
@@ -3519,6 +3815,20 @@ def update_drive_faculty_assignment(
     if payload.is_active is not None:
         mapping.is_active = bool(payload.is_active)
 
+    _record_assignment_history(db, drive_id, mapping.faculty_id, mapping.role or "faculty", "updated")
+    _record_assignment_audit(
+        db,
+        "UPDATE_FACULTY_ASSIGNMENT",
+        int(current_user["user_id"]),
+        mapping.faculty_id,
+        {
+            "drive_id": drive_id,
+            "role": str(mapping.role or "faculty").lower(),
+            "from": mapping.assigned_from.isoformat() if mapping.assigned_from else None,
+            "to": mapping.assigned_to.isoformat() if mapping.assigned_to else None,
+            "is_active": bool(mapping.is_active),
+        },
+    )
     db.commit()
     return {"message": "Faculty assignment updated", "id": mapping.id}
 
@@ -3527,7 +3837,7 @@ def update_drive_faculty_assignment(
 def deactivate_drive_faculty_assignment(
     drive_id: int,
     mapping_id: int,
-    _: dict = Depends(authorize(["admin", "coordinator"])),
+    current_user: dict = Depends(authorize(["admin", "coordinator"])),
     db: Session = Depends(get_db),
 ):
     mapping = (
@@ -3539,6 +3849,19 @@ def deactivate_drive_faculty_assignment(
         raise HTTPException(status_code=404, detail="Faculty assignment not found")
 
     mapping.is_active = False
+    _record_assignment_history(db, drive_id, mapping.faculty_id, mapping.role or "faculty", "removed")
+    _record_assignment_audit(
+        db,
+        "REMOVE_FACULTY_ASSIGNMENT",
+        int(current_user["user_id"]),
+        mapping.faculty_id,
+        {
+            "drive_id": drive_id,
+            "role": str(mapping.role or "faculty").lower(),
+            "from": mapping.assigned_from.isoformat() if mapping.assigned_from else None,
+            "to": mapping.assigned_to.isoformat() if mapping.assigned_to else None,
+        },
+    )
     db.commit()
     return {"message": "Faculty assignment removed", "id": mapping.id}
 
@@ -3896,46 +4219,80 @@ def get_drive_details(
     current_user: dict = Depends(authorize(["admin", "coordinator", "teacher"])),
     db: Session = Depends(get_db),
 ):
-    _close_expired_drives(db)
+    try:
+        _close_expired_drives(db)
+        _expire_assignment_roles(db)
+    except Exception:
+        db.rollback()
+
     drive = db.query(PlacementDrive).filter(PlacementDrive.id == drive_id).first()
     if not drive:
         raise HTTPException(status_code=404, detail="Drive not found")
 
-    can_update = _can_update_drive_students(drive_id, current_user, db)
-    teacher_department_scope: Optional[set[str]] = None
-    if _normalized_role(current_user) == "teacher":
-        teacher_department_scope = _get_teacher_department_scope(drive_id, int(current_user["user_id"]), db)
+    try:
+        can_update = _can_update_drive_students(drive_id, current_user, db)
+    except Exception:
+        db.rollback()
+        can_update = False
 
-    rows = (
-        db.query(StudentDrive, Student, User)
-        .join(Student, Student.student_id == StudentDrive.student_id)
-        .join(User, User.user_id == Student.student_id)
-        .filter(StudentDrive.drive_id == drive_id)
-        .order_by(User.name.asc())
-        .all()
-    )
+    try:
+        rows = (
+            db.query(StudentDrive, Student, User)
+            .join(Student, Student.student_id == StudentDrive.student_id)
+            .join(User, User.user_id == Student.student_id)
+            .filter(StudentDrive.drive_id == drive_id)
+            .order_by(User.name.asc())
+            .all()
+        )
+    except Exception:
+        db.rollback()
+        rows = []
 
     assigned_by_alias = aliased(User)
-    assigned_faculty_rows = (
-        db.query(DriveFacultyMap, User, assigned_by_alias)
-        .join(User, User.user_id == DriveFacultyMap.faculty_id)
-        .outerjoin(assigned_by_alias, assigned_by_alias.user_id == DriveFacultyMap.assigned_by)
-        .filter(DriveFacultyMap.drive_id == drive_id)
-        .order_by(DriveFacultyMap.assigned_at.desc(), DriveFacultyMap.id.desc())
-        .all()
-    )
-
-    coordinator_rows = (
-        db.query(DriveCoordinatorMap)
-        .filter(
-            or_(
-                DriveCoordinatorMap.drive_id == drive_id,
-                DriveCoordinatorMap.drive_id.is_(None),
+    try:
+        assigned_faculty_rows = (
+            db.query(DriveFacultyMap, User, assigned_by_alias)
+            .join(User, User.user_id == DriveFacultyMap.faculty_id)
+            .outerjoin(assigned_by_alias, assigned_by_alias.user_id == DriveFacultyMap.assigned_by)
+            .filter(
+                DriveFacultyMap.drive_id == drive_id,
+                func.lower(func.coalesce(DriveFacultyMap.role, "faculty")) == "faculty",
             )
+            .order_by(DriveFacultyMap.assigned_at.desc(), DriveFacultyMap.id.desc())
+            .all()
         )
-        .order_by(DriveCoordinatorMap.created_at.desc(), DriveCoordinatorMap.id.desc())
-        .all()
-    )
+    except Exception:
+        db.rollback()
+        assigned_faculty_rows = []
+
+    try:
+        coordinator_rows = (
+            db.query(DriveCoordinatorMap)
+            .filter(
+                or_(
+                    DriveCoordinatorMap.drive_id == drive_id,
+                    DriveCoordinatorMap.drive_id.is_(None),
+                )
+            )
+            .order_by(DriveCoordinatorMap.created_at.desc(), DriveCoordinatorMap.id.desc())
+            .all()
+        )
+    except Exception:
+        db.rollback()
+        coordinator_rows = []
+
+    try:
+        history_rows = (
+            db.query(AssignmentHistory, User)
+            .join(User, User.user_id == AssignmentHistory.faculty_id)
+            .filter(AssignmentHistory.drive_id == drive_id)
+            .order_by(AssignmentHistory.timestamp.desc(), AssignmentHistory.id.desc())
+            .limit(100)
+            .all()
+        )
+    except Exception:
+        db.rollback()
+        history_rows = []
 
     eligible_students = []
     applied_students = []
@@ -3943,23 +4300,34 @@ def get_drive_details(
     selection_results = []
 
     for sd, student, user in rows:
-        app_row = (
-            db.query(DriveApplication)
-            .filter(DriveApplication.drive_id == drive_id, DriveApplication.student_id == student.student_id)
-            .first()
-        )
+        try:
+            app_row = (
+                db.query(DriveApplication)
+                .filter(DriveApplication.drive_id == drive_id, DriveApplication.student_id == student.student_id)
+                .first()
+            )
+        except Exception:
+            db.rollback()
+            app_row = None
+
         updated_by_name = None
         if app_row and app_row.updated_by:
-            updater = db.query(User).filter(User.user_id == app_row.updated_by).first()
-            if updater:
-                updated_by_name = updater.name
+            try:
+                updater = db.query(User).filter(User.user_id == app_row.updated_by).first()
+                if updater:
+                    updated_by_name = updater.name
+            except Exception:
+                db.rollback()
+                updated_by_name = None
 
         branch_name = DEPARTMENT_MAP.get(int(user.department_id or 0), str(user.department_id or "N/A"))
-        if teacher_department_scope and str(branch_name or "").strip().upper() not in teacher_department_scope:
-            continue
-        current_round = int((app_row.current_round if app_row else sd.current_round) or 0)
-        final_result = str((app_row.final_status if app_row else sd.final_result) or "pending")
-        application_status = str((app_row.application_status if app_row else ("applied" if sd.applied else "not_applied")) or "not_applied")
+        app_current_round = getattr(app_row, "current_round", None) if app_row else None
+        app_final_status = getattr(app_row, "final_status", None) if app_row else None
+        app_application_status = getattr(app_row, "application_status", None) if app_row else None
+
+        current_round = int((app_current_round if app_row else sd.current_round) or 0)
+        final_result = str((app_final_status if app_row else sd.final_result) or "pending")
+        application_status = str((app_application_status if app_row else ("applied" if sd.applied else "not_applied")) or "not_applied")
 
         student_payload = {
             "student_drive_id": sd.id,
@@ -3990,6 +4358,27 @@ def get_drive_details(
 
         if final_result in {"selected", "rejected", "pending"}:
             selection_results.append(student_payload)
+
+    coordinator_assignments = []
+    for row in coordinator_rows:
+        try:
+            coordinator_assignments.append(_serialize_coordinator_assignment(row, db))
+        except Exception:
+            db.rollback()
+
+    today = date.today()
+    expiry_notifications = []
+    for mapping, user, _assigned_by_user in assigned_faculty_rows:
+        if mapping.assigned_to and mapping.assigned_to < today:
+            expiry_notifications.append(
+                {
+                    "faculty_id": user.user_id,
+                    "faculty_name": user.name,
+                    "role": str(mapping.role or "faculty").lower(),
+                    "assigned_to": mapping.assigned_to.isoformat(),
+                    "message": f"{user.name} assignment expired on {mapping.assigned_to.isoformat()}",
+                }
+            )
 
     return {
         "drive": {
@@ -4022,7 +4411,20 @@ def get_drive_details(
             }
             for mapping, user, assigned_by_user in assigned_faculty_rows
         ],
-        "coordinator_assignments": [_serialize_coordinator_assignment(row, db) for row in coordinator_rows],
+        "coordinator_assignments": coordinator_assignments,
+        "assignment_history": [
+            {
+                "id": history.id,
+                "drive_id": history.drive_id,
+                "faculty_id": history.faculty_id,
+                "faculty_name": user.name,
+                "role": history.role,
+                "action": history.action,
+                "timestamp": history.timestamp.isoformat() if history.timestamp else None,
+            }
+            for history, user in history_rows
+        ],
+        "expiry_notifications": expiry_notifications,
         "eligible_students": eligible_students,
         "applied_students": applied_students,
         "interview_progress": interview_progress,
@@ -4077,10 +4479,6 @@ def get_drive_students_filtered(
         raise HTTPException(status_code=404, detail="Drive not found")
 
     can_update = _can_update_drive_students(drive_id, current_user, db)
-    teacher_department_scope: Optional[set[str]] = None
-    if _normalized_role(current_user) == "teacher":
-        teacher_department_scope = _get_teacher_department_scope(drive_id, int(current_user["user_id"]), db)
-
     rows = (
         db.query(StudentDrive, Student, User)
         .join(Student, Student.student_id == StudentDrive.student_id)
@@ -4100,8 +4498,6 @@ def get_drive_students_filtered(
             .first()
         )
         branch_name = DEPARTMENT_MAP.get(int(user.department_id or 0), str(user.department_id or "N/A"))
-        if teacher_department_scope and str(branch_name or "").strip().upper() not in teacher_department_scope:
-            continue
         final_status = str((app_row.final_status if app_row else sd.final_result) or "pending").lower()
         app_status = str((app_row.application_status if app_row else ("applied" if sd.applied else "not_applied")) or "not_applied").lower()
 
@@ -4890,42 +5286,16 @@ def mark_attendance(
             db.query(AlertRecipient).filter(
                 AlertRecipient.alert_id == old.id
             ).delete()
-            db.delete(old)
-
-        db.commit()
-
-        # Create new alert
-        new_alert = Alert(
-            title="Attendance Updated",
-            message=f"{faculty_user.name} updated your attendance for {subject.subject_name} on {payload.date}.",
-            type="attendance",
-            target_role="student",
-            target_type="individual",
-            student_id=student_id
-        )
-
-        db.add(new_alert)
-        db.commit()
-        db.refresh(new_alert)
-
-        recipient = AlertRecipient(
-            alert_id=new_alert.id,
-            user_id=student_id,
-            is_read=False
-        )
-
-        db.add(recipient)
-        db.commit()
-
-    return {"message": "Attendance saved successfully"}
-
-
-
-
-# -------------------------
-# FACULTY – GET STUDENTS FOR ATTENDANCE
-# -------------------------
-@app.get("/faculty/attendance/students")
+            db.execute(text("""
+                INSERT INTO departments (name)
+                SELECT v.name
+                FROM (VALUES ('CSE'), ('ECE'), ('EEE'), ('MECH'), ('CIVIL'), ('CSM')) AS v(name)
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM departments d
+                    WHERE UPPER(BTRIM(d.name)) = v.name
+                );
+            """))
 def get_students_for_attendance(
     year: int,
     section: str,
@@ -6967,6 +7337,95 @@ def delete_alert(
     db.commit()
 
     return {"message": "Alert deleted successfully"}
+
+
+# =========================
+# ADMIN INSIGHTS API (NEW)
+# =========================
+@app.get("/api/admin/departments")
+@app.get("/admin/departments")
+def get_admin_insights_departments(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    try:
+        return get_admin_departments(db)
+    except Exception as exc:
+        print(f"[admin/departments] fallback due to error: {exc}")
+        return []
+
+
+@app.get("/api/admin/overview")
+def get_admin_insights_overview(
+    department: Optional[str] = Query(default=None),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    return get_admin_overview_payload(db, department=department)
+
+
+@app.get("/api/admin/alerts")
+def get_admin_insights_alerts(
+    department: Optional[str] = Query(default=None),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    return get_recent_admin_alerts(db, limit=10, department=department)
+
+
+@app.get("/api/admin/risk-summary")
+def get_admin_insights_risk_summary(
+    department: Optional[str] = Query(default=None),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    return get_admin_risk_summary(db, department=department)
+
+
+@app.get("/api/admin/insights")
+def get_admin_insights(
+    department: Optional[str] = Query(default=None),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    return build_admin_insights(db, limit=5, department=department)
+
+
+@app.post("/api/admin/actions/assign-mentoring")
+def assign_admin_mentoring_action(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    return run_admin_action(db, action_type="assign_mentoring", actor_user_id=current_user.get("user_id"))
+
+
+@app.post("/api/admin/actions/send-alerts")
+def send_admin_alerts_action(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    return run_admin_action(db, action_type="send_alerts", actor_user_id=current_user.get("user_id"))
 
 
 # =========================

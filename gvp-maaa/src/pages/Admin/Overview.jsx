@@ -304,8 +304,12 @@ export default function AdminOverview() {
 
             <div className="mt-6 space-y-4">
               {overview.alerts.length ? (
-                overview.alerts.map((alert) => (
-                  <AlertRow key={alert.title + alert.timestamp} alert={alert} onAction={() => handleCardClick("/admin/alerts")} />
+                overview.alerts.map((alert, index) => (
+                  <AlertRow
+                    key={`${alert.title || "alert"}-${alert.timestamp || "no-time"}-${index}`}
+                    alert={alert}
+                    onAction={() => handleCardClick("/admin/alerts")}
+                  />
                 ))
               ) : (
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-slate-600">

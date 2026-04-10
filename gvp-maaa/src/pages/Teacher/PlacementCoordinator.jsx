@@ -12,54 +12,55 @@ function formatDateTime(value) {
 export default function PlacementCoordinator() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [assignmentState, setAssignmentState] = useState("not_assigned");
+  const [isCoordinator, setIsCoordinator] = useState(false);
   const [drives, setDrives] = useState([]);
-  const [lastAssignedTo, setLastAssignedTo] = useState(null);
 
   useEffect(() => {
-    const fetchCoordinatorContext = async () => {
-      setLoading(true);
+    let isMounted = true;
+
+    const fetchCoordinatorContext = async (initial = false) => {
+      if (initial) setLoading(true);
       setError("");
       try {
-        const meRes = await api.get("/api/auth/me");
-        const capability = meRes?.data?.capabilities?.placement_coordinator || {};
-        const nextState = String(capability.assignment_state || "not_assigned");
-        setAssignmentState(nextState);
-        setLastAssignedTo(capability.last_assigned_to || null);
+        const roleRes = await api.get("/api/user/role");
+        const nextIsCoordinator = Boolean(roleRes?.data?.isCoordinator);
+        if (!isMounted) return;
+        setIsCoordinator(nextIsCoordinator);
 
-        if (nextState === "active") {
+        if (nextIsCoordinator) {
           const drivesRes = await api.get("/api/faculty/coordinator/drives");
+          if (!isMounted) return;
           setDrives(Array.isArray(drivesRes?.data?.drives) ? drivesRes.data.drives : []);
         } else {
           setDrives([]);
         }
       } catch (err) {
+        if (!isMounted) return;
         const detail = err?.response?.data?.detail || "Unable to load coordinator access.";
         setError(detail);
-        if (err?.response?.status === 403) {
-          setAssignmentState("not_assigned");
-        }
+        setIsCoordinator(false);
+        setDrives([]);
       } finally {
-        setLoading(false);
+        if (isMounted && initial) {
+          setLoading(false);
+        }
       }
     };
 
-    fetchCoordinatorContext();
+    fetchCoordinatorContext(true);
+    const intervalId = window.setInterval(() => fetchCoordinatorContext(false), 10000);
+    return () => {
+      isMounted = false;
+      window.clearInterval(intervalId);
+    };
   }, []);
 
   const lockCard = useMemo(() => {
-    if (assignmentState === "active") {
+    if (isCoordinator) {
       return {
         title: "Coordinator Access Active",
         description: "You have active coordinator access for assigned drives.",
         helper: "",
-      };
-    }
-    if (assignmentState === "expired") {
-      return {
-        title: "Coordinator Access Locked",
-        description: `Your coordinator access expired on ${formatDateTime(lastAssignedTo)}.`,
-        helper: "Contact admin if you believe this is incorrect.",
       };
     }
     return {
@@ -67,7 +68,7 @@ export default function PlacementCoordinator() {
       description: "You are not currently assigned as a Placement Coordinator.",
       helper: "Contact admin if you believe this is incorrect.",
     };
-  }, [assignmentState, lastAssignedTo]);
+  }, [isCoordinator]);
 
   if (loading) {
     return (
@@ -77,7 +78,7 @@ export default function PlacementCoordinator() {
     );
   }
 
-  const isLocked = assignmentState !== "active";
+  const isLocked = !isCoordinator;
 
   return (
     <div className="space-y-6 pb-10">

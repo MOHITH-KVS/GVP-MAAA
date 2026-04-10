@@ -311,13 +311,19 @@ class PlacementDriveFeedbackCreate(BaseModel):
 
 class FacultyAssignmentItem(BaseModel):
     faculty_id: int
-    department: str
     assigned_from: DateType
     assigned_to: DateType
 
 
 class AssignFacultyRequest(BaseModel):
     assignments: List[FacultyAssignmentItem]
+
+
+class DriveRoleAssignmentRequest(BaseModel):
+    faculty_id: int
+    role: str
+    assigned_from: DateType
+    assigned_to: DateType
 
 
 class FacultyAssignmentUpdateRequest(BaseModel):
