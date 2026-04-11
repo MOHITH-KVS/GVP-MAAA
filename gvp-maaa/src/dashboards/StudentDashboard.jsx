@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import api from "../utils/axios";
+import { recordRouteVisit } from "../utils/navigationHistory";
 
 
 
@@ -18,6 +19,7 @@ import Insights from "../pages/Student/Insights";
 import Alerts from "../pages/Student/Alerts";
 import ViewProfile from "../pages/Student/ViewProfile";
 import Logout from "../pages/Logout";
+import Smart404 from "../components/Smart404";
 
 /* ===== Material UI Icons ===== */
 import DashboardIcon from "@mui/icons-material/Dashboard";
@@ -72,6 +74,8 @@ export default function StudentDashboard() {
     return availableStudentPages.includes(page) ? page : "overview";
   };
 
+  const isValidPage = availableStudentPages.includes(resolvePageFromPath(location.pathname));
+
   const goToPage = (page) => {
     const targetPath = page === "overview" ? "/student" : `/student/${page}`;
     navigate(targetPath);
@@ -80,6 +84,22 @@ export default function StudentDashboard() {
   useEffect(() => {
     setActivePage(resolvePageFromPath(location.pathname));
   }, [location.pathname]);
+
+  useEffect(() => {
+    if (!isValidPage) {
+      return;
+    }
+
+    const page = resolvePageFromPath(location.pathname);
+    const path = page === "overview" ? "/student" : `/student/${page}`;
+    const labelMap = {
+      attendance: "View Attendance",
+      marks: "Check Results",
+      overview: "Dashboard",
+    };
+
+    recordRouteVisit({ label: labelMap[page] || "Dashboard", path, role: "student" });
+  }, [isValidPage, location.pathname]);
 
 
   // Fetch student profile on mount
@@ -144,6 +164,10 @@ export default function StudentDashboard() {
 
   if (showLogout) {
     return <Logout onBack={() => setShowLogout(false)} />;
+  }
+
+  if (!isValidPage) {
+    return <Smart404 />;
   }
 
   if (!profile) {

@@ -16,6 +16,8 @@ import Logout from "../pages/Logout";
 import TeacherProfilePage from "../pages/Teacher/TeacherProfilePage";
 import Placement from "../pages/Teacher/Placement";
 import PlacementCoordinator from "../pages/Teacher/PlacementCoordinator";
+import Smart404 from "../components/Smart404";
+import { recordRouteVisit } from "../utils/navigationHistory";
 
 /* ICONS */
 import DashboardIcon from "@mui/icons-material/Dashboard";
@@ -74,6 +76,8 @@ export default function TeacherDashboard() {
     return availableTeacherPages.includes(page) ? page : "overview";
   };
 
+  const isValidPage = availableTeacherPages.includes(resolvePageFromPath(location.pathname));
+
   const goToPage = (page) => {
     const targetPath = page === "overview" ? "/teacher" : `/teacher/${page}`;
     setActivePage(page);
@@ -83,6 +87,22 @@ export default function TeacherDashboard() {
   useEffect(() => {
     setActivePage(resolvePageFromPath(location.pathname));
   }, [location.pathname]);
+
+  useEffect(() => {
+    if (!isValidPage) {
+      return;
+    }
+
+    const page = resolvePageFromPath(location.pathname);
+    const path = page === "overview" ? "/teacher" : `/teacher/${page}`;
+    const labelMap = {
+      attendance: "Take Attendance",
+      marks: "Upload Marks",
+      overview: "View Classes",
+    };
+
+    recordRouteVisit({ label: labelMap[page] || "View Classes", path, role: "teacher" });
+  }, [isValidPage, location.pathname]);
 
 
   useEffect(() => {
@@ -118,6 +138,10 @@ export default function TeacherDashboard() {
 
   if (showLogout) {
     return <Logout onBack={() => setShowLogout(false)} role="teacher" />;
+  }
+
+  if (!isValidPage) {
+    return <Smart404 />;
   }
 
   if (!profile) {

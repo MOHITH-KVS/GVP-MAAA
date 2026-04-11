@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useLocation, Outlet } from "react-router-dom";
 
 /* ===== ADMIN PAGES ===== */
@@ -12,6 +12,8 @@ import Insights from "../pages/Admin/Insights";
 import Settings from "../pages/Admin/Settings";
 import ErrorBoundary from "../components/ErrorBoundary";
 import Logout from "../pages/Logout";
+import Smart404 from "../components/Smart404";
+import { recordRouteVisit } from "../utils/navigationHistory";
 
 /* ===== ICONS ===== */
 import DashboardIcon from "@mui/icons-material/Dashboard";
@@ -34,7 +36,34 @@ export default function AdminDashboard() {
   const navigate = useNavigate();
   const location = useLocation();
 
+  const availableAdminPages = [
+    "overview",
+    "students",
+    "teachers",
+    "academics",
+    "timetable",
+    "alerts",
+    "insights",
+    "placement",
+    "settings",
+  ];
+
   const activePage = location.pathname.replace(/\/$/, "").split("/")[2] || "overview";
+
+  useEffect(() => {
+    if (!availableAdminPages.includes(activePage)) {
+      return;
+    }
+
+    const path = activePage === "overview" ? "/admin" : `/admin/${activePage}`;
+    const labelMap = {
+      overview: "Dashboard",
+      students: "Manage Users",
+      insights: "View Reports",
+    };
+
+    recordRouteVisit({ label: labelMap[activePage] || "Dashboard", path, role: "admin" });
+  }, [activePage]);
 
   /* ===== LOGOUT FLOW ===== */
   if (showLogout) {
@@ -44,6 +73,10 @@ export default function AdminDashboard() {
         onBack={() => setShowLogout(false)}
       />
     );
+  }
+
+  if (!availableAdminPages.includes(activePage)) {
+    return <Smart404 />;
   }
 
   return (

@@ -28,6 +28,7 @@ import AdminAccountSuccess from "./pages/Authorization/AdminAccountSuccess";
 /* ================= PROTECTED ROUTE ================= */
 import ProtectedRoute from "./components/ProtectedRoute";
 import ErrorBoundary from "./components/ErrorBoundary";
+import Smart404 from "./components/Smart404";
 
 
 /* ================= DASHBOARDS ================= */
@@ -125,6 +126,8 @@ export default function App() {
 
       {/* RESET PASSWORD */}
       <Route path="/reset-password" element={<ResetPassword />} />
+
+      <Route path="*" element={<Smart404 />} />
 
 
       </Routes>
