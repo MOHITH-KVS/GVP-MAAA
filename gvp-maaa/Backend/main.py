@@ -5296,6 +5296,10 @@ def mark_attendance(
                     WHERE UPPER(BTRIM(d.name)) = v.name
                 );
             """))
+
+
+@app.get("/faculty/attendance/students")
+@app.get("/attendance/students")
 def get_students_for_attendance(
     year: int,
     section: str,
@@ -9761,11 +9765,13 @@ def get_all_subjects(
 # =========================
 # ADMIN – SUBJECT PERFORMANCE
 @app.get("/admin/subject-performance")
+@app.get("/analytics")
 def get_subject_performance(
     department: Optional[str] = Query(None),
     year: Optional[str] = Query(None),
     semester: Optional[str] = Query(None),
     assessment_type: Optional[str] = Query(None),
+    assessment: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -9775,11 +9781,14 @@ def get_subject_performance(
     if not department or department == "All" or department.strip() == "" or \
        not year or str(year) == "All" or str(year).strip() == "" or \
        not semester or str(semester) == "All" or str(semester).strip() == "" or \
-       not assessment_type or assessment_type == "All" or assessment_type.strip() == "":
+       not (assessment_type or assessment) or (assessment_type or assessment) == "All" or str(assessment_type or assessment).strip() == "":
         return {
             "subjects": [],
             "kpis": None,
-            "students": []
+            "students": [],
+            "avg_marks": None,
+            "at_risk_students": 0,
+            "pass_rate": None,
         }
 
     query = db.query(Subject)
@@ -9806,7 +9815,8 @@ def get_subject_performance(
         "Mid 2": "Mid-2",
         "Semester": "Semester"
     }
-    db_exam = mapping.get(assessment_type, assessment_type)
+    assessment_value = assessment_type or assessment
+    db_exam = mapping.get(assessment_value, assessment_value)
 
     if db_exam in ["Mid-1", "Mid-2"]:
         pass_threshold = 15
@@ -9871,7 +9881,10 @@ def get_subject_performance(
         return {
             "subjects": [],
             "kpis": None,
-            "students": []
+            "students": [],
+            "avg_marks": None,
+            "at_risk_students": 0,
+            "pass_rate": None,
         }
 
     # Calculate actual KPIs
@@ -9916,7 +9929,10 @@ def get_subject_performance(
     return {
         "subjects": sorted(final_subjects, key=lambda x: (-x["failure_count"], x["avg_marks"])),
         "kpis": kpis,
-        "students": at_risk_students
+        "students": at_risk_students,
+        "avg_marks": avg_marks,
+        "at_risk_students": int(at_risk_count or 0),
+        "pass_rate": overall_pass_rate,
     }
 
 # =========================

@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import GoogleIcon from "@mui/icons-material/Google";
 import SchoolIcon from "@mui/icons-material/School";
 import CircularProgress from "@mui/material/CircularProgress";
 import VisibilityIcon from "@mui/icons-material/Visibility";
@@ -231,18 +230,6 @@ export default function StudentSignIn() {
           </button>
 
         </div>
-
-        {/* DIVIDER */}
-        <div className="flex items-center gap-4 my-6">
-          <div className="flex-1 h-px bg-slate-200"></div>
-          <span className="text-xs text-slate-400">or continue with</span>
-          <div className="flex-1 h-px bg-slate-200"></div>
-        </div>
-
-        {/* SOCIAL LOGIN */}
-        <div className="grid grid-cols-1 gap-4">
-          <SocialButton icon={GoogleIcon} label="Google" />
-        </div>
       </div>
     </div>
   );
@@ -265,18 +252,6 @@ function Input({ label, type = "text", placeholder, value, onChange }) {
                    focus:outline-none focus:ring-2 focus:ring-indigo-500"
       />
     </div>
-  );
-}
-
-function SocialButton({ icon: Icon, label }) {
-  return (
-    <button
-      className="flex items-center justify-center gap-2 py-2.5 rounded-xl 
-                 border hover:bg-slate-50 transition text-sm font-medium"
-    >
-      <Icon fontSize="small" />
-      {label}
-    </button>
   );
 }
 

@@ -5,12 +5,14 @@ import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 
 export default function Attendance() {
   const token = localStorage.getItem("access_token");
+  const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8000").replace(/\/+$/, "");
 
   /* ================= STATES ================= */
   const [subjects, setSubjects] = useState([]);
   const [selectedSubject, setSelectedSubject] = useState(null);
 
   const [students, setStudents] = useState([]);
+  const [studentsMessage, setStudentsMessage] = useState("Select subject to load students");
   const [attendanceData, setAttendanceData] = useState([]);
 
   const getToday = () => {
@@ -74,14 +76,40 @@ export default function Attendance() {
 
   /* ================= LOAD STUDENTS ================= */
   const loadStudents = async (subject) => {
-    if (!subject) return;
+    if (!subject) {
+      setStudents([]);
+      setAttendanceData([]);
+      setStudentsMessage("Select subject to load students");
+      setAlreadyMarked(false);
+      return;
+    }
+
+    const subject_id = Number(subject.subject_id);
+    const year = Number(subject.year);
+    const section = String(subject.section || "").trim();
+
+    console.log({ subject_id, year, section });
+
+    if (!subject_id || !year || !section) {
+      setStudents([]);
+      setAttendanceData([]);
+      setStudentsMessage("Invalid class details. Please reselect the subject.");
+      return;
+    }
 
     setLoading(true);
+    setStudentsMessage("Loading students...");
 
     try {
       // 1️⃣ Load students
+      const params = new URLSearchParams({
+        year: String(year),
+        section,
+        subject_id: String(subject_id),
+      });
+
       const res = await fetch(
-        `http://localhost:8000/faculty/attendance/students?year=${subject.year}&section=${subject.section}&subject_id=${subject.subject_id}`,
+        `${API_BASE_URL}/faculty/attendance/students?${params.toString()}`,
         {
           headers: {
             Authorization: `Bearer ${token}`,
@@ -89,19 +117,30 @@ export default function Attendance() {
         }
       );
 
+      if (!res.ok) {
+        setStudents([]);
+        setAttendanceData([]);
+        setStudentsMessage("Failed to load students");
+        setLoading(false);
+        return;
+      }
+
       const data = await res.json();
 
       if (!Array.isArray(data)) {
         setStudents([]);
+        setAttendanceData([]);
+        setStudentsMessage("Invalid response while loading students");
         setLoading(false);
         return;
       }
 
       setStudents(data);
+      setStudentsMessage(data.length === 0 ? "No students found" : "");
 
       // 2️⃣ Check if attendance exists
       const checkRes = await fetch(
-        `http://localhost:8000/faculty/attendance/check?subject_id=${subject.subject_id}&date=${date}`,
+        `${API_BASE_URL}/faculty/attendance/check?subject_id=${subject_id}&date=${date}`,
         {
           headers: {
             Authorization: `Bearer ${token}`,
@@ -115,7 +154,7 @@ export default function Attendance() {
       // 3️⃣ If already marked → load saved attendance
       if (checkData.already_marked) {
         const editRes = await fetch(
-          `http://localhost:8000/faculty/attendance/by-date?subject_id=${subject.subject_id}&date=${date}`,
+          `${API_BASE_URL}/faculty/attendance/by-date?subject_id=${subject_id}&date=${date}`,
           {
             headers: {
               Authorization: `Bearer ${token}`,
@@ -138,6 +177,9 @@ export default function Attendance() {
 
     } catch (err) {
       console.error("Error loading students", err);
+      setStudents([]);
+      setAttendanceData([]);
+      setStudentsMessage("Failed to load students");
     }
 
     setLoading(false);
@@ -145,6 +187,15 @@ export default function Attendance() {
 
   /* ================= SUBJECT CHANGE ================= */
   const handleSubjectChange = (id) => {
+    if (!id) {
+      setSelectedSubject(null);
+      setStudents([]);
+      setAttendanceData([]);
+      setAlreadyMarked(false);
+      setStudentsMessage("Select subject to load students");
+      return;
+    }
+
     const subject = subjects.find(
       (s) => s.subject_id === parseInt(id)
     );
@@ -159,31 +210,6 @@ export default function Attendance() {
       loadStudents(selectedSubject);
     }
   }, [date]);
-
-  /* ================= ATTENDANCE CHECK ================= */
-  useEffect(() => {
-    const checkAttendance = async () => {
-      if (!selectedSubject || !date) return;
-
-      try {
-        const res = await fetch(
-          `http://localhost:8000/faculty/attendance/check?subject_id=${selectedSubject.subject_id}&date=${date}`,
-          {
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
-          }
-        );
-
-        const data = await res.json();
-        setAlreadyMarked(data.already_marked);
-      } catch (err) {
-        console.error("Error checking attendance", err);
-      }
-    };
-
-    checkAttendance();
-  }, [selectedSubject, date]);
 
   /* ================= TOGGLE ================= */
   const toggleAttendance = (id) => {
@@ -464,7 +490,7 @@ export default function Attendance() {
           <p>Loading...</p>
         ) : students.length === 0 ? (
           <p className="text-gray-400 text-center py-6">
-            Select subject to load students
+            {studentsMessage}
           </p>
         ) : (
           <div className="space-y-3">

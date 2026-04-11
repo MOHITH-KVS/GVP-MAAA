@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_BACKEND_URL;
-const rawBaseUrl = configuredBaseUrl || (import.meta.env.DEV ? '' : 'http://127.0.0.1:8000');
+const rawBaseUrl = configuredBaseUrl || 'http://localhost:8000';
 const baseURL = rawBaseUrl ? (rawBaseUrl.endsWith('/') ? rawBaseUrl.slice(0, -1) : rawBaseUrl) : '';
 
 const api = axios.create({

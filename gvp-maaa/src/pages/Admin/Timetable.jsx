@@ -15,6 +15,8 @@ export default function Timetable() {
   const [semester, setSemester] = useState("");
   const [timetableType, setTimetableType] = useState("");
   const [filterAudience, setFilterAudience] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
 
 
 
@@ -45,6 +47,9 @@ export default function Timetable() {
 
 
 const fetchTimetables = async () => {
+  setLoading(true);
+  setErrorMsg("");
+
   try {
     const params = new URLSearchParams();
 
@@ -55,10 +60,23 @@ const fetchTimetables = async () => {
     if (filterAudience) params.append("audience", filterAudience);
 
     const response = await api.get(`/timetables?${params.toString()}`);
-    setTimetables(response.data);
+    console.log(response.data);
+
+    const rawData = response?.data;
+    const normalized = Array.isArray(rawData)
+      ? rawData
+      : Array.isArray(rawData?.data)
+      ? rawData.data
+      : [];
+
+    setTimetables(normalized);
 
   } catch (err) {
     console.error("Error fetching timetables:", err);
+    setTimetables([]);
+    setErrorMsg("Failed to load timetables. Please try again.");
+  } finally {
+    setLoading(false);
   }
 };
  
@@ -90,6 +108,8 @@ const fetchTimetables = async () => {
     throw err;
   }
  };
+
+  const safeTimetables = Array.isArray(timetables) ? timetables : [];
 
   return (
     <div className="space-y-8">
@@ -200,6 +220,14 @@ const fetchTimetables = async () => {
 
       {/* LIST */}
       <div className="bg-white rounded-2xl border overflow-hidden">
+        {loading && (
+          <div className="p-4 text-sm text-slate-500">Loading timetables...</div>
+        )}
+
+        {!loading && errorMsg && (
+          <div className="p-4 text-sm text-red-600">{errorMsg}</div>
+        )}
+
         <table className="w-full text-sm">
           <thead className="bg-gray-50">
             <tr>
@@ -212,8 +240,8 @@ const fetchTimetables = async () => {
             </tr>
           </thead>
           <tbody>
-            {timetables.map((t) => (
-              <tr key={t.id} className="border-t">
+            {Array.isArray(safeTimetables) && safeTimetables.map((t, index) => (
+              <tr key={t.id ?? `${t.file_url || "file"}-${t.uploaded_at || index}`} className="border-t">
                 <td className="px-4 py-3 font-medium">
                   {t.title}
                 </td>
@@ -257,6 +285,14 @@ const fetchTimetables = async () => {
                 </td>
               </tr>
             ))}
+
+            {!loading && !errorMsg && safeTimetables.length === 0 && (
+              <tr className="border-t">
+                <td colSpan="6" className="px-4 py-6 text-center text-slate-500">
+                  No timetable data available
+                </td>
+              </tr>
+            )}
          </tbody>
 
         </table>

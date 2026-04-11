@@ -13,6 +13,7 @@ import {
 /* ================= ADMIN ACADEMICS ================= */
 
 export default function Academics() {
+  const API_BASE_URL = "http://localhost:8000";
   const [showSubjectModal, setShowSubjectModal] = useState(false);
   const [showNoticeModal, setShowNoticeModal] = useState(false);
 
@@ -32,35 +33,34 @@ export default function Academics() {
   const [atRiskStudents, setAtRiskStudents] = useState([]);
 
   const fetchSubjectPerformance = async () => {
-    if (!departmentFilter || !yearFilter || !semesterFilter || !assessmentFilter) {
-      setSubjectPerformance([]);
-      setRiskySubjects([]);
-      setAtRiskStudents([]);
-      setKpis({ avgMarks: null, atRisk: null, passRate: null });
-      return;
-    }
-
     setPerformanceLoading(true);
     setPerformanceError("");
 
     try {
-      const params = {};
-      if (departmentFilter) params.department = departmentFilter;
-      if (yearFilter) params.year = Number(yearFilter);
-      if (semesterFilter) params.semester = Number(semesterFilter);
-      if (assessmentFilter) params.assessment_type = assessmentFilter;
+      const params = {
+        department: departmentFilter || undefined,
+        year: yearFilter || undefined,
+        semester: semesterFilter || undefined,
+        assessment: assessmentFilter || undefined,
+      };
 
-      const response = await api.get("/admin/subject-performance", {
+      const response = await api.get(`${API_BASE_URL}/analytics`, {
         params,
       });
+
+      console.log("Analytics API:", response.data);
 
       const payload = response.data || {};
       const consolidatedSubjects = Array.isArray(payload.subjects) ? payload.subjects : [];
 
       setSubjectPerformance(consolidatedSubjects);
       setRiskySubjects(consolidatedSubjects);
-      setAtRiskStudents(payload.students || []);
-      setKpis(payload.kpis || { avgMarks: null, atRisk: null, passRate: null });
+      setAtRiskStudents(Array.isArray(payload.students) ? payload.students : []);
+      setKpis({
+        avgMarks: payload.avg_marks ?? payload.kpis?.avgMarks ?? null,
+        atRisk: payload.at_risk_students ?? payload.kpis?.atRisk ?? null,
+        passRate: payload.pass_rate ?? payload.kpis?.passRate ?? null,
+      });
 
     } catch (error) {
       console.error("Subject performance fetch failed", error);
@@ -98,13 +98,6 @@ export default function Academics() {
           className="px-4 py-2 rounded-xl border bg-white hover:bg-gray-50"
         >
           📘 Manage Subjects
-        </button>
-
-        <button
-          className="px-4 py-2 rounded-xl border bg-white hover:bg-gray-50"
-          type="button"
-        >
-          📄 Export Excel
         </button>
 
         <button
@@ -172,9 +165,9 @@ export default function Academics() {
 
       {/* ================= KPI CARDS ================= */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <Kpi title="Avg Marks" value={kpis.avgMarks !== null ? kpis.avgMarks : "--"} />
-        <Kpi title="At-Risk Students" value={kpis.atRisk !== null ? kpis.atRisk : "--"} danger />
-        <Kpi title="Pass Rate (%)" value={kpis.passRate !== null ? `${kpis.passRate}%` : "--"} />
+        <Kpi title="Avg Marks" value={kpis.avgMarks ?? "--"} />
+        <Kpi title="At-Risk Students" value={kpis.atRisk ?? "--"} danger />
+        <Kpi title="Pass Rate (%)" value={kpis.passRate ?? "--"} />
       </div>
 
       {/* ================= SUBJECT PERFORMANCE OVERVIEW ================= */}
@@ -194,7 +187,7 @@ export default function Academics() {
           </div>
         ) : !departmentFilter || !yearFilter || !semesterFilter || !assessmentFilter ? (
           <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-12 text-center text-slate-500">
-            Please select all filters
+            No data available for selected filters
           </div>
         ) : performanceError ? (
           <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-red-700">

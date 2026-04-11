@@ -342,29 +342,6 @@ export default function Insights() {
             <MetricPill label="Affected Students" value={totalAtRisk} />
             <MetricPill label="Confidence" value={heroInsight?.confidence || "low"} />
           </div>
-          <div className="mt-6 flex flex-wrap gap-3">
-            <button
-              onClick={() => handleAction(heroInsight?.action || "assign_mentoring")}
-              className="rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-rose-700"
-              type="button"
-            >
-              Assign Mentoring to {Math.max(totalAtRisk, highRiskStudents)} Students
-            </button>
-            <button
-              onClick={() => handleAction("send_alerts")}
-              className="rounded-xl border border-rose-300 bg-white px-4 py-2 text-sm font-semibold text-rose-700 transition hover:bg-rose-50"
-              type="button"
-            >
-              Send Alerts to {criticalCases} Students
-            </button>
-            <button
-              onClick={() => goToStudentList({ department: topDepartment?.department || departmentFilter })}
-              className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-              type="button"
-            >
-              Review Department {topDepartment?.department || "-"}
-            </button>
-          </div>
         </div>
       </Section>
 
