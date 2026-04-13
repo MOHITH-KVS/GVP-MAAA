@@ -110,17 +110,23 @@ export default function Marks() {
     if (!subjectObj?.subject_id) return;
 
     try {
-      const response = await fetch(
-        `http://localhost:8000/faculty/marks/template?year=${year}&section=${section}&subject_id=${subjectObj.subject_id}`,
-        { headers: { "Authorization": `Bearer ${localStorage.getItem("access_token")}` } }
+      const res = await api.get(
+        `/faculty/marks/template?year=${year}&section=${section}&subject_id=${subjectObj.subject_id}`,
+        { responseType: "blob" }
       );
-      if (!response.ok) throw new Error("Download failed");
-      const blob = await response.blob();
+
+      const url = window.URL.createObjectURL(new Blob([res.data]));
       const link = document.createElement("a");
-      link.href = window.URL.createObjectURL(blob);
-      link.download = "marks_template.xlsx";
+      link.href = url;
+      link.setAttribute("download", "marks_template.xlsx");
+      document.body.appendChild(link);
       link.click();
-    } catch (err) {
+      link.remove();
+
+      setMessage("Template downloaded successfully");
+      setMessageType("success");
+    } catch (error) {
+      console.error("Download failed", error);
       setMessage("Download failed");
       setMessageType("error");
     }

@@ -8313,124 +8313,6 @@ async def upload_marks_excel(
 
 
 # =========================
-# FACULTY – DOWNLOAD MARKS TEMPLATE
-# =========================
-@app.get("/faculty/marks/template")
-def download_marks_template(
-    year: int = Query(...),
-    section: str = Query(...),
-    subject_id: int = Query(...),
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    if current_user["role"] != "faculty":
-        from fastapi.responses import JSONResponse  # type: ignore
-        return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
-
-    print("Year:", year)
-    print("Section:", section)
-
-    # Get students in the class
-    students = (
-        db.query(Student, User)
-        .join(User, Student.student_id == User.user_id)
-        .filter(
-            Student.year == year,
-            Student.section == section
-        )
-        .all()
-    )
-
-    print("Students count:", len(students))
-
-    if not students:
-        return {"error": "No students found"}
-
-    # Create DataFrame with simplified columns
-    import pandas as pd  # type: ignore
-    import io
-    data = []
-    for student, user in students:
-        data.append({
-            "Register Number": student.roll_no,
-            "Student Name": user.name,
-            "Marks": ""  # Single marks column
-        })
-
-    report_format = get_report_format("marks")
-    if report_format == "excel":
-        df = pd.DataFrame(data)
-        output = io.BytesIO()
-        df.to_excel(output, index=False, engine="openpyxl")
-        output.seek(0)
-        from fastapi.responses import StreamingResponse  # type: ignore
-        return StreamingResponse(
-            output,
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": "attachment; filename=marks_template.xlsx"}
-        )
-
-    if report_format == "pdf":
-        buffer = BytesIO()
-        doc = SimpleDocTemplate(buffer, pagesize=A4)
-        styles = getSampleStyleSheet()
-        elements = [Paragraph("Marks Template", styles["Heading1"]), Spacer(1, 0.2 * inch)]
-        table_data = [["Register Number", "Student Name", "Marks"]] + [[row["Register Number"], row["Student Name"], ""] for row in data]
-        table = Table(table_data, repeatRows=1)
-        table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), colors.grey),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-            ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
-        ]))
-        elements.append(table)
-        doc.build(elements)
-        buffer.seek(0)
-        return StreamingResponse(
-            buffer,
-            media_type="application/pdf",
-            headers={"Content-Disposition": "attachment; filename=marks_template.pdf"}
-        )
-
-    if report_format == "docx":
-        try:
-            from docx import Document
-        except ImportError:
-            raise HTTPException(status_code=500, detail="DOCX export support is unavailable")
-        document = Document()
-        document.add_heading("Marks Template", level=1)
-        table_docx = document.add_table(rows=1, cols=3)
-        hdr_cells = table_docx.rows[0].cells
-        hdr_cells[0].text = "Register Number"
-        hdr_cells[1].text = "Student Name"
-        hdr_cells[2].text = "Marks"
-        for row in data:
-            cells = table_docx.add_row().cells
-            cells[0].text = str(row["Register Number"])
-            cells[1].text = str(row["Student Name"])
-            cells[2].text = ""
-        output = io.BytesIO()
-        document.save(output)
-        output.seek(0)
-        return StreamingResponse(
-            output,
-            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            headers={"Content-Disposition": "attachment; filename=marks_template.docx"}
-        )
-
-    # fallback to excel
-    df = pd.DataFrame(data)
-    output = io.BytesIO()
-    df.to_excel(output, index=False, engine="openpyxl")
-    output.seek(0)
-    from fastapi.responses import StreamingResponse  # type: ignore
-    return StreamingResponse(
-        output,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=marks_template.xlsx"}
-    )
-
-
-# =========================
 # STUDENT – GET ALERTS
 # =========================
 @app.get("/student/alerts")
@@ -12829,8 +12711,13 @@ def download_marks_template(
     year: int = Query(...),
     section: str = Query(...),
     subject_id: int = Query(...),
+    current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    # Verify user is faculty
+    if current_user.get("role") != "faculty":
+        raise HTTPException(status_code=403, detail="Only faculty members can download templates")
+    
     # Fetch students for the given year and section
     students = db.query(Student, User).join(User, Student.student_id == User.user_id).filter(
         Student.year == str(year),
