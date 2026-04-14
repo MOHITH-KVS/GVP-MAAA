@@ -19,6 +19,7 @@ import PlacementCoordinator from "../pages/Teacher/PlacementCoordinator";
 import Smart404 from "../components/Smart404";
 import Avatar from "../components/Avatar";
 import { recordRouteVisit } from "../utils/navigationHistory";
+import { useAlertSound } from "../hooks/useAlertSound";
 
 /* ICONS */
 import DashboardIcon from "@mui/icons-material/Dashboard";
@@ -58,6 +59,8 @@ export default function TeacherDashboard() {
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
   const location = useLocation();
+
+  useAlertSound(alerts);
 
   const availableTeacherPages = [
     "overview",
@@ -123,21 +126,32 @@ export default function TeacherDashboard() {
 
 
   useEffect(() => {
+    let isMounted = true;
+
     const fetchAlerts = async () => {
       try {
         const res = await api.get("/faculty/alerts");
-        setAlerts(res.data);
+        const nextAlerts = Array.isArray(res.data) ? res.data : [];
+        if (isMounted) {
+          setAlerts(nextAlerts);
+        }
       } catch (error) {
         console.error("Error fetching alerts", error);
       } finally {
-        setLoading(false);
+        if (isMounted) {
+          setLoading(false);
+        }
       }
     };
 
     fetchAlerts();
+    const intervalId = setInterval(fetchAlerts, 10000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(intervalId);
+    };
   }, []);
-
-
 
   if (showLogout) {
     return <Logout onBack={() => setShowLogout(false)} role="teacher" />;

@@ -41,6 +41,7 @@ import PersonIcon from "@mui/icons-material/Person";
 import MenuIcon from "@mui/icons-material/Menu";
 import LogoutIcon from "@mui/icons-material/Logout";
 import SkeletonBox from "../components/skeletons/SkeletonBox";
+import { useAlertSound } from "../hooks/useAlertSound";
 
 export default function StudentDashboard() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -53,6 +54,7 @@ export default function StudentDashboard() {
   const [loadingAlerts, setLoadingAlerts] = useState(true);
 
   const unreadCount = alerts.filter(a => !a.is_read).length;
+  useAlertSound(alerts);
 
   const navigate = useNavigate();
   const location = useLocation();
@@ -119,21 +121,32 @@ export default function StudentDashboard() {
   }, []);
 
   useEffect(() => {
+    let isMounted = true;
+
     const fetchAlerts = async () => {
       try {
         const res = await api.get("/student/alerts");
-        setAlerts(res.data);
+        const nextAlerts = Array.isArray(res.data) ? res.data : [];
+        if (isMounted) {
+          setAlerts(nextAlerts);
+        }
       } catch (error) {
         console.error("Error fetching alerts", error);
       } finally {
-        setLoadingAlerts(false);
+        if (isMounted) {
+          setLoadingAlerts(false);
+        }
       }
     };
 
     fetchAlerts();
+    const intervalId = setInterval(fetchAlerts, 10000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(intervalId);
+    };
   }, []);
-
-
 
   // Prevent back navigation
   useEffect(() => {

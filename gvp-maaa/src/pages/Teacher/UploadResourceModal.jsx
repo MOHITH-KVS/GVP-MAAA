@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import CloseIcon from "@mui/icons-material/Close";
+import api from "../../utils/axios";
 
 export default function UploadResourceModal({ onClose }) {
   const [type, setType] = useState("Study Material");
@@ -47,33 +48,31 @@ export default function UploadResourceModal({ onClose }) {
       setUploading(true);
       const formData = new FormData();
       formData.append("title", title);
-      formData.append("description", description);
+      formData.append("description", description || "");
       formData.append("subject_id", subject);
+      formData.append("resource_type", type);
       formData.append("type", type);
       formData.append("file", file);
 
-      const res = await fetch("http://localhost:8000/faculty/upload-resource", {
-        method: "POST",
+      for (const pair of formData.entries()) {
+        console.log(pair[0], pair[1]);
+      }
+
+      await api.post("/faculty/upload-resource", formData, {
         headers: {
-          Authorization: `Bearer ${token}`
+          "Content-Type": "multipart/form-data",
         },
-        body: formData
       });
 
-      if (res.ok) {
-        setSuccess(true);
-        window.dispatchEvent(new Event("resourceUploaded"));
-        setTimeout(() => {
-          setSuccess(false);
-          onClose();
-        }, 1500);
-      } else {
-        const err = await res.json();
-        alert("Upload failed: " + JSON.stringify(err));
-      }
+      setSuccess(true);
+      window.dispatchEvent(new Event("resourceUploaded"));
+      setTimeout(() => {
+        setSuccess(false);
+        onClose();
+      }, 1500);
     } catch (error) {
-      console.error("Upload error:", error);
-      alert("Upload failed");
+      console.error("Upload error:", error?.response?.data || error);
+      alert("Upload failed. Check console.");
     } finally {
       setUploading(false);
     }

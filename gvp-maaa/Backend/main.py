@@ -12221,9 +12221,10 @@ def start_scheduler():
 @app.post("/faculty/upload-resource")
 async def upload_resource(
     title: str = Form(...),
-    description: str = Form(...),
+    description: str = Form(""),
     subject_id: int = Form(...),
-    type: str = Form(...),
+    resource_type: str = Form(""),
+    type: str = Form(""),
     file: UploadFile = File(...),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -12242,12 +12243,16 @@ async def upload_resource(
         with open(file_location, "wb") as buffer:
             buffer.write(await file.read())
 
+        resolved_type = resource_type or type
+        if not resolved_type:
+            raise HTTPException(status_code=422, detail="resource_type (or type) is required")
+
         resource = Resource(
             title=title,
-            description=description,
+            description=description or "",
             subject_id=subject_id,
             faculty_id=current_user["user_id"],
-            type=type,
+            type=resolved_type,
             file_url=file_location,
             created_at=datetime.utcnow()
         )

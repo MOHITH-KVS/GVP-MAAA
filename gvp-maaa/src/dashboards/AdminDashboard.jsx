@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useLocation, Outlet } from "react-router-dom";
+import api from "../utils/api";
+import { useAlertSound } from "../hooks/useAlertSound";
 
 /* ===== ADMIN PAGES ===== */
 import Overview from "../pages/Admin/Overview";
@@ -33,8 +35,11 @@ import MenuIcon from "@mui/icons-material/Menu";
 export default function AdminDashboard() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [showLogout, setShowLogout] = useState(false);
+  const [alerts, setAlerts] = useState([]);
   const navigate = useNavigate();
   const location = useLocation();
+
+  useAlertSound(alerts);
 
   const availableAdminPages = [
     "overview",
@@ -64,6 +69,31 @@ export default function AdminDashboard() {
 
     recordRouteVisit({ label: labelMap[activePage] || "Dashboard", path, role: "admin" });
   }, [activePage]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const fetchAdminAlerts = async () => {
+      try {
+        const response = await api.get("/api/admin/alerts");
+        if (!isMounted) {
+          return;
+        }
+
+        setAlerts(Array.isArray(response.data) ? response.data : []);
+      } catch (error) {
+        console.error("Error fetching admin alerts", error);
+      }
+    };
+
+    fetchAdminAlerts();
+    const intervalId = setInterval(fetchAdminAlerts, 10000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(intervalId);
+    };
+  }, []);
 
   /* ===== LOGOUT FLOW ===== */
   if (showLogout) {

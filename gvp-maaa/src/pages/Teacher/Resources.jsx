@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import api from "../../utils/axios";
 
 export default function Resources() {
 
@@ -171,41 +172,38 @@ export default function Resources() {
       setUploading(true);
       const formData = new FormData();
       formData.append("title", newTitle);
-      formData.append("description", newDesc);
+      formData.append("description", newDesc || "");
       formData.append("subject_id", selectedSubject);
+      formData.append("resource_type", newType);
       formData.append("type", newType);
       formData.append("file", newFile);
 
-      const res = await fetch("http://localhost:8000/faculty/upload-resource", {
-        method: "POST",
+      for (const pair of formData.entries()) {
+        console.log(pair[0], pair[1]);
+      }
+
+      await api.post("/faculty/upload-resource", formData, {
         headers: {
-          Authorization: `Bearer ${token}`
+          "Content-Type": "multipart/form-data",
         },
-        body: formData
       });
 
-      if (res.ok) {
-        setShowConfirmModal(false);
-        // Show success animation
-        setShowSuccessModal(true);
-        setTimeout(() => {
-          setShowSuccessModal(false);
-          // Reset form
-          setNewTitle("");
-          setNewDesc("");
-          setNewType("Notes");
-          setNewFile(null);
-          // Refresh resources
-          fetchResources();
-        }, 2000);
-      } else {
-        const errorData = await res.json();
-        alert("Upload failed: " + JSON.stringify(errorData));
-        setShowConfirmModal(false);
-      }
+      setShowConfirmModal(false);
+      // Show success animation
+      setShowSuccessModal(true);
+      setTimeout(() => {
+        setShowSuccessModal(false);
+        // Reset form
+        setNewTitle("");
+        setNewDesc("");
+        setNewType("Notes");
+        setNewFile(null);
+        // Refresh resources
+        fetchResources();
+      }, 2000);
     } catch (err) {
-      console.error("Upload error:", err);
-      alert("Upload failed");
+      console.error("Upload error:", err?.response?.data || err);
+      alert("Upload failed. Check console.");
       setShowConfirmModal(false);
     } finally {
       setUploading(false);
