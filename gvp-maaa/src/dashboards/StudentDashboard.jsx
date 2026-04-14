@@ -17,6 +17,7 @@ import Resources from "../pages/Student/Resources";
 import Placement from "../pages/Student/Placement";
 import Insights from "../pages/Student/Insights";
 import Alerts from "../pages/Student/Alerts";
+import Avatar from "../components/Avatar";
 import ViewProfile from "../pages/Student/ViewProfile";
 import Logout from "../pages/Logout";
 import Smart404 from "../components/Smart404";
@@ -39,6 +40,7 @@ import CloseIcon from "@mui/icons-material/Close";
 import PersonIcon from "@mui/icons-material/Person";
 import MenuIcon from "@mui/icons-material/Menu";
 import LogoutIcon from "@mui/icons-material/Logout";
+import SkeletonBox from "../components/skeletons/SkeletonBox";
 
 export default function StudentDashboard() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -173,7 +175,14 @@ export default function StudentDashboard() {
   if (!profile) {
     return (
       <div className="h-screen flex items-center justify-center">
-        <p className="text-slate-500">Loading profile...</p>
+        <div className="w-full max-w-xl p-8">
+          <SkeletonBox className="h-10 w-56" />
+          <SkeletonBox className="h-4 w-80 mt-3" />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-8">
+            <SkeletonBox className="h-28 w-full rounded-xl" />
+            <SkeletonBox className="h-28 w-full rounded-xl" />
+          </div>
+        </div>
       </div>
     );
   }
@@ -333,9 +342,7 @@ function StudentProfile({ profile, onClose, onViewProfile }) {
       </button>
 
       <div className="text-center">
-        <div className="w-24 h-24 mx-auto rounded-full bg-indigo-500 text-white flex items-center justify-center text-3xl font-semibold">
-          {profile.name?.charAt(0).toUpperCase()}
-        </div>
+        <Avatar name={profile?.name || "Student"} sizeClass="w-24 h-24 text-3xl" dotClass="w-4 h-4" />
         <h3 className="mt-4 text-lg font-semibold">
           {profile.name}
         </h3>

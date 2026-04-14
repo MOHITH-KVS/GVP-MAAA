@@ -13,6 +13,10 @@ import GroupIcon from "@mui/icons-material/Group";
 import EmojiEventsIcon from "@mui/icons-material/EmojiEvents";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import ErrorOutlineIcon from "@mui/icons-material/ErrorOutline";
+import SkeletonBox from "../../components/skeletons/SkeletonBox";
+import SkeletonCard from "../../components/skeletons/SkeletonCard";
+import SkeletonTable from "../../components/skeletons/SkeletonTable";
+import SkeletonProfile from "../../components/skeletons/SkeletonProfile";
 
 export default function Overview({ profile }) {
   const [subjects, setSubjects] = useState([]);
@@ -153,7 +157,9 @@ export default function Overview({ profile }) {
     return Object.keys(dist).map(key => ({ range: key, count: dist[key] }));
   }, [data.metrics, selectedMetric]);
 
-  if (loading && subjects.length === 0) return <div className="p-8 text-center text-gray-500">Loading dashboard...</div>;
+  if (loading && subjects.length === 0) {
+    return <TeacherOverviewSkeleton />;
+  }
 
   return (
     <div className="space-y-6 animate-fadeIn text-gray-800 pb-10">
@@ -222,7 +228,9 @@ export default function Overview({ profile }) {
         </div>
       </div>
 
-      {!loading && !error && (
+      {loading ? (
+        <TeacherOverviewSkeletonContent />
+      ) : !error && (
         <>
           {/* KPI CARDS ROW */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -388,6 +396,67 @@ export default function Overview({ profile }) {
         </>
       )}
     </div>
+  );
+}
+
+function TeacherOverviewSkeleton() {
+  return (
+    <div className="space-y-6 pb-10">
+      <div>
+        <SkeletonBox className="h-10 w-72" />
+        <SkeletonBox className="h-4 w-80 mt-2" />
+      </div>
+      <TeacherOverviewSkeletonContent />
+    </div>
+  );
+}
+
+function TeacherOverviewSkeletonContent() {
+  return (
+    <>
+      <div className="w-full glass rounded-2xl p-6 border-white/50">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-center">
+          <div>
+            <SkeletonBox className="h-4 w-32" />
+            <SkeletonBox className="h-12 w-full mt-3 rounded-xl" />
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            <SkeletonBox className="h-16 w-full rounded-xl" />
+            <SkeletonBox className="h-16 w-full rounded-xl" />
+            <SkeletonBox className="h-16 w-full rounded-xl" />
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <SkeletonCard />
+        <SkeletonCard />
+        <SkeletonCard />
+        <SkeletonCard />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 w-full">
+        <div className="lg:col-span-8 space-y-4">
+          <div className="glass rounded-xl p-2">
+            <SkeletonBox className="h-10 w-full rounded-lg" />
+          </div>
+          <div className="glass rounded-2xl p-6 h-[420px]">
+            <SkeletonBox className="h-6 w-48" />
+            <SkeletonBox className="h-4 w-72 mt-2" />
+            <SkeletonBox className="h-[300px] w-full mt-6 rounded-2xl" />
+          </div>
+        </div>
+
+        <div className="lg:col-span-4 space-y-6">
+          <div className="glass rounded-2xl p-6 h-[215px]">
+            <SkeletonProfile />
+          </div>
+          <div className="glass rounded-2xl p-6 h-[260px]">
+            <SkeletonTable rows={5} />
+          </div>
+        </div>
+      </div>
+    </>
   );
 }
 

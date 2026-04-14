@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import AssessmentIcon from "@mui/icons-material/Assessment";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
+import SkeletonTable from "../../components/skeletons/SkeletonTable";
 
 export default function Attendance() {
   const token = localStorage.getItem("access_token");
@@ -487,7 +488,7 @@ export default function Attendance() {
           </div>
         )}
         {loading ? (
-          <p>Loading...</p>
+          <SkeletonTable rows={6} />
         ) : students.length === 0 ? (
           <p className="text-gray-400 text-center py-6">
             {studentsMessage}

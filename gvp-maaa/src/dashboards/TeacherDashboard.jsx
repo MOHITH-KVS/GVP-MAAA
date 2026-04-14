@@ -17,6 +17,7 @@ import TeacherProfilePage from "../pages/Teacher/TeacherProfilePage";
 import Placement from "../pages/Teacher/Placement";
 import PlacementCoordinator from "../pages/Teacher/PlacementCoordinator";
 import Smart404 from "../components/Smart404";
+import Avatar from "../components/Avatar";
 import { recordRouteVisit } from "../utils/navigationHistory";
 
 /* ICONS */
@@ -32,6 +33,8 @@ import CloseIcon from "@mui/icons-material/Close";
 import LinkedInIcon from "@mui/icons-material/LinkedIn";
 import LanguageIcon from "@mui/icons-material/Language";
 import PersonIcon from "@mui/icons-material/Person";
+import GitHubIcon from "@mui/icons-material/GitHub";
+import SkeletonBox from "../components/skeletons/SkeletonBox";
 
 /* EXTRA ICONS */
 import FolderIcon from "@mui/icons-material/Folder";
@@ -147,7 +150,14 @@ export default function TeacherDashboard() {
   if (!profile) {
     return (
       <div className="h-screen flex items-center justify-center">
-        <p className="text-gray-500">Loading dashboard...</p>
+        <div className="w-full max-w-xl p-8">
+          <SkeletonBox className="h-10 w-56" />
+          <SkeletonBox className="h-4 w-80 mt-3" />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-8">
+            <SkeletonBox className="h-28 w-full rounded-xl" />
+            <SkeletonBox className="h-28 w-full rounded-xl" />
+          </div>
+        </div>
       </div>
     );
   }
@@ -396,9 +406,7 @@ function TeacherProfile({ profile, onClose, onViewFullProfile }) {
         </button>
 
         <div className="text-center">
-          <div className="w-24 h-24 mx-auto rounded-full bg-indigo-500 text-white flex items-center justify-center text-3xl font-semibold shadow-inner border-4 border-white/20">
-            {profile?.name ? profile.name.charAt(0).toUpperCase() : "T"}
-          </div>
+          <Avatar name={profile?.name || "Teacher"} sizeClass="w-24 h-24 text-3xl" dotClass="w-4 h-4" />
           <h3 className="mt-4 text-lg font-semibold">
             {profile?.name || "Faculty"}
           </h3>

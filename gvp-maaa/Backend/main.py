@@ -1,5 +1,4 @@
 # pyre-ignore-all-errors
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Body, Query, Request  # type: ignore
 from fastapi.middleware.cors import CORSMiddleware  # type: ignore
 from io import BytesIO
@@ -7,6 +6,7 @@ from fastapi.responses import StreamingResponse  # type: ignore
 from sqlalchemy.orm import Session, aliased  # type: ignore
 from sqlalchemy import text, extract, func, or_, case  # type: ignore
 from sqlalchemy.exc import IntegrityError  # type: ignore
+from pydantic import BaseModel  # type: ignore
 from typing import Optional, List, Dict, Any
 from security import hash_password, verify_password  # type: ignore
 from mail import send_reset_email  # type: ignore
@@ -31,6 +31,7 @@ except ImportError:
 from models import (  # type: ignore
     Base,
     Department,
+    Faculty,
     Alert,
     AlertRecipient,
     Timetable,
@@ -225,12 +226,7 @@ Base.metadata.create_all(bind=engine)
 # -------------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=["http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -948,6 +944,277 @@ def ensure_placement_schema():
         db.close()
 
 
+def ensure_faculty_profile_relationships():
+    db = SessionLocal()
+    try:
+        migration_steps = [
+            (
+                "faculty_add_email",
+                """
+                ALTER TABLE faculty
+                ADD COLUMN IF NOT EXISTS email VARCHAR;
+                """,
+            ),
+            (
+                "faculty_backfill_email",
+                """
+                UPDATE faculty f
+                SET email = u.email
+                FROM users u
+                WHERE f.faculty_id = u.user_id
+                  AND (f.email IS NULL OR BTRIM(f.email) = '');
+                """,
+            ),
+            (
+                "faculty_email_unique",
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1
+                        FROM information_schema.table_constraints
+                        WHERE table_name = 'faculty'
+                          AND constraint_name = 'faculty_email_key'
+                    ) THEN
+                        ALTER TABLE faculty
+                        ADD CONSTRAINT faculty_email_key UNIQUE (email);
+                    END IF;
+                END $$;
+                """,
+            ),
+            (
+                "create_classes_table",
+                """
+                CREATE TABLE IF NOT EXISTS classes (
+                    id SERIAL PRIMARY KEY,
+                    faculty_id INT NULL,
+                    year INT NULL,
+                    section VARCHAR(20) NULL,
+                    created_at TIMESTAMP DEFAULT NOW()
+                );
+                """,
+            ),
+            (
+                "subjects_add_faculty_id",
+                """
+                ALTER TABLE subjects
+                ADD COLUMN IF NOT EXISTS faculty_id INT;
+                """,
+            ),
+            (
+                "students_add_class_id",
+                """
+                ALTER TABLE students
+                ADD COLUMN IF NOT EXISTS class_id INT;
+                """,
+            ),
+            (
+                "students_add_avg_marks",
+                """
+                ALTER TABLE students
+                ADD COLUMN IF NOT EXISTS avg_marks NUMERIC(5,2);
+                """,
+            ),
+            (
+                "fk_subjects_faculty",
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1
+                        FROM information_schema.table_constraints
+                        WHERE table_name = 'subjects'
+                          AND constraint_name = 'fk_subjects_faculty'
+                    ) THEN
+                        ALTER TABLE subjects
+                        ADD CONSTRAINT fk_subjects_faculty
+                        FOREIGN KEY (faculty_id)
+                        REFERENCES faculty(faculty_id)
+                        ON DELETE SET NULL;
+                    END IF;
+                END $$;
+                """,
+            ),
+            (
+                "fk_classes_faculty",
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1
+                        FROM information_schema.table_constraints
+                        WHERE table_name = 'classes'
+                          AND constraint_name = 'fk_classes_faculty'
+                    ) THEN
+                        ALTER TABLE classes
+                        ADD CONSTRAINT fk_classes_faculty
+                        FOREIGN KEY (faculty_id)
+                        REFERENCES faculty(faculty_id)
+                        ON DELETE SET NULL;
+                    END IF;
+                END $$;
+                """,
+            ),
+            (
+                "fk_students_class",
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1
+                        FROM information_schema.table_constraints
+                        WHERE table_name = 'students'
+                          AND constraint_name = 'fk_students_class'
+                    ) THEN
+                        ALTER TABLE students
+                        ADD CONSTRAINT fk_students_class
+                        FOREIGN KEY (class_id)
+                        REFERENCES classes(id)
+                        ON DELETE SET NULL;
+                    END IF;
+                END $$;
+                """,
+            ),
+            (
+                "fk_marks_faculty",
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1
+                        FROM information_schema.table_constraints
+                        WHERE table_name = 'marks'
+                          AND constraint_name = 'fk_marks_faculty'
+                    ) THEN
+                        ALTER TABLE marks
+                        ADD CONSTRAINT fk_marks_faculty
+                        FOREIGN KEY (faculty_id)
+                        REFERENCES faculty(faculty_id)
+                        ON DELETE SET NULL;
+                    END IF;
+                END $$;
+                """,
+            ),
+            (
+                "fk_attendance_faculty",
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1
+                        FROM information_schema.table_constraints
+                        WHERE table_name = 'attendance'
+                          AND constraint_name = 'fk_attendance_faculty'
+                    ) THEN
+                        ALTER TABLE attendance
+                        ADD CONSTRAINT fk_attendance_faculty
+                        FOREIGN KEY (faculty_id)
+                        REFERENCES faculty(faculty_id);
+                    END IF;
+                END $$;
+                """,
+            ),
+            (
+                "backfill_subjects_from_faculty_subjects",
+                """
+                UPDATE subjects s
+                SET faculty_id = fs.faculty_id
+                FROM faculty_subjects fs
+                WHERE s.subject_id = fs.subject_id
+                  AND s.faculty_id IS NULL
+                  AND fs.faculty_id IS NOT NULL;
+                """,
+            ),
+            (
+                "dev_assign_remaining_subjects",
+                """
+                UPDATE subjects
+                SET faculty_id = (
+                    SELECT f.faculty_id
+                    FROM faculty f
+                    ORDER BY f.faculty_id
+                    LIMIT 1
+                )
+                WHERE faculty_id IS NULL
+                  AND EXISTS (SELECT 1 FROM faculty);
+                """,
+            ),
+            (
+                "seed_classes_from_faculty_subjects",
+                """
+                INSERT INTO classes (faculty_id, year, section)
+                SELECT DISTINCT fs.faculty_id, fs.year, fs.section
+                FROM faculty_subjects fs
+                WHERE fs.faculty_id IS NOT NULL
+                  AND fs.year IS NOT NULL
+                  AND fs.section IS NOT NULL
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM classes c
+                      WHERE c.faculty_id = fs.faculty_id
+                        AND c.year = fs.year
+                        AND COALESCE(c.section, '') = COALESCE(fs.section, '')
+                  );
+                """,
+            ),
+            (
+                "dev_assign_remaining_classes",
+                """
+                UPDATE classes
+                SET faculty_id = (
+                    SELECT f.faculty_id
+                    FROM faculty f
+                    ORDER BY f.faculty_id
+                    LIMIT 1
+                )
+                WHERE faculty_id IS NULL
+                  AND EXISTS (SELECT 1 FROM faculty);
+                """,
+            ),
+            (
+                "backfill_students_class_id",
+                """
+                UPDATE students st
+                SET class_id = c.id
+                FROM classes c
+                WHERE st.class_id IS NULL
+                  AND st.year IS NOT NULL
+                  AND st.section IS NOT NULL
+                  AND c.year = st.year
+                  AND COALESCE(c.section, '') = COALESCE(st.section, '');
+                """,
+            ),
+            (
+                "backfill_students_avg_marks",
+                """
+                UPDATE students st
+                SET avg_marks = m.avg_total
+                FROM (
+                    SELECT student_id, AVG(total)::NUMERIC(5,2) AS avg_total
+                    FROM marks
+                    WHERE total IS NOT NULL
+                    GROUP BY student_id
+                ) m
+                WHERE st.student_id = m.student_id
+                  AND st.avg_marks IS NULL;
+                """,
+            ),
+        ]
+
+        for step_name, sql in migration_steps:
+            try:
+                db.execute(text(sql))
+                db.commit()
+            except Exception as step_error:
+                db.rollback()
+                print(f"Faculty profile relationship migration failed at {step_name}: {step_error}")
+    except Exception as e:
+        db.rollback()
+        print("Faculty profile relationship migration failed:", e)
+    finally:
+        db.close()
+
+
 def get_optional_current_user(request: Request):
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.lower().startswith("bearer "):
@@ -1017,6 +1284,7 @@ def startup_event():
     Base.metadata.create_all(bind=engine)
     ensure_student_insights_columns()
     ensure_placement_schema()
+    ensure_faculty_profile_relationships()
     
     # Run automatic migrations for scaling_logs
     try:
@@ -2247,6 +2515,69 @@ def update_student_profile(
     db.commit()
 
     return {"message": "Profile updated successfully"}
+
+
+@app.get("/student/placements")
+def get_student_placements(
+    user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if user["role"] != "student":
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    student_id = int(user["user_id"])
+
+    rows = (
+        db.query(StudentDrive, PlacementDrive, DriveApplication)
+        .join(PlacementDrive, PlacementDrive.id == StudentDrive.drive_id)
+        .outerjoin(
+            DriveApplication,
+            (DriveApplication.drive_id == StudentDrive.drive_id)
+            & (DriveApplication.student_id == StudentDrive.student_id),
+        )
+        .filter(StudentDrive.student_id == student_id)
+        .order_by(PlacementDrive.drive_date.desc().nullslast(), PlacementDrive.id.desc())
+        .all()
+    )
+
+    placements = []
+    for student_drive, drive, application in rows:
+        process = drive.selection_process if isinstance(drive.selection_process, list) else []
+        total_rounds = len([step for step in process if str(step).strip()])
+
+        student_round = int(student_drive.current_round or 0)
+        app_round = int(application.current_round or 0) if application else 0
+        rounds_cleared = max(student_round, app_round)
+        if total_rounds > 0:
+            rounds_cleared = min(rounds_cleared, total_rounds)
+
+        status_values = [
+            str(student_drive.final_result or "").strip().lower(),
+            str(student_drive.status or "").strip().lower(),
+            str(application.final_status or "").strip().lower() if application else "",
+            str(application.application_status or "").strip().lower() if application else "",
+        ]
+
+        if any("reject" in value for value in status_values):
+            final_status = "Rejected"
+        elif (total_rounds > 0 and rounds_cleared >= total_rounds) or any(
+            "select" in value for value in status_values
+        ):
+            final_status = "Selected"
+        else:
+            final_status = "In Progress"
+
+        placements.append(
+            {
+                "company": drive.company_name or drive.title or "N/A",
+                "role": drive.role,
+                "rounds_cleared": rounds_cleared,
+                "total_rounds": total_rounds,
+                "final_status": final_status,
+            }
+        )
+
+    return placements
 
 
 def _require_placement_student(student_id: int, current_user: dict):
@@ -5081,125 +5412,528 @@ def get_faculty_profile(
     user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    if user["role"] != "faculty":
-        raise HTTPException(status_code=403, detail="Not authorized")
+    try:
+        if user["role"] != "faculty":
+            raise HTTPException(status_code=403, detail="Not authorized")
 
-    faculty = (
-        db.query(Faculty, User)
-        .join(User, Faculty.faculty_id == User.user_id)
-        .filter(User.user_id == user["user_id"])
-        .first()
-    )
+        faculty_id = int(user["user_id"])
+        user_data = db.query(User).filter(User.user_id == faculty_id).first()
+        faculty_email = user_data.email if user_data and getattr(user_data, "email", None) else user.get("email")
 
-    if not faculty:
-        raise HTTPException(status_code=404, detail="Faculty not found")
+        faculty = None
+        if faculty_email:
+            try:
+                faculty = db.query(Faculty).filter(Faculty.email == faculty_email).first()
+            except Exception as faculty_email_error:
+                print(f"Faculty email lookup error: {faculty_email_error}")
 
-    faculty_data, user_data = faculty
+        if not faculty:
+            faculty = db.query(Faculty).filter(Faculty.faculty_id == faculty_id).first()
 
-    return {
-    # ---------- USER ----------
-    "name": user_data.name,
-    "email": user_data.email,
+        if not faculty or not user_data:
+            return {
+                "name": user_data.name if user_data else user.get("email"),
+                "email": faculty_email or user.get("email"),
+                "employee_id": None,
+                "designation": None,
+                "department": "Not Assigned",
+                "qualifications": None,
+                "experience": None,
+                "phone": None,
+                "bio": None,
+                "linkedin": None,
+                "github": None,
+                "portfolio": None,
+                "subjects": [],
+                "subjects_count": 0,
+                "total_students": 0,
+                "avg_attendance": 0,
+                "avg_marks": 0,
+                "at_risk_students": 0,
+                "students_placed": 0,
+                "placement_success_rate": 0,
+                "is_coordinator": False,
+                "coordinator_valid_till": None,
+                "expertise": [],
+                "certifications": [],
+                "publications": [],
+                "classes": [],
+            }
 
-    # ---------- FACULTY ----------
-    "employee_id": faculty_data.employee_id,
-    "designation": faculty_data.designation,
-    #"department": user_data.department_id,#
-    "qualifications": faculty_data.qualifications,
-    "experience": faculty_data.experience,
+        department_name = "Not Assigned"
+        branch_lookup = {
+            1: "CSE",
+            2: "CSM",
+            3: "ECE",
+            4: "EEE",
+            5: "MECH",
+            6: "CIVIL",
+        }
+        if user_data.department_id is not None:
+            try:
+                dept_id = int(user_data.department_id)
+                department_name = branch_lookup.get(
+                    dept_id,
+                    DEPARTMENT_MAP.get(dept_id, str(user_data.department_id)),
+                )
+            except Exception:
+                department_name = str(user_data.department_id)
 
-    "phone": faculty_data.phone,
-    "bio": faculty_data.bio,
+        subjects = []
+        faculty_subject_rows = []
+        try:
+            subject_rows = db.execute(
+                text(
+                    """
+                    SELECT subject_id, subject_name, subject_code, semester
+                    FROM subjects
+                    WHERE faculty_id = :faculty_id
+                    """
+                ),
+                {"faculty_id": faculty_id},
+            ).mappings().all()
 
-    "linkedin": faculty_data.linkedin,
-    "github": faculty_data.github,
-    "portfolio": faculty_data.portfolio,
+            for row in subject_rows:
+                subjects.append(
+                    {
+                        "id": row.get("subject_id"),
+                        "name": row.get("subject_name"),
+                        "code": row.get("subject_code"),
+                        "year": None,
+                        "section": None,
+                    }
+                )
+        except Exception as subject_direct_error:
+            print(f"Direct subjects query error: {subject_direct_error}")
 
-    # ---------- LIST / JSON ----------
-    "expertise": faculty_data.expertise.split(",")
-        if faculty_data.expertise else [],
+        try:
+            faculty_subject_rows = (
+                db.query(FacultySubject)
+                .filter(
+                    FacultySubject.faculty_id == faculty_id,
+                    FacultySubject.is_active == True,
+                )
+                .all()
+            )
 
-    "certifications": json.loads(faculty_data.certifications)
-        if faculty_data.certifications else [],
+            if not subjects:
+                for fs in faculty_subject_rows:
+                    if fs.subject:
+                        subjects.append(
+                            {
+                                "id": fs.subject.subject_id,
+                                "name": fs.subject.subject_name,
+                                "code": fs.subject.subject_code,
+                                "year": fs.year,
+                                "section": fs.section,
+                            }
+                        )
+        except Exception as faculty_subject_error:
+            print(f"Faculty subject mapping query error: {faculty_subject_error}")
 
-    "publications": json.loads(faculty_data.publications)
-        if faculty_data.publications else [],
+        dedup_subjects = []
+        seen_subject_ids = set()
+        for sub in subjects:
+            subject_id = sub.get("id")
+            if subject_id in seen_subject_ids:
+                continue
+            seen_subject_ids.add(subject_id)
+            dedup_subjects.append(sub)
+        subjects = dedup_subjects
+        subjects_count = len(subjects)
 
-    "classes": json.loads(faculty_data.classes)
-        if faculty_data.classes else []
- }
+        classes = []
+        class_ids = []
+        try:
+            class_rows = db.execute(
+                text(
+                    """
+                    SELECT id, year, section
+                    FROM classes
+                    WHERE faculty_id = :faculty_id
+                    """
+                ),
+                {"faculty_id": faculty_id},
+            ).mappings().all()
+
+            for row in class_rows:
+                classes.append(
+                    {
+                        "id": row.get("id"),
+                        "year": row.get("year"),
+                        "section": row.get("section"),
+                    }
+                )
+                if row.get("id") is not None:
+                    class_ids.append(int(row.get("id")))
+        except Exception as class_query_error:
+            print(f"Classes query error: {class_query_error}")
+
+        if not classes and faculty_subject_rows:
+            class_key_set = set()
+            for fs in faculty_subject_rows:
+                key = (fs.year, fs.section)
+                if key in class_key_set:
+                    continue
+                class_key_set.add(key)
+                classes.append(
+                    {
+                        "id": None,
+                        "year": fs.year,
+                        "section": fs.section,
+                    }
+                )
+
+        in_scope_student_ids = set()
+        total_students = 0
+        try:
+            if class_ids:
+                student_id_rows = db.execute(
+                    text(
+                        """
+                        SELECT DISTINCT student_id
+                        FROM students
+                        WHERE class_id = ANY(:class_ids)
+                        """
+                    ),
+                    {"class_ids": class_ids},
+                ).mappings().all()
+                in_scope_student_ids = {
+                    int(row["student_id"])
+                    for row in student_id_rows
+                    if row.get("student_id") is not None
+                }
+            elif classes:
+                for cls in classes:
+                    year_val = cls.get("year")
+                    section_val = cls.get("section")
+                    if year_val is None or section_val is None:
+                        continue
+                    rows = (
+                        db.query(Student.student_id)
+                        .filter(Student.year == year_val, Student.section == section_val)
+                        .all()
+                    )
+                    for row in rows:
+                        in_scope_student_ids.add(int(row.student_id))
+
+            total_students = len(in_scope_student_ids)
+        except Exception as student_count_error:
+            print(f"Student count query error: {student_count_error}")
+            in_scope_student_ids = set()
+            total_students = 0
+
+        avg_marks = 0
+        try:
+            mark_rows = db.query(Mark).filter(Mark.faculty_id == faculty_id).all()
+            mark_values = [float(m.total) for m in mark_rows if m.total is not None]
+            if mark_values:
+                avg_marks = round(sum(mark_values) / len(mark_values), 2)
+        except Exception as avg_marks_error:
+            print(f"Average marks query error: {avg_marks_error}")
+            avg_marks = 0
+
+        avg_attendance = 0
+        try:
+            attendance_rows = db.query(Attendance).filter(Attendance.faculty_id == faculty_id).all()
+            if attendance_rows:
+                present_count = sum(1 for row in attendance_rows if row.status)
+                avg_attendance = round((present_count / len(attendance_rows)) * 100, 2)
+        except Exception as avg_attendance_error:
+            print(f"Average attendance query error: {avg_attendance_error}")
+            avg_attendance = 0
+
+        at_risk = 0
+        try:
+            for sid in in_scope_student_ids:
+                student_marks = (
+                    db.query(Mark)
+                    .filter(Mark.faculty_id == faculty_id, Mark.student_id == sid)
+                    .all()
+                )
+                scores = [float(item.total) for item in student_marks if item.total is not None]
+                if scores and (sum(scores) / len(scores)) < 40:
+                    at_risk += 1
+        except Exception as at_risk_error:
+            print(f"At-risk query error: {at_risk_error}")
+            at_risk = 0
+
+        placed = 0
+        rate = 0
+        try:
+            if in_scope_student_ids:
+                drives = db.query(StudentDrive).filter(StudentDrive.student_id.in_(list(in_scope_student_ids))).all()
+                apps = db.query(DriveApplication).filter(DriveApplication.student_id.in_(list(in_scope_student_ids))).all()
+
+                drive_placed = {
+                    int(item.student_id)
+                    for item in drives
+                    if item.final_result and "select" in str(item.final_result).lower()
+                }
+                app_placed = {
+                    int(item.student_id)
+                    for item in apps
+                    if item.final_status and "select" in str(item.final_status).lower()
+                }
+                placed = len(drive_placed | app_placed)
+                if total_students > 0:
+                    rate = round((placed / total_students) * 100, 2)
+        except Exception as placement_error:
+            print(f"Placement calculation error: {placement_error}")
+            placed = 0
+            rate = 0
+
+        is_coord = False
+        coord_till = None
+        try:
+            coord = (
+                db.query(DriveCoordinatorMap)
+                .filter(
+                    DriveCoordinatorMap.faculty_id == faculty_id,
+                    DriveCoordinatorMap.is_active == True,
+                )
+                .first()
+            )
+            if coord and coord.assigned_from and coord.assigned_to:
+                now = datetime.now(coord.assigned_from.tzinfo) if getattr(coord.assigned_from, "tzinfo", None) else datetime.now()
+                if coord.assigned_from <= now <= coord.assigned_to:
+                    is_coord = True
+                    coord_till = coord.assigned_to.strftime("%Y-%m-%d") if isinstance(coord.assigned_to, datetime) else str(coord.assigned_to)
+        except Exception as coord_error:
+            print(f"Coordinator query error: {coord_error}")
+
+        experience_value = None
+        try:
+            experience_value = int(faculty.experience) if faculty.experience else None
+        except Exception:
+            experience_value = None
+
+        expertise = []
+        certifications = []
+        publications = []
+        classes_profile = []
+
+        try:
+            expertise = faculty.expertise.split(",") if faculty.expertise else []
+        except Exception as exp_parse_error:
+            print(f"Expertise parse error: {exp_parse_error}")
+
+        try:
+            certifications = json.loads(faculty.certifications) if faculty.certifications else []
+        except Exception as cert_parse_error:
+            print(f"Certifications parse error: {cert_parse_error}")
+
+        try:
+            publications = json.loads(faculty.publications) if faculty.publications else []
+        except Exception as pub_parse_error:
+            print(f"Publications parse error: {pub_parse_error}")
+
+        try:
+            classes_profile = json.loads(faculty.classes) if faculty.classes else []
+        except Exception as class_parse_error:
+            print(f"Classes parse error: {class_parse_error}")
+
+        print("FACULTY ID:", faculty_id)
+        print("SUBJECT COUNT:", subjects_count)
+        print("CLASS COUNT:", len(classes))
+        print("TOTAL STUDENTS:", total_students)
+
+        return {
+            "name": user_data.name,
+            "email": user_data.email,
+            "employee_id": faculty.employee_id,
+            "branch_id": user_data.department_id,
+            "designation": faculty.designation,
+            "department": department_name,
+            "qualification": faculty.qualifications,
+            "qualifications": faculty.qualifications,
+            "experience": experience_value,
+            "phone": faculty.phone,
+            "bio": faculty.bio,
+            "linkedin": faculty.linkedin,
+            "github": faculty.github,
+            "portfolio": faculty.portfolio,
+            "subjects": subjects or [],
+            "subjects_count": subjects_count,
+            "total_students": total_students,
+            "avg_attendance": avg_attendance,
+            "avg_marks": avg_marks,
+            "at_risk_students": at_risk,
+            "students_placed": placed,
+            "placement_success_rate": rate,
+            "is_coordinator": is_coord,
+            "coordinator_valid_till": coord_till,
+            "expertise": expertise,
+            "certifications": certifications,
+            "publications": publications,
+            "classes": classes_profile,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"FACULTY PROFILE ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "name": user.get("email") if isinstance(user, dict) else None,
+            "email": user.get("email") if isinstance(user, dict) else None,
+            "employee_id": None,
+            "designation": None,
+            "department": "Not Assigned",
+            "qualifications": None,
+            "experience": None,
+            "phone": None,
+            "bio": None,
+            "linkedin": None,
+            "github": None,
+            "portfolio": None,
+            "subjects": [],
+            "subjects_count": 0,
+            "total_students": 0,
+            "avg_attendance": 0,
+            "avg_marks": 0,
+            "at_risk_students": 0,
+            "students_placed": 0,
+            "placement_success_rate": 0,
+            "is_coordinator": False,
+            "coordinator_valid_till": None,
+            "expertise": [],
+            "certifications": [],
+            "publications": [],
+            "classes": [],
+            "error": "Failed to load profile",
+            "details": str(e),
+        }
 
 
 # -------------------------
 # FACULTY PROFILE PUT
 # -------------------------
+class FacultyUpdate(BaseModel):
+    branch_id: int | None = None
+    designation: str | None = None
+    experience_years: int | None = None
+    qualification: str | None = None
+
+
 @app.put("/faculty/profile")
 def update_faculty_profile(
-    data: FacultyProfileUpdate,
+    request: FacultyUpdate,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    if current_user["role"] != "faculty":
+    if current_user.get("role") != "faculty":
         raise HTTPException(status_code=403, detail="Not authorized")
 
+    user_id = current_user.get("user_id")
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Invalid token payload")
+
     faculty = db.query(Faculty).filter(
-        Faculty.faculty_id == current_user["user_id"]
+        Faculty.faculty_id == user_id
     ).first()
 
     user = db.query(User).filter(
-        User.user_id == current_user["user_id"]
+        User.user_id == user_id
     ).first()
 
     if not faculty or not user:
         raise HTTPException(status_code=404, detail="Faculty not found")
 
-    # ----- USERS TABLE -----
-    if data.name is not None:
-        user.name = data.name
+    if request.branch_id is not None:
+        allowed_branch_ids = {1, 2, 3, 4, 5, 6}
+        if request.branch_id not in allowed_branch_ids:
+            raise HTTPException(status_code=400, detail="Invalid branch_id")
+        user.department_id = request.branch_id
 
-    # ----- FACULTY TABLE -----
-    if data.phone is not None:
-        faculty.phone = data.phone
+    if request.designation is not None:
+        faculty.designation = request.designation.strip()
 
-    if data.bio is not None:
-        faculty.bio = data.bio
+    if request.experience_years is not None:
+        if request.experience_years < 0:
+            raise HTTPException(status_code=400, detail="Invalid experience")
+        faculty.experience = str(request.experience_years)
 
-    if data.linkedin is not None:
-        faculty.linkedin = data.linkedin
-
-    if data.github is not None:
-        faculty.github = data.github
-
-    if data.portfolio is not None:
-        faculty.portfolio = data.portfolio
-
-    if data.qualifications is not None:
-        faculty.qualifications = data.qualifications
-
-    if data.experience is not None:
-        faculty.experience = data.experience
-
-    # ----- JSON FIELDS -----
-    if data.expertise is not None:
-        faculty.expertise = ",".join(data.expertise)
-
-    if data.certifications:
-     faculty.certifications = json.dumps(
-        [c.dict() for c in data.certifications]
-    )
-
-    if data.publications is not None:
-        faculty.publications = json.dumps(
-            [p.dict() for p in data.publications]
-        )
-
-    if data.classes is not None:
-        faculty.classes = json.dumps(
-            [c.dict() for c in data.classes]
-        )
+    if request.qualification is not None:
+        faculty.qualifications = request.qualification.strip()
 
     db.commit()
+    db.refresh(faculty)
     return {"message": "Profile updated successfully"}
+
+
+@app.get("/faculty/classes")
+def get_faculty_classes(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user.get("role") != "faculty":
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    user_id = current_user.get("user_id")
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Invalid token payload")
+
+    faculty = db.query(Faculty).filter(Faculty.faculty_id == user_id).first()
+    if not faculty:
+        user_data = db.query(User).filter(User.user_id == user_id).first()
+        if user_data and user_data.email:
+            faculty = db.query(Faculty).filter(Faculty.email == user_data.email).first()
+
+    if not faculty:
+        raise HTTPException(status_code=404, detail="Faculty not found")
+
+    rows = (
+        db.query(FacultySubject, Subject)
+        .join(Subject, FacultySubject.subject_id == Subject.subject_id)
+        .filter(
+            FacultySubject.faculty_id == faculty.faculty_id,
+            FacultySubject.is_active == True,
+        )
+        .all()
+    )
+
+    result = []
+    seen_keys = set()
+
+    for assignment, subject in rows:
+        key = (assignment.year, assignment.section, assignment.subject_id)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+
+        student_ids_query = db.query(Student.student_id).filter(
+            Student.year == assignment.year,
+            Student.section == assignment.section,
+        )
+        student_count = student_ids_query.count()
+
+        attendance_rows = (
+            db.query(Attendance.status)
+            .filter(
+                Attendance.faculty_id == faculty.faculty_id,
+                Attendance.subject_id == assignment.subject_id,
+                Attendance.student_id.in_(student_ids_query),
+            )
+            .all()
+        )
+
+        avg_attendance = 0.0
+        if attendance_rows:
+            present_count = sum(1 for row in attendance_rows if bool(row.status))
+            avg_attendance = round((present_count / len(attendance_rows)) * 100, 2)
+
+        result.append(
+            {
+                "year": assignment.year,
+                "section": assignment.section,
+                "subject": subject.subject_name,
+                "students": student_count,
+                "avg_attendance": avg_attendance,
+            }
+        )
+
+    return result
 
 
 # -------------------------

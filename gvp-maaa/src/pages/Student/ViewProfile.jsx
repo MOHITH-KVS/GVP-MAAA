@@ -2,6 +2,8 @@ import { useState, useEffect } from "react";
 import CloseIcon from "@mui/icons-material/Close";
 import EditIcon from "@mui/icons-material/Edit";
 import AddIcon from "@mui/icons-material/Add";
+import api from "../../utils/axios";
+import SkeletonProfile from "../../components/skeletons/SkeletonProfile";
 
 const SECTIONS = [
   "Overview",
@@ -10,7 +12,6 @@ const SECTIONS = [
   "Skills",
   "Certificates",
   "Placements",
-  "Remarks",
 ];
 
 export default function ViewProfile({ onClose, profile }) {
@@ -31,6 +32,7 @@ export default function ViewProfile({ onClose, profile }) {
   const [certificates, setCertificates] = useState([]);
   const [certTitle, setCertTitle] = useState("");
   const [certLink, setCertLink] = useState("");
+  const [placements, setPlacements] = useState([]);
 
   /* -------- INIT -------- */
   useEffect(() => {
@@ -58,6 +60,26 @@ export default function ViewProfile({ onClose, profile }) {
 
     return () => (document.body.style.overflow = "auto");
   }, [profile]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const fetchPlacements = async () => {
+      try {
+        const res = await api.get("/student/placements");
+        if (!mounted) return;
+        setPlacements(Array.isArray(res.data) ? res.data : []);
+      } catch (err) {
+        console.error(err);
+      }
+    };
+
+    fetchPlacements();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const handleClose = () => {
     setVisible(false);
@@ -143,10 +165,16 @@ export default function ViewProfile({ onClose, profile }) {
   if (!info) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-white">
-        <p className="text-slate-500">Loading profile...</p>
+        <div className="w-full max-w-xl p-8">
+          <SkeletonProfile />
+        </div>
       </div>
     );
   }
+
+  const selectedCount = placements.filter(
+    (p) => p.final_status === "Selected"
+  ).length;
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-50 overflow-hidden">
@@ -395,15 +423,49 @@ export default function ViewProfile({ onClose, profile }) {
 
           {active === "Placements" && (
             <Section title="Placements">
-              Placement information will appear here.
+              {placements.length === 0 ? (
+                <p className="text-gray-500">No placement activity yet</p>
+              ) : (
+                <>
+                  <h2 className="text-lg font-semibold mb-3">
+                    Placements ({selectedCount} Selected)
+                  </h2>
+
+                  {placements.map((item, index) => (
+                    <div
+                      key={index}
+                      className={`p-4 rounded-lg border mb-3 ${
+                        item.final_status === "Selected"
+                          ? "border-green-500 bg-green-50"
+                          : "border-gray-200"
+                      }`}
+                    >
+                      <h3 className="font-semibold text-lg">{item.company}</h3>
+
+                      <p className="text-sm text-gray-600">Role: {item.role || "N/A"}</p>
+
+                      <p className="text-sm">
+                        Progress: {item.rounds_cleared} / {item.total_rounds} rounds
+                      </p>
+
+                      <p
+                        className={`text-sm font-medium ${
+                          item.final_status === "Selected"
+                            ? "text-green-600"
+                            : item.final_status === "Rejected"
+                            ? "text-red-500"
+                            : "text-yellow-600"
+                        }`}
+                      >
+                        {item.final_status}
+                      </p>
+                    </div>
+                  ))}
+                </>
+              )}
             </Section>
           )}
 
-          {active === "Remarks" && (
-            <Section title="Remarks">
-              Faculty remarks will appear here.
-            </Section>
-          )}
         </main>
       </div>
       {/* ✅ SUCCESS TOAST */}

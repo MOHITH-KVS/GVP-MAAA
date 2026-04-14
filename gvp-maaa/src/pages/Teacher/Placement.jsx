@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import api from "../../utils/api";
+import SkeletonBox from "../../components/skeletons/SkeletonBox";
+import SkeletonTable from "../../components/skeletons/SkeletonTable";
 
 const FINAL_STATUS_OPTIONS = ["pending", "selected", "rejected"];
 
@@ -84,7 +86,7 @@ export default function TeacherPlacement({ forceReadOnly = false, forceReadOnlyR
         <h2 className="mb-4 text-xl font-semibold text-slate-900">Drive Selection</h2>
 
         {loading ? (
-          <p className="text-sm text-slate-500">Loading drives...</p>
+          <SkeletonBox className="h-10 w-full rounded-xl" />
         ) : (
           <select
             value={selectedDriveId}
@@ -109,7 +111,7 @@ export default function TeacherPlacement({ forceReadOnly = false, forceReadOnlyR
         )}
 
         {tableLoading ? (
-          <p className="text-sm text-slate-500">Loading students...</p>
+          <SkeletonTable rows={6} />
         ) : students.length === 0 ? (
           <p className="text-sm text-slate-500">No students found for this drive.</p>
         ) : (

@@ -1,5 +1,8 @@
 import { useState, useEffect } from "react";
 import api from "../../utils/axios";
+import SkeletonBox from "../../components/skeletons/SkeletonBox";
+import SkeletonCard from "../../components/skeletons/SkeletonCard";
+import SkeletonTable from "../../components/skeletons/SkeletonTable";
 
 export default function Marks() {
   const [data, setData] = useState(null);
@@ -27,10 +30,27 @@ export default function Marks() {
 
   if (loading) {
     return (
-      <div className="space-y-10 flex flex-col items-center justify-center min-h-[50vh]">
-        <div className="flex flex-col items-center gap-4 text-indigo-600">
-           <div className="w-12 h-12 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div>
-           <span className="font-medium text-gray-500">Loading your performance profile...</span>
+      <div className="space-y-8 pb-10">
+        <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
+          <div>
+            <SkeletonBox className="h-10 w-64" />
+            <SkeletonBox className="h-4 w-80 mt-2" />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <SkeletonCard />
+            <SkeletonCard />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <SkeletonCard />
+          <SkeletonCard />
+          <SkeletonCard />
+          <SkeletonCard />
+        </div>
+
+        <div className="rounded-3xl border bg-white p-6 shadow-sm">
+          <SkeletonTable rows={6} />
         </div>
       </div>
     );

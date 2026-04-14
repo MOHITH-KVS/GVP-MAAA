@@ -12,6 +12,9 @@ import {
   Bar,
 } from "recharts";
 import api from "../../utils/axios";
+import SkeletonBox from "../../components/skeletons/SkeletonBox";
+import SkeletonCard from "../../components/skeletons/SkeletonCard";
+import SkeletonTable from "../../components/skeletons/SkeletonTable";
 
 function isNumber(value) {
   return typeof value === "number" && Number.isFinite(value);
@@ -169,9 +172,22 @@ export default function Insights() {
 
   if (loading) {
     return (
-      <div className="space-y-10 flex flex-col items-center justify-center min-h-[40vh]">
-        <div className="w-12 h-12 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin" />
-        <p className="text-gray-500 text-sm">Loading AI insights from backend data...</p>
+      <div className="space-y-8">
+        <div className="rounded-3xl border bg-white p-6">
+          <SkeletonBox className="h-10 w-72" />
+          <SkeletonBox className="h-4 w-96 mt-2" />
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-5">
+            <SkeletonCard />
+            <SkeletonCard />
+            <SkeletonCard />
+          </div>
+        </div>
+        <div className="rounded-2xl border bg-white p-6">
+          <SkeletonBox className="h-6 w-48" />
+          <div className="mt-5">
+            <SkeletonTable rows={6} />
+          </div>
+        </div>
       </div>
     );
   }

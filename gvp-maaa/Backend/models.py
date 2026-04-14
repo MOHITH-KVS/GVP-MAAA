@@ -305,6 +305,7 @@ class Faculty(Base):
     __tablename__ = "faculty"
 
     faculty_id = Column(Integer, ForeignKey("users.user_id"), primary_key=True)
+    email = Column(String, unique=True, nullable=True)
     employee_id = Column(String, unique=True, nullable=False)
 
     designation = Column(String)

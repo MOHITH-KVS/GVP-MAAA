@@ -1,6 +1,9 @@
 import { useState, useEffect, useMemo } from "react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, BarChart, Bar, Legend, PieChart, Pie, Cell } from "recharts";
 import api from "../../utils/api";
+import SkeletonBox from "../../components/skeletons/SkeletonBox";
+import SkeletonCard from "../../components/skeletons/SkeletonCard";
+import SkeletonTable from "../../components/skeletons/SkeletonTable";
 
 /**
  * Format percentage display - shows meaningful values only
@@ -409,7 +412,28 @@ export default function Insights() {
     };
   }, [students, avgAttendanceDisplay, threshold, trendSummary, criticalScoreCount]);
 
-  if (loading) return <div className="p-10 text-center">Loading insights...</div>;
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <SkeletonCard />
+          <SkeletonCard />
+          <SkeletonCard />
+        </div>
+        <div className="rounded-2xl border bg-white p-6">
+          <SkeletonBox className="h-6 w-56" />
+          <SkeletonBox className="h-4 w-72 mt-2" />
+          <SkeletonBox className="h-[260px] w-full mt-5 rounded-2xl" />
+        </div>
+        <div className="rounded-2xl border bg-white p-6">
+          <SkeletonBox className="h-6 w-48" />
+          <div className="mt-5">
+            <SkeletonTable rows={6} />
+          </div>
+        </div>
+      </div>
+    );
+  }
   if (error) return <div className="p-10 text-center text-red-500">{error}</div>;
   if (!insightsData || !predictions) return <div className="p-10 text-center">No insights available</div>;
 

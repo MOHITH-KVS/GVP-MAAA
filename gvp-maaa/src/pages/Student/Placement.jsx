@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import api from "../../utils/api";
+import SkeletonBox from "../../components/skeletons/SkeletonBox";
+import SkeletonCard from "../../components/skeletons/SkeletonCard";
+import SkeletonTable from "../../components/skeletons/SkeletonTable";
 
 const EMPTY_STATE_TEXT = "No placement drives available yet.";
 
@@ -394,7 +397,23 @@ export default function Placement() {
 }
 
 function LoadingState() {
-  return <div className="rounded-3xl border border-slate-200 bg-white p-8 text-slate-600 shadow-sm">Loading placement dashboard...</div>;
+  return (
+    <div className="space-y-6">
+      <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+        <SkeletonBox className="h-10 w-80" />
+        <SkeletonBox className="h-4 w-96 mt-2" />
+      </div>
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <SkeletonCard />
+        <SkeletonCard />
+        <SkeletonCard />
+        <SkeletonCard />
+      </div>
+      <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+        <SkeletonTable rows={6} />
+      </div>
+    </div>
+  );
 }
 
 function HeroItem({ label, value }) {

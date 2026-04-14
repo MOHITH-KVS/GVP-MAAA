@@ -1,0 +1,235 @@
+{
+  "project": {
+    "name": "GVP-MAAA",
+    "type": "full-stack college ERP/analytics platform",
+    "stack": {
+      "frontend": "React + Vite",
+      "backend": "FastAPI + SQLAlchemy",
+      "database": "PostgreSQL-style schema",
+      "analytics": "ML/insights modules"
+    },
+    "repo": {
+      "owner": "MOHITH-KVS",
+      "name": "GVP-MAAA",
+      "defaultBranch": "main",
+      "currentBranch": "main"
+    }
+  },
+  "run": {
+    "frontend": {
+      "workingDirectory": "gvp-maaa",
+      "command": "npm run dev"
+    },
+    "backend": {
+      "workingDirectory": "gvp-maaa/Backend",
+      "command": "uvicorn main:app --reload",
+      "apiDocs": "http://127.0.0.1:8000/docs"
+    }
+  },
+  "paths": {
+    "frontendRoot": "gvp-maaa",
+    "backendRoot": "gvp-maaa/Backend",
+    "backendEntry": "gvp-maaa/Backend/main.py",
+    "backendSchema": "gvp-maaa/Backend/models.py",
+    "smartTaskComponent": "gvp-maaa/src/components/SmartTaskManager.jsx",
+    "smartTaskEngine": "gvp-maaa/src/utils/taskGenerationEngine.js"
+  },
+  "structure": {
+    "name": "GVP-MAAA",
+    "type": "directory",
+    "children": [
+      { "name": ".git", "type": "directory" },
+      { "name": ".github", "type": "directory" },
+      { "name": ".vscode", "type": "directory" },
+      { "name": ".gitignore", "type": "file" },
+      { "name": "README.md", "type": "file" },
+      { "name": "PROJECT_FULL_TECHNICAL_REPORT.md", "type": "file" },
+      { "name": "PROJECT_FULL_TECHNICAL_REPORT.pdf", "type": "file" },
+      { "name": "SMART_TASK_IMPLEMENTATION_GUIDE.md", "type": "file" },
+      { "name": "SMART_TASK_QUICK_REFERENCE.md", "type": "file" },
+      { "name": "SMART_TASK_STUDENT_DATA_EXAMPLES.md", "type": "file" },
+      { "name": "SMART_TASK_SYSTEM_DOCUMENTATION.md", "type": "file" },
+      { "name": "SMART_TASK_SYSTEM_SUMMARY.md", "type": "file" },
+      {
+        "name": "gvp-maaa",
+        "type": "directory",
+        "children": [
+          { "name": ".vite", "type": "directory" },
+          { "name": ".vscode", "type": "directory" },
+          { "name": "node_modules", "type": "directory" },
+          { "name": "dist", "type": "directory" },
+          { "name": "build-output.txt", "type": "file" },
+          { "name": "index.html", "type": "file" },
+          { "name": "package.json", "type": "file" },
+          { "name": "package-lock.json", "type": "file" },
+          { "name": "eslint.config.js", "type": "file" },
+          { "name": "postcss.config.cjs", "type": "file" },
+          { "name": "tailwind.config.js", "type": "file" },
+          { "name": "vite.config.js", "type": "file" },
+          { "name": "README.md", "type": "file" },
+          { "name": "public", "type": "directory" },
+          { "name": "scripts", "type": "directory" },
+          {
+            "name": "src",
+            "type": "directory",
+            "children": [
+              { "name": "main.jsx", "type": "file" },
+              { "name": "App.jsx", "type": "file" },
+              { "name": "index.css", "type": "file" },
+              { "name": "assets", "type": "directory" },
+              { "name": "hooks", "type": "directory" },
+              { "name": "services", "type": "directory" },
+              { "name": "styles", "type": "directory" },
+              { "name": "utils", "type": "directory" },
+              {
+                "name": "components",
+                "type": "directory",
+                "children": [
+                  { "name": "ErrorBoundary.jsx", "type": "file" },
+                  { "name": "ProtectedRoute.jsx", "type": "file" },
+                  { "name": "Smart404.jsx", "type": "file" },
+                  { "name": "SmartTaskManager.jsx", "type": "file" },
+                  { "name": "SmartTaskManager.css", "type": "file" },
+                  {
+                    "name": "layout",
+                    "type": "directory",
+                    "children": [
+                      { "name": "Header.jsx", "type": "file" },
+                      { "name": "Sidebar.jsx", "type": "file" }
+                    ]
+                  },
+                  {
+                    "name": "placement",
+                    "type": "directory",
+                    "children": [
+                      { "name": "ActionDropdown.jsx", "type": "file" }
+                    ]
+                  }
+                ]
+              },
+              {
+                "name": "dashboards",
+                "type": "directory",
+                "children": [
+                  { "name": "AdminDashboard.jsx", "type": "file" },
+                  { "name": "StudentDashboard.jsx", "type": "file" },
+                  { "name": "TeacherDashboard.jsx", "type": "file" }
+                ]
+              },
+              {
+                "name": "pages",
+                "type": "directory",
+                "children": [
+                  { "name": "Logout.jsx", "type": "file" },
+                  { "name": "Admin", "type": "directory" },
+                  { "name": "Authorization", "type": "directory" },
+                  { "name": "Student", "type": "directory" },
+                  { "name": "Teacher", "type": "directory" }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "Backend",
+            "type": "directory",
+            "children": [
+              { "name": ".env", "type": "file" },
+              { "name": ".vscode", "type": "directory" },
+              { "name": "venv", "type": "directory" },
+              { "name": "__pycache__", "type": "directory" },
+              { "name": "main.py", "type": "file" },
+              { "name": "auth.py", "type": "file" },
+              { "name": "security.py", "type": "file" },
+              { "name": "database.py", "type": "file" },
+              { "name": "models.py", "type": "file" },
+              { "name": "schemas.py", "type": "file" },
+              { "name": "crud.py", "type": "file" },
+              { "name": "mail.py", "type": "file" },
+              { "name": "requirements.txt", "type": "file" },
+              { "name": "runtime.txt", "type": "file" },
+              { "name": "routes.txt", "type": "file" },
+              { "name": "check_db.py", "type": "file" },
+              { "name": "fix_marks_table.py", "type": "file" },
+              { "name": "migrate_db.py", "type": "file" },
+              { "name": "migrate_db_psycopg2.py", "type": "file" },
+              { "name": "migrate_events.py", "type": "file" },
+              { "name": "migrate_to_file.py", "type": "file" },
+              { "name": "migration_log.txt", "type": "file" },
+              { "name": "test_api.py", "type": "file" },
+              { "name": "test_api2.py", "type": "file" },
+              { "name": "test_endpoints.py", "type": "file" },
+              { "name": "verify_events.py", "type": "file" },
+              { "name": "verify_out.txt", "type": "file" },
+              { "name": "add_column.py", "type": "file" },
+              { "name": "add_alert_column.py", "type": "file" },
+              { "name": "drop_alert_column.py", "type": "file" },
+              { "name": "get-pip.py", "type": "file" },
+              { "name": "out.txt", "type": "file" },
+              { "name": "direct-output.txt", "type": "file" },
+              { "name": "direct-output2.txt", "type": "file" },
+              { "name": "direct-output3.txt", "type": "file" },
+              { "name": "migrate_output.txt", "type": "file" },
+              { "name": "error.log", "type": "file" },
+              { "name": "attendance_report_6.pdf", "type": "file" },
+              { "name": "marks_template.xlsx", "type": "file" },
+              { "name": "assests", "type": "directory" },
+              { "name": "placement", "type": "directory" },
+              { "name": "utils", "type": "directory" },
+              {
+                "name": "tmp",
+                "type": "directory",
+                "children": [
+                  { "name": "fix_ignores.py", "type": "file" },
+                  { "name": "fix_types.py", "type": "file" }
+                ]
+              },
+              {
+                "name": "uploads",
+                "type": "directory",
+                "children": [
+                  { "name": "alerts", "type": "directory" },
+                  { "name": "assignments", "type": "directory" },
+                  { "name": "external_events", "type": "directory" },
+                  { "name": "resources", "type": "directory" },
+                  { "name": "timetables", "type": "directory" }
+                ]
+              },
+              {
+                "name": "ml",
+                "type": "directory",
+                "children": [
+                  { "name": "__init__.py", "type": "file" },
+                  { "name": "alert_engine.py", "type": "file" },
+                  { "name": "insights_engine.py", "type": "file" },
+                  { "name": "prediction_engine.py", "type": "file" },
+                  { "name": "recommendation_engine.py", "type": "file" },
+                  { "name": "risk_engine.py", "type": "file" }
+                ]
+              },
+              {
+                "name": "services",
+                "type": "directory",
+                "children": [
+                  { "name": "__init__.py", "type": "file" },
+                  { "name": "admin_insights_engine.py", "type": "file" },
+                  { "name": "alert_rules.py", "type": "file" },
+                  { "name": "placement_engine.py", "type": "file" },
+                  { "name": "risk_engine.py", "type": "file" }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "notes": {
+    "excludedInDeepTraversal": [
+      "gvp-maaa/node_modules",
+      "gvp-maaa/dist",
+      "gvp-maaa/.vite",
+      "gvp-maaa/Backend/venv",
+      "gvp-maaa/Backend/__pycache__"
+    ]
+  }
+}

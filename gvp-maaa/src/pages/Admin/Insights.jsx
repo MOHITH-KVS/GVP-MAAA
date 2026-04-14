@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "../../utils/api";
+import SkeletonBox from "../../components/skeletons/SkeletonBox";
+import SkeletonCard from "../../components/skeletons/SkeletonCard";
+import SkeletonTable from "../../components/skeletons/SkeletonTable";
 
 /* ================= ADMIN INSIGHTS ================= */
 
@@ -269,8 +272,20 @@ export default function Insights() {
       />
 
       {loading ? (
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-600">
-          Loading insights data...
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            <SkeletonCard />
+            <SkeletonCard />
+            <SkeletonCard />
+            <SkeletonCard />
+          </div>
+          <div className="rounded-3xl border bg-white p-6 shadow-sm">
+            <SkeletonBox className="h-6 w-56" />
+            <SkeletonBox className="h-4 w-80 mt-2" />
+            <div className="mt-5">
+              <SkeletonTable rows={5} />
+            </div>
+          </div>
         </div>
       ) : null}
 

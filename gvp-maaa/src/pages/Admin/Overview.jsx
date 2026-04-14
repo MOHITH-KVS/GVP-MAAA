@@ -10,6 +10,10 @@ import {
   Tooltip,
 } from "recharts";
 import api from "../../utils/api";
+import SkeletonBox from "../../components/skeletons/SkeletonBox";
+import SkeletonCard from "../../components/skeletons/SkeletonCard";
+import SkeletonTable from "../../components/skeletons/SkeletonTable";
+import SkeletonProfile from "../../components/skeletons/SkeletonProfile";
 
 const BRANCH_OPTIONS = ["CSE", "CSM", "ECE", "MECH", "CIVIL"];
 const YEAR_OPTIONS = [1, 2, 3, 4];
@@ -227,9 +231,51 @@ export default function AdminOverview() {
       </div>
 
       {loading ? (
-        <div className="rounded-3xl border border-slate-200 bg-white p-8 text-center text-slate-600">
-          Loading dashboard data...
-        </div>
+        <>
+          <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
+            <SkeletonCard />
+            <SkeletonCard />
+            <SkeletonCard />
+            <SkeletonCard />
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="rounded-3xl border bg-white p-6">
+              <SkeletonBox className="h-4 w-1/3" />
+              <SkeletonBox className="h-8 w-1/2 mt-4" />
+            </div>
+            <div className="rounded-3xl border bg-white p-6">
+              <SkeletonBox className="h-4 w-1/3" />
+              <SkeletonBox className="h-8 w-1/2 mt-4" />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+            <div className="rounded-3xl border bg-white p-6">
+              <SkeletonProfile />
+            </div>
+            <div className="rounded-3xl border bg-white p-6">
+              <SkeletonProfile />
+            </div>
+            <div className="rounded-3xl border bg-white p-6">
+              <SkeletonProfile />
+            </div>
+          </div>
+
+          <div className="rounded-3xl border bg-white p-6">
+            <SkeletonBox className="h-6 w-44" />
+            <SkeletonBox className="h-4 w-72 mt-2" />
+            <div className="mt-6">
+              <SkeletonTable rows={4} />
+            </div>
+          </div>
+
+          <div className="rounded-3xl border bg-white p-6 mt-5">
+            <SkeletonBox className="h-6 w-56" />
+            <SkeletonBox className="h-4 w-72 mt-2" />
+            <SkeletonBox className="h-[300px] w-full mt-6 rounded-2xl" />
+          </div>
+        </>
       ) : error ? (
         <div className="rounded-3xl border border-red-200 bg-red-50 p-6 text-red-700">
           {error}
@@ -428,8 +474,10 @@ function TrendChart({ data, loading, error }) {
 
   if (loading) {
     return (
-      <div className="rounded-3xl border border-slate-200 bg-slate-50 p-8 text-center text-slate-600">
-        Loading attendance trend...
+      <div className="rounded-3xl border border-slate-200 bg-slate-50 p-6">
+        <SkeletonBox className="h-6 w-56" />
+        <SkeletonBox className="h-4 w-64 mt-2" />
+        <SkeletonBox className="h-[300px] w-full mt-6 rounded-2xl" />
       </div>
     );
   }

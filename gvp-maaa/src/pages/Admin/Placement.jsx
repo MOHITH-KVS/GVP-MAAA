@@ -2,6 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import ActionDropdown from "../../components/placement/ActionDropdown";
+import SkeletonBox from "../../components/skeletons/SkeletonBox";
+import SkeletonCard from "../../components/skeletons/SkeletonCard";
+import SkeletonTable from "../../components/skeletons/SkeletonTable";
 import {
   Bar,
   BarChart,
@@ -604,7 +607,27 @@ export default function AdminPlacement() {
   };
 
   if (loading) {
-    return <div className="rounded-3xl border bg-white p-8 text-sm text-slate-500 shadow-sm">Loading placement data...</div>;
+    return (
+      <div className="space-y-8 pb-8">
+        <div className="rounded-3xl border bg-white p-6 shadow-sm">
+          <SkeletonBox className="h-10 w-96" />
+          <SkeletonBox className="h-4 w-[32rem] mt-3" />
+        </div>
+        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+          <SkeletonCard />
+          <SkeletonCard />
+          <SkeletonCard />
+          <SkeletonCard />
+          <SkeletonCard />
+        </section>
+        <section className="rounded-3xl border bg-white p-6 shadow-sm">
+          <SkeletonBox className="h-6 w-60" />
+          <div className="mt-5">
+            <SkeletonTable rows={6} />
+          </div>
+        </section>
+      </div>
+    );
   }
 
   const activeDropdownDrive = drives.find((item) => item.id === openActionMenuDriveId) || null;

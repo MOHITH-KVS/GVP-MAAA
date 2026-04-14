@@ -14,6 +14,10 @@ import WarningIcon from "@mui/icons-material/Warning";
 import AssignmentIcon from "@mui/icons-material/Assignment";
 import EventIcon from "@mui/icons-material/Event";
 import SmartTaskManager from "../../components/SmartTaskManager";
+import SkeletonBox from "../../components/skeletons/SkeletonBox";
+import SkeletonCard from "../../components/skeletons/SkeletonCard";
+import SkeletonTable from "../../components/skeletons/SkeletonTable";
+import SkeletonProfile from "../../components/skeletons/SkeletonProfile";
 
 export default function Overview({ profile }) {
   const [data, setData] = useState({
@@ -489,7 +493,7 @@ export default function Overview({ profile }) {
     return items.slice(0, 3);
   }, [data.assignments, data.events]);
 
-  if (loading) return <div className="p-8 text-center text-gray-500">Loading dashboard...</div>;
+  if (loading) return <StudentOverviewSkeleton />;
 
   return (
     <div className="space-y-6 animate-fadeIn text-gray-800 pb-10">
@@ -763,6 +767,67 @@ export default function Overview({ profile }) {
               </div>
             </div>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StudentOverviewSkeleton() {
+  return (
+    <div className="space-y-6 text-gray-800 pb-10">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <SkeletonBox className="h-4 w-32" />
+          <SkeletonBox className="h-10 w-64 mt-2" />
+          <SkeletonBox className="h-4 w-56 mt-2" />
+        </div>
+        <div className="flex gap-4">
+          <div className="glass rounded-3xl border border-slate-200 p-5 min-w-[220px]">
+            <SkeletonBox className="h-4 w-24" />
+            <SkeletonBox className="h-8 w-24 mt-4" />
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <SkeletonCard />
+        <SkeletonCard />
+        <SkeletonCard />
+        <SkeletonCard />
+      </div>
+
+      <div className="glass rounded-2xl p-6">
+        <SkeletonBox className="h-7 w-48" />
+        <SkeletonBox className="h-4 w-72 mt-2" />
+        <SkeletonBox className="h-40 w-full mt-5 rounded-2xl" />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 w-full">
+        <div className="lg:col-span-8 space-y-4">
+          <div className="glass rounded-2xl p-6">
+            <SkeletonBox className="h-6 w-44" />
+            <SkeletonBox className="h-4 w-64 mt-2" />
+            <SkeletonBox className="h-28 w-full mt-4 rounded-2xl" />
+            <SkeletonBox className="h-[250px] w-full mt-4 rounded-2xl" />
+          </div>
+
+          <div className="glass rounded-2xl p-6">
+            <SkeletonBox className="h-6 w-44" />
+            <SkeletonBox className="h-4 w-64 mt-2" />
+            <div className="mt-4">
+              <SkeletonTable rows={5} />
+            </div>
+          </div>
+        </div>
+
+        <div className="lg:col-span-4 space-y-6">
+          <div className="glass rounded-2xl p-6">
+            <SkeletonProfile />
+          </div>
+          <div className="glass rounded-2xl p-6">
+            <SkeletonTable rows={4} />
+          </div>
         </div>
       </div>
     </div>

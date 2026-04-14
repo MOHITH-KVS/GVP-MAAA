@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import SkeletonBox from "../../components/skeletons/SkeletonBox";
+import SkeletonCard from "../../components/skeletons/SkeletonCard";
+import SkeletonTable from "../../components/skeletons/SkeletonTable";
 
 export default function Attendance() {
 
@@ -84,7 +87,28 @@ export default function Attendance() {
   }, [activeSem, selectedMonth, token]);
 
   if (!activeSem || loading) {
-    return <div className="p-10">Loading...</div>;
+    return (
+      <div className="space-y-6">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <SkeletonCard />
+          <SkeletonCard />
+          <SkeletonCard />
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-[240px_1fr] gap-6">
+          <div className="rounded-2xl border bg-white p-5">
+            <SkeletonBox className="h-4 w-24" />
+            <SkeletonTable rows={5} />
+          </div>
+          <div className="rounded-2xl border bg-white p-6">
+            <SkeletonBox className="h-6 w-56" />
+            <SkeletonBox className="h-4 w-72 mt-2" />
+            <div className="mt-5">
+              <SkeletonTable rows={7} />
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   /* ================= CALCULATIONS ================= */

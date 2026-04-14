@@ -1,22 +1,34 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import CloseIcon from "@mui/icons-material/Close";
 import EditIcon from "@mui/icons-material/Edit";
 import SaveIcon from "@mui/icons-material/Save";
 import CancelIcon from "@mui/icons-material/Cancel";
-import { useEffect } from "react";
+import api from "../../utils/axios";
+import SkeletonBox from "../../components/skeletons/SkeletonBox";
+import SkeletonProfile from "../../components/skeletons/SkeletonProfile";
+import SkeletonTable from "../../components/skeletons/SkeletonTable";
 
 /* ================= MAIN PAGE ================= */
 
 export default function TeacherProfilePage({ onBack, profile, onProfileUpdated }) {
   const [activeTab, setActiveTab] = useState("overview");
   const [editMode, setEditMode] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [classesLoading, setClassesLoading] = useState(true);
+  const [teacher, setTeacher] = useState(null);
+  const [formData, setFormData] = useState({
+    branch_id: "",
+    designation: "",
+    experience: "",
+    qualification: "",
+  });
 
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [bio, setBio] = useState("");
   const [expertise, setExpertise] = useState([]);
   const [qualifications, setQualifications] = useState("");
-  /*const [department, setDepartment] = useState("");*/
   const [certifications, setCertifications] = useState([]);
   const [publications, setPublications] = useState([]);
   const [classes, setClasses] = useState([]);
@@ -26,38 +38,133 @@ export default function TeacherProfilePage({ onBack, profile, onProfileUpdated }
   const [github, setGithub] = useState("");
   const [portfolio, setPortfolio] = useState("");
 
+  const getInitials = (name) => {
+    if (!name) return "?";
 
+    const parts = String(name).trim().split(" ").filter(Boolean);
 
-  if (!profile) {
-  return (
-    <div className="h-screen flex items-center justify-center">
-      <p className="text-gray-500">Loading profile...</p>
-    </div>
-  );
- }
+    if (parts.length === 0) return "?";
+    if (parts.length === 1) {
+      return parts[0][0].toUpperCase();
+    }
 
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  };
 
- useEffect(() => {
-  if (profile) {
-    setEmail(profile.email || "");
-    setPhone(profile.phone || "");
-    setBio(profile.bio || "");
-    setExpertise(profile.expertise || []);
-    setQualifications(profile.qualifications || "");
-    /*setDepartment(profile.department_id || "")*/
-    setCertifications(profile.certifications || []);
-    setPublications(profile.publications || []);
-    setClasses(profile.classes || []);
-    setName(profile.name || "");
-    setEmployeeId(profile.employee_id || "");
-    setLinkedin(profile.linkedin || "");
-    setGithub(profile.github || "");
-    setPortfolio(profile.portfolio || "");
+  const getAvatarColor = (name) => {
+    const colors = [
+      "bg-blue-500",
+      "bg-purple-500",
+      "bg-green-500",
+      "bg-orange-500",
+      "bg-pink-500",
+      "bg-indigo-500",
+      "bg-teal-500",
+    ];
 
+    const safeName = String(name || "?");
+    let hash = 0;
+    for (let i = 0; i < safeName.length; i++) {
+      hash = safeName.charCodeAt(i) + ((hash << 5) - hash);
+    }
 
+    return colors[Math.abs(hash) % colors.length];
+  };
 
+  useEffect(() => {
+    let mounted = true;
+
+    const fetchTeacherProfile = async () => {
+      try {
+        setLoading(true);
+        const res = await api.get("/faculty/profile");
+        const data = res?.data || profile || null;
+        if (!mounted) return;
+        console.log("Teacher Data:", data);
+        setTeacher(data);
+      } catch (err) {
+        console.error("Profile fetch error:", err);
+        if (!mounted) return;
+        const fallbackTeacher = profile || null;
+        setTeacher(fallbackTeacher);
+      } finally {
+        if (mounted) {
+          setLoading(false);
+        }
+      }
+    };
+
+    fetchTeacherProfile();
+
+    return () => {
+      mounted = false;
+    };
+  }, [profile]);
+
+  useEffect(() => {
+    if (!teacher) return;
+
+    setEmail(teacher?.email || "");
+    setPhone(teacher?.phone || "");
+    setBio(teacher?.bio || "");
+    setExpertise(Array.isArray(teacher?.expertise) ? teacher.expertise : []);
+    setQualifications(teacher?.qualifications || "");
+    setCertifications(Array.isArray(teacher?.certifications) ? teacher.certifications : []);
+    setPublications(Array.isArray(teacher?.publications) ? teacher.publications : []);
+    setName(teacher?.name || "");
+    setEmployeeId(teacher?.employee_id || "");
+    setLinkedin(teacher?.linkedin || "");
+    setGithub(teacher?.github || "");
+    setPortfolio(teacher?.portfolio || "");
+
+    setFormData({
+      branch_id: teacher?.branch_id ?? "",
+      designation: teacher?.designation || "",
+      experience: teacher?.experience ?? "",
+      qualification: teacher?.qualification || teacher?.qualifications || "",
+    });
+  }, [teacher]);
+
+  useEffect(() => {
+    fetchClasses();
+  }, []);
+
+  const fetchClasses = async () => {
+    try {
+      setClassesLoading(true);
+      const res = await api.get("/faculty/classes");
+      setClasses(Array.isArray(res?.data) ? res.data : []);
+    } catch (err) {
+      console.error("Failed to fetch classes", err);
+      setClasses([]);
+    } finally {
+      setClassesLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-white">
+        <div className="w-full max-w-2xl p-8 space-y-5">
+          <SkeletonBox className="h-10 w-72" />
+          <SkeletonProfile />
+          <SkeletonTable rows={4} />
+        </div>
+      </div>
+    );
   }
- }, [profile]);
+
+  if (!teacher) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-white">
+        <div className="w-full max-w-2xl p-8 space-y-5">
+          <SkeletonBox className="h-10 w-72" />
+          <SkeletonProfile />
+          <SkeletonTable rows={4} />
+        </div>
+      </div>
+    );
+  }
 
   const handleSave = async () => {
   try {
@@ -76,7 +183,6 @@ export default function TeacherProfilePage({ onBack, profile, onProfileUpdated }
       phone,
       bio,
       qualifications,
-      /*department,*/
 
       linkedin,
       github,
@@ -114,18 +220,41 @@ export default function TeacherProfilePage({ onBack, profile, onProfileUpdated }
     setEditMode(false);
   };
 
+  const handleAcademicSave = async () => {
+    try {
+      await api.put("/faculty/profile", {
+        branch_id: formData.branch_id,
+        designation: formData.designation,
+        experience_years: Number(formData.experience),
+        qualification: formData.qualification,
+      });
+
+      setIsEditing(false);
+
+      const res = await api.get("/faculty/profile");
+      setTeacher(res?.data || null);
+    } catch (err) {
+      console.error("Update failed", err);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 bg-white overflow-hidden">
       {/* ================= HEADER ================= */}
       <div className="flex items-center justify-between px-8 py-5 border-b">
         <div className="flex items-center gap-4">
-          <div className="w-14 h-14 rounded-full bg-indigo-600 text-white flex items-center justify-center text-xl font-semibold">
-            B
+          <div className="relative inline-block">
+            <div
+              className={`w-14 h-14 rounded-full flex items-center justify-center text-white font-semibold text-xl ${getAvatarColor(teacher?.name)}`}
+            >
+              {getInitials(teacher?.name)}
+            </div>
+            <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full" />
           </div>
           <div>
-            <h2 className="text-xl font-semibold">{profile?.name}</h2>
+            <h2 className="text-xl font-semibold">{teacher?.name ?? "N/A"}</h2>
             <p className="text-sm text-gray-500">
-              {profile?.designation || "Faculty"}
+              {teacher?.designation || "Faculty"}
             </p>
           </div>
         </div>
@@ -177,14 +306,13 @@ export default function TeacherProfilePage({ onBack, profile, onProfileUpdated }
           <ProfileTab label="Expertise" value="expertise" activeTab={activeTab} setActiveTab={setActiveTab} />
           <ProfileTab label="Certifications" value="certifications" activeTab={activeTab} setActiveTab={setActiveTab} />
           <ProfileTab label="Publications" value="publications" activeTab={activeTab} setActiveTab={setActiveTab} />
-          <ProfileTab label="Admin Remarks" value="remarks" activeTab={activeTab} setActiveTab={setActiveTab} />
         </aside>
 
         {/* ===== RIGHT CONTENT ===== */}
         <main className="flex-1 p-8 overflow-y-auto">
           {activeTab === "overview" && (
             <OverviewSection
-              profile={profile}
+              profile={teacher}
               name={name}
               setName={setName}
               employeeId={employeeId}
@@ -208,19 +336,20 @@ export default function TeacherProfilePage({ onBack, profile, onProfileUpdated }
           )}
           {activeTab === "academic" && (
             <AcademicSection
-              editMode={editMode}
-              qualifications={qualifications}
-              setQualifications={setQualifications}
-              //*department={department}*/
-              setDepartment={setDepartment}
+              isEditing={isEditing}
+              setIsEditing={setIsEditing}
+              teacher={teacher}
+              classes={classes}
+              formData={formData}
+              setFormData={setFormData}
+              handleAcademicSave={handleAcademicSave}
             />
           )}
 
           {activeTab === "classes" && (
             <ClassesSection
-              editMode={editMode}
               classes={classes}
-              setClasses={setClasses}
+              loading={classesLoading}
             />
           )}
 
@@ -247,9 +376,6 @@ export default function TeacherProfilePage({ onBack, profile, onProfileUpdated }
               setPublications={setPublications}
             />
           )}
-
-
-          {activeTab === "remarks" && <RemarksSection />}
         </main>
       </div>
     </div>
@@ -348,133 +474,248 @@ function OverviewSection({
   );
 }
 
-function AcademicSection({ editMode, qualifications, setQualifications, department, setDepartment }) {
+function AcademicSection({ isEditing, setIsEditing, teacher, classes, formData, setFormData, handleAcademicSave }) {
+  const classRows = Array.isArray(classes) ? classes : [];
+  const departments = [
+    { id: 1, name: "CSE" },
+    { id: 2, name: "CSM" },
+    { id: 3, name: "ECE" },
+    { id: 4, name: "EEE" },
+    { id: 5, name: "MECH" },
+    { id: 6, name: "CIVIL" },
+  ];
+
+  const subjectNames = classRows
+    .map((row) => row?.subject)
+    .filter((value) => typeof value === "string" && value.trim().length > 0)
+    .map((value) => value.trim());
+
+  const subjectsFromTeacher = Array.isArray(teacher?.subjects)
+    ? teacher.subjects
+        .map((value) => (typeof value === "string" ? value : value?.name))
+        .filter((value) => typeof value === "string" && value.trim().length > 0)
+    : [];
+
+  const subjects = Array.from(
+    new Set([
+      ...subjectsFromTeacher.map((value) => value.trim()),
+      ...subjectNames,
+    ])
+  );
+
+  const subjectCount = teacher?.subjects_count ?? teacher?.subjects?.length ?? subjects.length ?? 0;
+  const totalStudents = teacher?.total_students ?? 0;
+  const avgAttendance = teacher?.avg_attendance ?? 0;
+  const avgMarks = teacher?.avg_marks ?? 0;
+  const atRiskStudents = teacher?.at_risk_students ?? 0;
+  const studentsPlaced = teacher?.students_placed ?? 0;
+  const successRate = teacher?.placement_success_rate ?? 0;
+
+  const isCoordinator = teacher?.is_coordinator === true;
+  const coordinatorValidTill = teacher?.coordinator_valid_till || "N/A";
 
   return (
-  <Section title="Academic Information">
-    <div className="grid grid-cols-2 gap-6">
+    <Section title="Academic Information">
+      <div className="space-y-6">
+        <div className="rounded-xl border border-gray-200 p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-gray-700">Academic Details</h3>
+            {!isEditing ? (
+              <button
+                onClick={() => setIsEditing(true)}
+                className="px-3 py-1 rounded-lg bg-indigo-600 text-white text-xs hover:bg-indigo-700"
+              >
+                Edit Academic Info
+              </button>
+            ) : (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleAcademicSave}
+                  className="px-3 py-1 rounded-lg bg-green-600 text-white text-xs hover:bg-green-700"
+                >
+                  Save
+                </button>
+                <button
+                  onClick={() => {
+                    setFormData({
+                      branch_id: teacher?.branch_id ?? "",
+                      designation: teacher?.designation || "",
+                      experience: teacher?.experience ?? "",
+                      qualification: teacher?.qualification || teacher?.qualifications || "",
+                    });
+                    setIsEditing(false);
+                  }}
+                  className="px-3 py-1 rounded-lg border border-gray-300 text-gray-700 text-xs hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+          </div>
 
-      <div>
-        <p className="text-xs text-gray-400">Qualifications</p>
-        {editMode ? (
-          <input
-            value={qualifications}
-            onChange={(e) => setQualifications(e.target.value)}
-            className="w-full p-2 border rounded-lg"
-          />
-        ) : (
-          <p>{qualifications || "—"}</p>
-        )}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+            <div>
+              <p className="text-xs text-gray-400">Department</p>
+              {isEditing ? (
+                <select
+                  value={formData.branch_id || ""}
+                  onChange={(e) =>
+                    setFormData({ ...formData, branch_id: Number(e.target.value) })
+                  }
+                  className="w-full p-2 border rounded-lg text-sm"
+                >
+                  <option value="">Select Department</option>
+                  {departments.map((dept) => (
+                    <option key={dept.id} value={dept.id}>
+                      {dept.name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <p className="font-medium">{teacher?.department || "Not Assigned"}</p>
+              )}
+            </div>
+            <div>
+              <p className="text-xs text-gray-400">Designation</p>
+              {isEditing ? (
+                <input
+                  value={formData.designation}
+                  onChange={(e) => setFormData({ ...formData, designation: e.target.value })}
+                  className="w-full p-2 border rounded-lg text-sm"
+                />
+              ) : (
+                <p className="font-medium">{teacher?.designation || "N/A"}</p>
+              )}
+            </div>
+            <div>
+              <p className="text-xs text-gray-400">Experience</p>
+              {isEditing ? (
+                <input
+                  type="number"
+                  min="0"
+                  value={formData.experience}
+                  onChange={(e) => setFormData({ ...formData, experience: e.target.value })}
+                  className="w-full p-2 border rounded-lg text-sm"
+                />
+              ) : (
+                <p className="font-medium">{teacher?.experience ?? 0} Years</p>
+              )}
+            </div>
+          </div>
+
+          <div className="mt-4">
+            <p className="text-xs text-gray-400">Qualification</p>
+            {isEditing ? (
+              <input
+                value={formData.qualification}
+                onChange={(e) => setFormData({ ...formData, qualification: e.target.value })}
+                className="w-full p-2 border rounded-lg text-sm"
+              />
+            ) : (
+              <p className="font-medium">{teacher?.qualification || teacher?.qualifications || "N/A"}</p>
+            )}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="rounded-xl border border-gray-200 p-5">
+            <h3 className="text-sm font-semibold text-gray-700 mb-3">Teaching Load</h3>
+            <div className="space-y-2 text-sm">
+              <p><span className="text-gray-500">Subjects Count:</span> <span className="font-medium">{subjectCount}</span></p>
+              <p><span className="text-gray-500">Total Students:</span> <span className="font-medium">{totalStudents}</span></p>
+              <p>
+                <span className="text-gray-500">Subjects:</span>{" "}
+                <span className="font-medium">{subjects.length ? subjects.join(", ") : "N/A"}</span>
+              </p>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-gray-200 p-5">
+            <h3 className="text-sm font-semibold text-gray-700 mb-3">Performance Metrics</h3>
+            <div className="space-y-2 text-sm">
+              <p><span className="text-gray-500">Average Attendance:</span> <span className="font-medium">{avgAttendance}%</span></p>
+              <p><span className="text-gray-500">Average Marks:</span> <span className="font-medium">{avgMarks}</span></p>
+              <p><span className="text-gray-500">At-Risk Students:</span> <span className="font-medium">{atRiskStudents}</span></p>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-gray-200 p-5">
+            <h3 className="text-sm font-semibold text-gray-700 mb-3">Placement Contribution</h3>
+            <div className="space-y-2 text-sm">
+              <p><span className="text-gray-500">Students Placed:</span> <span className="font-medium">{studentsPlaced}</span></p>
+              <p><span className="text-gray-500">Success Rate:</span> <span className="font-medium">{successRate}%</span></p>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-gray-200 p-5">
+            <h3 className="text-sm font-semibold text-gray-700 mb-3">Coordinator Role</h3>
+            <div className="space-y-2 text-sm">
+              <p><span className="text-gray-500">Placement Coordinator:</span> <span className="font-medium">{isCoordinator ? "Yes" : "No"}</span></p>
+              <p><span className="text-gray-500">Valid Till:</span> <span className="font-medium">{coordinatorValidTill || "N/A"}</span></p>
+            </div>
+          </div>
+        </div>
       </div>
-
-      <div>
-        <p className="text-xs text-gray-400">Department</p>
-        {editMode ? (
-          <input
-            value={department}
-            onChange={(e) => setDepartment(e.target.value)}
-            className="w-full p-2 border rounded-lg"
-          />
-        ) : (
-          <p>{department || "—"}</p>
-        )}
-      </div>
-
-    </div>
-  </Section>
- );
+    </Section>
+  );
 }
 
-function ClassesSection({ editMode, classes, setClasses }) {
+function ClassesSection({ classes, loading }) {
 
-  const addRow = () => {
-    setClasses([
-      ...classes,
-      {
-        year: "",
-        section: "",
-        subject: "",
-        students: "",
-        attendance: null
-      }
-    ]);
-  };
-
-  const updateRow = (index, field, value) => {
-    const updated = [...classes];
-    updated[index][field] = value;
-    setClasses(updated);
-  };
-
-  const removeRow = (index) => {
-    setClasses(classes.filter((_, i) => i !== index));
-  };
+  if (loading) {
+    return (
+      <Section title="Classes & Attendance">
+        <div className="bg-white rounded-xl shadow-sm border p-6">
+          <SkeletonTable rows={6} />
+        </div>
+      </Section>
+    );
+  }
 
   return (
     <Section title="Classes & Attendance">
+      <div className="bg-white rounded-xl shadow-sm border p-6">
+        <h2 className="text-lg font-semibold mb-4">Classes & Attendance</h2>
 
-      {editMode && (
-        <button
-          onClick={addRow}
-          className="mb-4 px-4 py-2 bg-indigo-600 text-white rounded-lg"
-        >
-          + Add Class
-        </button>
-      )}
+        {classes.length === 0 && (
+          <div className="text-center py-10 text-gray-400">No classes assigned yet</div>
+        )}
 
-      <div className="overflow-x-auto">
-        <table className="w-full border rounded-xl">
-          <thead className="bg-gray-50">
-            <tr>
-              <th>Year</th>
-              <th>Section</th>
-              <th>Subject</th>
-              <th>Students</th>
-              <th>Avg Attendance</th>
-              {editMode && <th>Action</th>}
-            </tr>
-          </thead>
+        {classes.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full table-fixed border-collapse">
+              <thead>
+                <tr className="text-left text-gray-500 text-sm border-b">
+                  <th className="w-1/6 py-3">Year</th>
+                  <th className="w-1/6 py-3">Section</th>
+                  <th className="w-2/6 py-3">Subject</th>
+                  <th className="w-1/6 py-3 text-center">Students</th>
+                  <th className="w-1/6 py-3 text-center">Avg Attendance</th>
+                </tr>
+              </thead>
 
-          <tbody>
-            {classes.map((row, i) => (
-              <tr key={i} className="border-t">
-
-                {/* Editable fields */}
-                {["year", "section", "subject", "students"].map(field => (
-                  <td key={field} className="px-3 py-2">
-                    {editMode ? (
-                      <input
-                        value={row[field]}
-                        onChange={(e) => updateRow(i, field, e.target.value)}
-                        className="w-full p-1 border rounded"
-                      />
-                    ) : (
-                      row[field] || "—"
-                    )}
-                  </td>
+              <tbody>
+                {classes.map((cls, index) => (
+                  <tr key={index} className="border-b hover:bg-gray-50 transition">
+                    <td className="py-4">{cls.year ?? "-"}</td>
+                    <td className="py-4">
+                      <span className="px-2 py-1 bg-gray-100 rounded-md text-sm">
+                        {cls.section ?? "-"}
+                      </span>
+                    </td>
+                    <td className="py-4 font-medium">{cls.subject ?? "-"}</td>
+                    <td className="py-4 text-center font-semibold">{cls.students ?? 0}</td>
+                    <td className="py-4 text-center">
+                      <span className="px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm font-medium">
+                        {cls.avg_attendance ?? 0}%
+                      </span>
+                    </td>
+                  </tr>
                 ))}
-
-                {/* Attendance – read only */}
-                <td className="px-3 py-2 text-gray-500">
-                  {row.attendance ?? "Auto"}
-                </td>
-
-                {/* Delete */}
-                {editMode && (
-                  <td className="px-3 py-2">
-                    <button
-                      onClick={() => removeRow(i)}
-                      className="text-red-600"
-                    >
-                      Delete
-                    </button>
-                  </td>
-                )}
-
-              </tr>
-            ))}
-          </tbody>
-        </table>
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </Section>
   );
@@ -632,17 +873,6 @@ function PublicationsSection({ editMode, publications, setPublications }) {
   );
 }
 
-
-function RemarksSection() {
-  return (
-    <Section title="Admin Remarks">
-      <p className="text-sm text-gray-600">
-        Consistently strong academic performance. Positive student feedback.
-      </p>
-    </Section>
-  );
-}
-
 /* ================= UI HELPERS ================= */
 
 function Section({ title, children }) {
@@ -655,12 +885,14 @@ function Section({ title, children }) {
 }
 
 function Info({ label, value, editMode, onChange }) {
+  const canEdit = editMode && typeof onChange === "function";
+
   return (
     <div>
       <p className="text-xs text-gray-400">{label}</p>
-      {editMode ? (
+      {canEdit ? (
         <input
-          value={value}
+          value={value || ""}
           onChange={(e) => onChange(e.target.value)}
           className="w-full mt-1 p-2 border rounded-lg text-sm"
         />

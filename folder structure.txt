@@ -1,0 +1,143 @@
+Perfect. Use this exact paste-friendly structure with any GPT.
+
+Project: GVP-MAAA  
+Type: Full-stack college ERP/analytics platform  
+Stack: React + Vite frontend, FastAPI + SQLAlchemy backend, PostgreSQL-style models, ML/insights modules
+
+Workspace structure (current):
+
+GVP-MAAA/
+- .git/
+- .github/
+- .vscode/
+- .gitignore
+- README.md
+- PROJECT_FULL_TECHNICAL_REPORT.md
+- PROJECT_FULL_TECHNICAL_REPORT.pdf
+- SMART_TASK_IMPLEMENTATION_GUIDE.md
+- SMART_TASK_QUICK_REFERENCE.md
+- SMART_TASK_STUDENT_DATA_EXAMPLES.md
+- SMART_TASK_SYSTEM_DOCUMENTATION.md
+- SMART_TASK_SYSTEM_SUMMARY.md
+- gvp-maaa/
+  - .vite/
+  - .vscode/
+  - node_modules/
+  - dist/
+  - build-output.txt
+  - index.html
+  - package.json
+  - package-lock.json
+  - eslint.config.js
+  - postcss.config.cjs
+  - tailwind.config.js
+  - vite.config.js
+  - README.md
+  - public/
+  - scripts/
+  - src/
+    - main.jsx
+    - App.jsx
+    - index.css
+    - assets/
+    - hooks/
+    - services/
+    - styles/
+    - utils/
+    - components/
+      - ErrorBoundary.jsx
+      - ProtectedRoute.jsx
+      - Smart404.jsx
+      - SmartTaskManager.jsx
+      - SmartTaskManager.css
+      - layout/
+        - Header.jsx
+        - Sidebar.jsx
+      - placement/
+        - ActionDropdown.jsx
+    - dashboards/
+      - AdminDashboard.jsx
+      - StudentDashboard.jsx
+      - TeacherDashboard.jsx
+    - pages/
+      - Logout.jsx
+      - Admin/
+      - Authorization/
+      - Student/
+      - Teacher/
+  - Backend/
+    - .env
+    - .vscode/
+    - venv/
+    - __pycache__/
+    - main.py
+    - auth.py
+    - security.py
+    - database.py
+    - models.py
+    - schemas.py
+    - crud.py
+    - mail.py
+    - requirements.txt
+    - runtime.txt
+    - routes.txt
+    - check_db.py
+    - fix_marks_table.py
+    - migrate_db.py
+    - migrate_db_psycopg2.py
+    - migrate_events.py
+    - migrate_to_file.py
+    - migration_log.txt
+    - test_api.py
+    - test_api2.py
+    - test_endpoints.py
+    - verify_events.py
+    - verify_out.txt
+    - add_column.py
+    - add_alert_column.py
+    - drop_alert_column.py
+    - get-pip.py
+    - out.txt
+    - direct-output.txt
+    - direct-output2.txt
+    - direct-output3.txt
+    - migrate_output.txt
+    - error.log
+    - attendance_report_6.pdf
+    - marks_template.xlsx
+    - assests/
+    - placement/
+    - utils/
+    - tmp/
+      - fix_ignores.py
+      - fix_types.py
+    - uploads/
+      - alerts/
+      - assignments/
+      - external_events/
+      - resources/
+      - timetables/
+    - ml/
+      - __init__.py
+      - alert_engine.py
+      - insights_engine.py
+      - prediction_engine.py
+      - recommendation_engine.py
+      - risk_engine.py
+    - services/
+      - __init__.py
+      - admin_insights_engine.py
+      - alert_rules.py
+      - placement_engine.py
+      - risk_engine.py
+
+Operational notes for GPT:
+- Frontend root: gvp-maaa
+- Backend root: gvp-maaa/Backend
+- Backend run command: uvicorn main:app --reload
+- API docs: http://127.0.0.1:8000/docs
+- Frontend run command: npm run dev
+- Main backend schema file: models.py
+- Student task logic: SmartTaskManager.jsx and taskGenerationEngine.js
+
+If you want, I can now generate version 2 as strict JSON (machine-ingestable) so you can feed it directly to another GPT/system prompt.

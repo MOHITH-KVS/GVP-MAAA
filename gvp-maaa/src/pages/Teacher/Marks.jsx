@@ -1,6 +1,9 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import api from "../../utils/axios";
 import * as XLSX from "xlsx";
+import SkeletonBox from "../../components/skeletons/SkeletonBox";
+import SkeletonCard from "../../components/skeletons/SkeletonCard";
+import SkeletonTable from "../../components/skeletons/SkeletonTable";
 
 export default function Marks() {
   const [year, setYear] = useState("3");
@@ -11,6 +14,7 @@ export default function Marks() {
 
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState("");
+  const [pageLoading, setPageLoading] = useState(true);
 
   const [file, setFile] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -67,9 +71,12 @@ export default function Marks() {
       setSubjects(data);
       if (data.length > 0) {
         setSubject(data[0].subject_name);
+      } else {
+        setPageLoading(false);
       }
     } catch(err){
       console.error("Failed to load subjects",err);
+      setPageLoading(false);
     }
   };
 
@@ -97,8 +104,30 @@ export default function Marks() {
       setTotalStudents(data.stats.total_students);
     } catch (err) {
       setStudents([]);
+    } finally {
+      setPageLoading(false);
     }
   };
+
+  if (pageLoading) {
+    return (
+      <div className="space-y-8">
+        <div>
+          <SkeletonBox className="h-9 w-72" />
+          <SkeletonBox className="h-4 w-96 mt-2" />
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <SkeletonCard />
+          <SkeletonCard />
+          <SkeletonCard />
+          <SkeletonCard />
+        </div>
+        <div className="rounded-2xl border bg-white p-6">
+          <SkeletonTable rows={6} />
+        </div>
+      </div>
+    );
+  }
 
   const downloadTemplate = async () => {
     if (!year || !section || !subject) {
