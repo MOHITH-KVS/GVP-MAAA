@@ -18,6 +18,12 @@ import SkeletonBox from "../../components/skeletons/SkeletonBox";
 import SkeletonCard from "../../components/skeletons/SkeletonCard";
 import SkeletonTable from "../../components/skeletons/SkeletonTable";
 import SkeletonProfile from "../../components/skeletons/SkeletonProfile";
+import {
+  getAssignmentStatus,
+  getAttendanceStatus,
+  getMarksStatus,
+  statusStyles,
+} from "../../utils/insightUtils";
 
 export default function Overview({ profile, alerts = [] }) {
   const [data, setData] = useState({
@@ -286,6 +292,17 @@ export default function Overview({ profile, alerts = [] }) {
   const pendingAssignments = Array.isArray(data.assignments)
     ? data.assignments.filter((assignment) => assignment && assignment.status !== "submitted" && !assignment.submitted).length
     : 0;
+  const attendanceStatusKey = data.attendance !== null && data.attendance !== undefined
+    ? getAttendanceStatus(data.attendance)
+    : "good";
+  const attendanceStyle = statusStyles[attendanceStatusKey];
+  const sgpaStatusKey = data.sgpa !== null && data.sgpa !== undefined
+    ? getMarksStatus(Number(data.sgpa) * 10)
+    : "good";
+  const cgpaStatusKey = data.cgpa !== null && data.cgpa !== undefined
+    ? getMarksStatus(Number(data.cgpa) * 10)
+    : "good";
+  const assignmentStatusKey = getAssignmentStatus(pendingAssignments);
   const welcomeName = data.profile.name || user?.name || "Student";
   const welcomeSummaryParts = [];
   if (alertCount > 0) {
@@ -449,9 +466,10 @@ export default function Overview({ profile, alerts = [] }) {
       return { text: "--", color: "text-slate-500" };
     }
 
+    const statusKey = status === "At Risk" ? "critical" : "good";
     return status === "At Risk"
-      ? { text: "At Risk", color: "text-amber-600" }
-      : { text: "Good", color: "text-emerald-600" };
+      ? { text: "At Risk", color: statusStyles[statusKey].text }
+      : { text: "Good", color: statusStyles[statusKey].text };
   };
 
   function getSubjectMarkValue(subject) {
@@ -532,9 +550,12 @@ export default function Overview({ profile, alerts = [] }) {
           </p>
         </div>
         <div className="flex gap-4">
-          <div className="glass rounded-3xl border border-slate-200 p-5 min-w-[220px]">
+          <div className={`glass rounded-3xl border border-slate-200 p-5 min-w-[220px] ${attendanceStyle.bg}`}>
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Attendance</p>
-            <p className="mt-4 text-3xl font-bold text-slate-900">{attendanceDisplay}</p>
+            <p className={`mt-4 text-3xl font-bold ${attendanceStyle.text}`}>{attendanceDisplay}</p>
+            <span className={`text-xs font-medium ${attendanceStyle.text}`}>
+              {attendanceStatusKey === "good" ? "✅" : attendanceStatusKey === "warning" ? "⚠️" : "❌"} {attendanceStyle.label}
+            </span>
           </div>
         </div>
       </div>
@@ -553,6 +574,7 @@ export default function Overview({ profile, alerts = [] }) {
           title="SGPA"
           value={sgpaDisplay}
           subtext="Semester GPA"
+          status={sgpaStatusKey}
         />
         <KpiCard
           icon={<CheckCircleIcon />}
@@ -561,6 +583,7 @@ export default function Overview({ profile, alerts = [] }) {
           title="CGPA"
           value={cgpaDisplay}
           subtext="Cumulative GPA"
+          status={cgpaStatusKey}
         />
         <KpiCard
           icon={<AssignmentIcon />}
@@ -569,6 +592,7 @@ export default function Overview({ profile, alerts = [] }) {
           title="Pending Assignments"
           value={pendingAssignmentDisplay}
           subtext="To be submitted"
+          status={assignmentStatusKey}
         />
         <KpiCard
           icon={<EventIcon />}
@@ -577,6 +601,7 @@ export default function Overview({ profile, alerts = [] }) {
           title="Upcoming Events"
           value={upcomingEventsCount > 0 ? upcomingEventsCount : "--"}
           subtext="Next events"
+          status="good"
         />
       </div>
 
@@ -857,7 +882,10 @@ function StudentOverviewSkeleton() {
   );
 }
 
-function KpiCard({ icon, iconColor, bgGradient, title, value, subtext }) {
+function KpiCard({ icon, iconColor, bgGradient, title, value, subtext, status = "good" }) {
+  const style = statusStyles[status] || statusStyles.good;
+  const statusIcon = status === "good" ? "✅" : status === "warning" ? "⚠️" : "❌";
+
   return (
     <div className="glass rounded-2xl p-6 hover:shadow-2xl transition-all duration-500 flex flex-col justify-between group overflow-hidden relative">
       <div className="absolute inset-0 bg-gradient-to-br from-white/60 via-white/30 to-white/60 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
@@ -869,7 +897,10 @@ function KpiCard({ icon, iconColor, bgGradient, title, value, subtext }) {
         </div>
         <div>
           <p className="text-sm font-semibold text-slate-600 mb-1">{title}</p>
-          <p className="text-3xl font-black text-slate-900 mb-2 tracking-tight">{value}</p>
+          <p className={`text-3xl font-black mb-2 tracking-tight ${style.text}`}>{value}</p>
+          <p className={`text-xs font-semibold mb-1 ${style.text}`}>
+            {statusIcon} {style.label}
+          </p>
           <p className="text-xs font-medium text-slate-500">{subtext}</p>
         </div>
       </div>

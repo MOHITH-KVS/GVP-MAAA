@@ -17,6 +17,12 @@ import SkeletonBox from "../../components/skeletons/SkeletonBox";
 import SkeletonCard from "../../components/skeletons/SkeletonCard";
 import SkeletonTable from "../../components/skeletons/SkeletonTable";
 import SkeletonProfile from "../../components/skeletons/SkeletonProfile";
+import {
+  getAttendanceStatus,
+  getMarksStatus,
+  getRiskStatus,
+  statusStyles,
+} from "../../utils/insightUtils";
 
 export default function Overview({ profile, alerts = [] }) {
   const [subjects, setSubjects] = useState([]);
@@ -186,6 +192,11 @@ export default function Overview({ profile, alerts = [] }) {
   const pendingAssignments = Array.isArray(teacherAssignments)
     ? teacherAssignments.reduce((total, assignment) => total + Number(assignment?.pending || 0), 0)
     : 0;
+  const classAverageStatusKey = getMarksStatus(Number(data.kpis?.class_avg || 0));
+  const passRateStatusKey = getMarksStatus(Number(data.kpis?.pass_rate || 0));
+  const topPerformerStatusKey = dynamicTopper ? getMarksStatus(Number(dynamicTopper.marks || 0)) : "good";
+  const atRiskCountStatusKey = getRiskStatus(Number(data.kpis?.at_risk_count || 0));
+  const atRiskHeaderStyle = statusStyles[atRiskCountStatusKey] || statusStyles.good;
   const welcomeName = profile?.name || user?.name || "Faculty";
   const welcomeSummaryParts = [];
   if (alertCount > 0) {
@@ -281,6 +292,7 @@ export default function Overview({ profile, alerts = [] }) {
               title="Class Average" 
               value={`${data.kpis?.class_avg || 0}`} 
               subtext="Overall Marks" 
+              status={classAverageStatusKey}
             />
             <KpiCard 
               icon={<CheckCircleIcon />} 
@@ -289,6 +301,7 @@ export default function Overview({ profile, alerts = [] }) {
               title="Pass Rate" 
               value={`${data.kpis?.pass_rate || 0}%`} 
               subtext="Marks ≥ 12" 
+              status={passRateStatusKey}
             />
             <KpiCard 
               icon={<EmojiEventsIcon />} 
@@ -297,6 +310,7 @@ export default function Overview({ profile, alerts = [] }) {
               title="Top Performer" 
               value={dynamicTopper?.name || "N/A"} 
               subtext={dynamicTopper ? `${dynamicTopper.marks} marks` : "No data"} 
+              status={topPerformerStatusKey}
             />
             <KpiCard 
               icon={<ErrorOutlineIcon />} 
@@ -305,6 +319,7 @@ export default function Overview({ profile, alerts = [] }) {
               title="At Risk Count" 
               value={data.kpis?.at_risk_count || 0} 
               subtext="Marks < 15" 
+              status={atRiskCountStatusKey}
             />
           </div>
 
@@ -402,7 +417,7 @@ export default function Overview({ profile, alerts = [] }) {
                 <div className="absolute inset-0 bg-gradient-to-br from-red-100/5 via-transparent to-orange-100/5 pointer-events-none"></div>
                 
                 <div className="relative z-10 flex items-center justify-between mb-4">
-                  <h3 className="font-bold text-red-600 text-lg">At-Risk</h3>
+                  <h3 className={`font-bold text-lg ${atRiskHeaderStyle.text}`}>At-Risk</h3>
                   <div className="flex bg-white/50 p-1 rounded-lg border border-white/50 backdrop-blur-sm">
                     <button onClick={()=>setRiskType('marks')} className={`px-2 py-1 text-xs font-bold rounded-md transition-all ${riskType==='marks'?'bg-white/80 text-red-600 shadow-sm border border-white/50':'text-gray-400'}`}>Marks</button>
                     <button onClick={()=>setRiskType('attendance')} className={`px-2 py-1 text-xs font-bold rounded-md transition-all ${riskType==='attendance'?'bg-white/80 text-orange-600 shadow-sm border border-white/50':'text-gray-400'}`}>Attnd</button>
@@ -413,19 +428,25 @@ export default function Overview({ profile, alerts = [] }) {
                   <p className="text-gray-400 text-sm m-auto pb-4 text-center relative z-10">No students flagged at risk for this metric.</p>
                 ) : (
                   <div className="space-y-2 flex-1 overflow-y-auto pr-2 custom-scrollbar relative z-10">
-                    {atRiskList.map((st, i) => (
-                      <div key={i} className={`flex justify-between items-center p-3 rounded-xl border backdrop-blur-sm transition-all ${riskType === 'marks' ? 'bg-red-100/30 border-red-200/50 hover:bg-red-100/50 hover:border-red-300/50' : 'bg-orange-100/30 border-orange-200/50 hover:bg-orange-100/50 hover:border-orange-300/50'}`}>
+                    {atRiskList.map((st, i) => {
+                      const rowStatusKey = riskType === "marks"
+                        ? getMarksStatus(Number(st?.value || 0))
+                        : getAttendanceStatus(Number(st?.value || 0));
+                      const rowStyle = statusStyles[rowStatusKey] || statusStyles.good;
+
+                      return (
+                      <div key={i} className={`flex justify-between items-center p-3 rounded-xl border backdrop-blur-sm transition-all ${rowStyle.bg} border-white/60 hover:opacity-90`}>
                         <div className="flex flex-col flex-1 min-w-0">
                           <span className="font-semibold text-gray-700 text-sm truncate max-w-[130px]">{st.name}</span>
                           {riskType === 'marks' && st.exam && (
                             <span className="text-xs text-gray-500 truncate">{st.exam}</span>
                           )}
                         </div>
-                        <span className={`font-bold text-sm ml-2 whitespace-nowrap ${riskType === 'marks' ? 'text-red-600' : 'text-orange-600'}`}>
+                        <span className={`font-bold text-sm ml-2 whitespace-nowrap ${rowStyle.text}`}>
                           {riskType === 'marks' ? `${st.value} pts` : `${st.value}%`}
                         </span>
                       </div>
-                    ))}
+                    );})}
                   </div>
                 )}
                 {atRiskList.length > 0 && <p className="text-xs text-gray-400 mt-3 text-center italic relative z-10">{riskType==='marks'?`< 15 marks` :'< 75% attendance'}</p>}
@@ -501,7 +522,10 @@ function TeacherOverviewSkeletonContent() {
 }
 
 // Subcomponent: Premium KPI Card with Glassmorphism
-function KpiCard({ icon, iconColor, bgGradient, title, value, subtext }) {
+function KpiCard({ icon, iconColor, bgGradient, title, value, subtext, status = "good" }) {
+  const style = statusStyles[status] || statusStyles.good;
+  const statusIcon = status === "good" ? "✅" : status === "warning" ? "⚠️" : "❌";
+
   return (
     <div className="glass rounded-2xl p-6 hover:shadow-2xl transition-all duration-500 flex flex-col justify-between group overflow-hidden relative">
       {/* Animated gradient background */}
@@ -517,7 +541,10 @@ function KpiCard({ icon, iconColor, bgGradient, title, value, subtext }) {
         </div>
         <div>
           <p className="text-sm font-bold text-gray-500 mb-1">{title}</p>
-          <p className="text-2xl font-black text-gray-800 mb-1 tracking-tight truncate group-hover:text-indigo-600 transition-colors">{value}</p>
+          <p className={`text-2xl font-black mb-1 tracking-tight truncate transition-colors ${style.text}`}>{value}</p>
+          <p className={`text-xs font-semibold mb-1 ${style.text}`}>
+            {statusIcon} {style.label}
+          </p>
           <p className="text-xs font-semibold text-gray-400">{subtext}</p>
         </div>
       </div>
