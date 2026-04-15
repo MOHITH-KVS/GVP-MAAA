@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { playNotificationSound } from "../utils/notificationSound";
+import { getLastSeenTime, setLastSeenTime } from "../utils/alertStorage";
 
 export const useAlertSound = (alerts) => {
   useEffect(() => {
@@ -7,22 +8,31 @@ export const useAlertSound = (alerts) => {
       return;
     }
 
-    const latestAlert = alerts[0];
-    if (!latestAlert || latestAlert.id == null) {
+    const sortedAlerts = [...alerts]
+      .filter((alert) => alert && alert.created_at)
+      .sort((left, right) => new Date(right.created_at) - new Date(left.created_at));
+
+    const latestAlert = sortedAlerts[0];
+    if (!latestAlert || !latestAlert.created_at) {
       return;
     }
 
-    const lastSeenId = localStorage.getItem("lastSeenAlertId");
+    const lastSeenTime = getLastSeenTime();
 
-    // First observed payload in this browser session history: baseline only.
-    if (!lastSeenId) {
-      localStorage.setItem("lastSeenAlertId", String(latestAlert.id));
+    if (!lastSeenTime) {
+      setLastSeenTime(latestAlert.created_at);
       return;
     }
 
-    if (String(latestAlert.id) !== lastSeenId) {
+    const lastSeenDate = new Date(lastSeenTime);
+    const hasNewAlert = sortedAlerts.some((alert) => {
+      const alertDate = new Date(alert.created_at);
+      return !Number.isNaN(alertDate.getTime()) && !Number.isNaN(lastSeenDate.getTime()) && alertDate > lastSeenDate;
+    });
+
+    if (hasNewAlert) {
       playNotificationSound();
-      localStorage.setItem("lastSeenAlertId", String(latestAlert.id));
+      setLastSeenTime(latestAlert.created_at);
     }
   }, [alerts]);
 };

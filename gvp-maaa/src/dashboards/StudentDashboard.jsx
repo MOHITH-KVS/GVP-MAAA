@@ -123,10 +123,14 @@ export default function StudentDashboard() {
   useEffect(() => {
     let isMounted = true;
 
+    const sortAlertsByCreatedAtDesc = (list) => {
+      return [...list].sort((left, right) => new Date(right.created_at) - new Date(left.created_at));
+    };
+
     const fetchAlerts = async () => {
       try {
         const res = await api.get("/student/alerts");
-        const nextAlerts = Array.isArray(res.data) ? res.data : [];
+        const nextAlerts = Array.isArray(res.data) ? sortAlertsByCreatedAtDesc(res.data) : [];
         if (isMounted) {
           setAlerts(nextAlerts);
         }
@@ -282,7 +286,7 @@ export default function StudentDashboard() {
         <main className="flex-1 p-8 flex gap-6 overflow-hidden">
 
           <div className="flex-1 overflow-y-auto pr-2">
-            {activePage === "overview" && <StudentOverview profile={profile} />}
+            {activePage === "overview" && <StudentOverview profile={profile} alerts={alerts} />}
             {activePage === "attendance" && <Attendance />}
             {activePage === "marks" && <Marks />}
             {activePage === "assignments" && <Assignments />}

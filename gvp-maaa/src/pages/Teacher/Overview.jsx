@@ -18,8 +18,9 @@ import SkeletonCard from "../../components/skeletons/SkeletonCard";
 import SkeletonTable from "../../components/skeletons/SkeletonTable";
 import SkeletonProfile from "../../components/skeletons/SkeletonProfile";
 
-export default function Overview({ profile }) {
+export default function Overview({ profile, alerts = [] }) {
   const [subjects, setSubjects] = useState([]);
+  const [teacherAssignments, setTeacherAssignments] = useState([]);
   const [year, setYear] = useState(1);
   const [section, setSection] = useState("A");
   const [subjectId, setSubjectId] = useState("");
@@ -41,6 +42,13 @@ export default function Overview({ profile }) {
 
   const token = localStorage.getItem("access_token");
   const user = JSON.parse(localStorage.getItem("user"));
+
+  const getGreeting = () => {
+    const hour = new Date().getHours();
+    if (hour < 12) return "Good Morning";
+    if (hour < 18) return "Good Afternoon";
+    return "Good Evening";
+  };
 
   // 1. Fetch subjects
   useEffect(() => {
@@ -89,25 +97,42 @@ export default function Overview({ profile }) {
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch(
-          `http://localhost:8000/faculty/overview?year=${year}&section=${section}&subject_id=${subjectId}`,
-          { 
-            method: "GET",
-            headers: { 
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${token}` 
-            } 
-          }
-        );
-        if (res.status === 401) {
+        const headers = {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        };
+
+        const [overviewRes, assignmentsRes] = await Promise.all([
+          fetch(
+            `http://localhost:8000/faculty/overview?year=${year}&section=${section}&subject_id=${subjectId}`,
+            {
+              method: "GET",
+              headers,
+            }
+          ),
+          fetch(
+            `http://localhost:8000/teacher/assignments/${year}/${section}`,
+            {
+              method: "GET",
+              headers,
+            }
+          ),
+        ]);
+
+        if (overviewRes.status === 401 || assignmentsRes.status === 401) {
             alert("Session expired. Please login again.");
             localStorage.clear();
             window.location.href = "/login";
             return;
         }
-        if (!res.ok) throw new Error("Failed to fetch data");
-        const json = await res.json();
+
+        if (!overviewRes.ok) throw new Error("Failed to fetch data");
+
+        const json = await overviewRes.json();
         setData(json);
+
+        const assignmentsJson = assignmentsRes.ok ? await assignmentsRes.json() : {};
+        setTeacherAssignments(Array.isArray(assignmentsJson?.assignments) ? assignmentsJson.assignments : []);
 
         // Auto-select valid metric
         if (json.metrics?.total?.length > 0) setSelectedMetric("total");
@@ -157,6 +182,21 @@ export default function Overview({ profile }) {
     return Object.keys(dist).map(key => ({ range: key, count: dist[key] }));
   }, [data.metrics, selectedMetric]);
 
+  const alertCount = Array.isArray(alerts) ? alerts.filter((alert) => alert && !alert.is_read).length : 0;
+  const pendingAssignments = Array.isArray(teacherAssignments)
+    ? teacherAssignments.reduce((total, assignment) => total + Number(assignment?.pending || 0), 0)
+    : 0;
+  const welcomeName = profile?.name || user?.name || "Faculty";
+  const welcomeSummaryParts = [];
+  if (alertCount > 0) {
+    welcomeSummaryParts.push(`${alertCount} alert${alertCount === 1 ? "" : "s"}`);
+  }
+  welcomeSummaryParts.push(`${pendingAssignments} pending task${pendingAssignments === 1 ? "" : "s"}`);
+  const welcomeSummaryText =
+    alertCount === 0 && pendingAssignments === 0
+      ? "You're all caught up"
+      : `You have ${welcomeSummaryParts.join(" and ")}`;
+
   if (loading && subjects.length === 0) {
     return <TeacherOverviewSkeleton />;
   }
@@ -166,11 +206,11 @@ export default function Overview({ profile }) {
       
       {/* HEADER */}
       <div>
-        <h2 className="text-3xl font-extrabold mb-1 tracking-tight text-gray-900">
-          Welcome, {user?.name || "Faculty"} 👋
-        </h2>
+        <h1 className="text-3xl font-extrabold mb-1 tracking-tight text-gray-900">
+          {getGreeting()}, {welcomeName} 👋
+        </h1>
         <p className="text-gray-500 text-sm font-medium">
-          Here’s a quick overview of your class performance
+          {welcomeSummaryText}
         </p>
       </div>
 

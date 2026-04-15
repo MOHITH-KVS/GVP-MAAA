@@ -19,7 +19,7 @@ import SkeletonCard from "../../components/skeletons/SkeletonCard";
 import SkeletonTable from "../../components/skeletons/SkeletonTable";
 import SkeletonProfile from "../../components/skeletons/SkeletonProfile";
 
-export default function Overview({ profile }) {
+export default function Overview({ profile, alerts = [] }) {
   const [data, setData] = useState({
     profile: { name: "", department: "", semester: "", classId: "" },
     attendance: null,
@@ -68,6 +68,13 @@ export default function Overview({ profile }) {
   const user = JSON.parse(localStorage.getItem("user") || "{}");
   const studentId =
     user?.user_id || user?.student_id || user?.id || profile?.student_id || profile?.id || null;
+
+  const getGreeting = () => {
+    const hour = new Date().getHours();
+    if (hour < 12) return "Good Morning";
+    if (hour < 18) return "Good Afternoon";
+    return "Good Evening";
+  };
 
   useEffect(() => {
     async function fetchOverview() {
@@ -275,6 +282,20 @@ export default function Overview({ profile }) {
   const sgpaDisplay = data.sgpa !== null && data.sgpa !== undefined ? data.sgpa.toFixed(2) : "--";
   const pendingAssignmentDisplay = data.pendingAssignments !== null && data.pendingAssignments !== undefined ? data.pendingAssignments : "--";
   const upcomingEventsCount = data.upcomingEvents?.length ?? 0;
+  const alertCount = Array.isArray(alerts) ? alerts.filter((alert) => alert && !alert.is_read).length : 0;
+  const pendingAssignments = Array.isArray(data.assignments)
+    ? data.assignments.filter((assignment) => assignment && assignment.status !== "submitted" && !assignment.submitted).length
+    : 0;
+  const welcomeName = data.profile.name || user?.name || "Student";
+  const welcomeSummaryParts = [];
+  if (alertCount > 0) {
+    welcomeSummaryParts.push(`${alertCount} alert${alertCount === 1 ? "" : "s"}`);
+  }
+  welcomeSummaryParts.push(`${pendingAssignments} pending task${pendingAssignments === 1 ? "" : "s"}`);
+  const welcomeSummaryText =
+    alertCount === 0 && pendingAssignments === 0
+      ? "You're all caught up"
+      : `You have ${welcomeSummaryParts.join(" and ")}`;
 
   const attendanceSubjectOptions = useMemo(() => {
     const options = [{ name: "All Subjects", id: null }, ...attendanceSubjects];
@@ -499,10 +520,12 @@ export default function Overview({ profile }) {
     <div className="space-y-6 animate-fadeIn text-gray-800 pb-10">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <p className="text-sm font-medium text-gray-500">Student Overview</p>
-          <h2 className="text-3xl font-extrabold tracking-tight text-gray-900">
-            {data.profile.name || user?.name || "Student"}
-          </h2>
+          <h1 className="text-3xl font-extrabold tracking-tight text-gray-900">
+            {getGreeting()}, {welcomeName} 👋
+          </h1>
+          <p className="text-gray-500 mt-1">
+            {welcomeSummaryText}
+          </p>
           <p className="mt-2 text-sm text-gray-600">
             {data.profile.department ? `${data.profile.department} • ` : ""}
             {data.profile.semester ? `Semester ${data.profile.semester}` : "--"}

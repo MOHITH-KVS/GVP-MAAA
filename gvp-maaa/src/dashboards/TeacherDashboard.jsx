@@ -128,10 +128,14 @@ export default function TeacherDashboard() {
   useEffect(() => {
     let isMounted = true;
 
+    const sortAlertsByCreatedAtDesc = (list) => {
+      return [...list].sort((left, right) => new Date(right.created_at) - new Date(left.created_at));
+    };
+
     const fetchAlerts = async () => {
       try {
         const res = await api.get("/faculty/alerts");
-        const nextAlerts = Array.isArray(res.data) ? res.data : [];
+        const nextAlerts = Array.isArray(res.data) ? sortAlertsByCreatedAtDesc(res.data) : [];
         if (isMounted) {
           setAlerts(nextAlerts);
         }
@@ -344,7 +348,7 @@ export default function TeacherDashboard() {
             className={`flex-1 relative z-10 transition-all ${!showProfile ? "pr-16" : ""
               }`}
           >
-            {activePage === "overview" && <Overview profile={profile} />}
+            {activePage === "overview" && <Overview profile={profile} alerts={alerts} />}
             {activePage === "timetable" && <Timetable />}
             {activePage === "attendance" && <Attendance />}
             {activePage === "assignments" && <Assignment />}
