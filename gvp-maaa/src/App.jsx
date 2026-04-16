@@ -48,6 +48,9 @@ import Settings from "./pages/Admin/Settings";
 import AdminPlacement from "./pages/Admin/Placement";
 import PlacementDriveDetails from "./pages/Admin/PlacementDriveDetails";
 
+/* ================= STUDENT SUB-PAGES ================= */
+import StudentAgentView from "./pages/Student/StudentAgentView";
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -103,6 +106,15 @@ export default function App() {
           <Route path="placement/drives/:id" element={<PlacementDriveDetails />} />
           <Route path="settings" element={<ErrorBoundary><Settings /></ErrorBoundary>} />
         </Route>
+
+        <Route
+          path="/student/ai-insights"
+          element={
+            <ProtectedRoute allowedRole="student">
+              <StudentAgentView />
+            </ProtectedRoute>
+          }
+        />
 
         <Route
           path="/student/*"

@@ -15179,3 +15179,8 @@ def get_scaling_logs(
     except Exception as e:
         return {"success": False, "error": str(e)}
 
+
+from orchestrator import router as agent_router
+app.include_router(agent_router)
+from stream_router import router as stream_router
+app.include_router(stream_router)

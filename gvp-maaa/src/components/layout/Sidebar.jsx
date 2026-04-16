@@ -12,14 +12,15 @@ export default function Sidebar() {
         <MenuItem label="Assignments" />
         <MenuItem label="Career Profile" />
         <MenuItem label="Timetable" />
+        <MenuItem label="AI Insights" onClick={() => window.location.href = '/student/ai-insights'} />
       </nav>
     </aside>
   )
 }
 
-function MenuItem({ label, active }) {
+function MenuItem({ label, active, onClick }) {
   return (
-    <div className={`
+    <div onClick={onClick} className={`
       px-4 py-2 rounded-lg cursor-pointer
       ${active 
         ? "bg-indigo-100 text-indigo-600 font-medium"

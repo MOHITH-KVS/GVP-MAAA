@@ -132,6 +132,7 @@ From gvp-maaa/package.json:
 path:
 /*frontend*/
 cd "C:\Users\my pc\OneDrive\Desktop\GVP-MAAA\gvp-maaa"
+npm run dev 
 /*backend*/
 cd "C:\Users\my pc\OneDrive\Desktop\GVP-MAAA\gvp-maaa\Backend" 
 /*virtual env*/
@@ -143,7 +144,7 @@ uvicorn main:app
 
 http://127.0.0.1:8000/docs
 
-npm run dev 
+
 
 CTRL + C
 uvicorn main:app --reload
