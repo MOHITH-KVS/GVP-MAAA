@@ -21,6 +21,7 @@ import Avatar from "../components/Avatar";
 import ViewProfile from "../pages/Student/ViewProfile";
 import Logout from "../pages/Logout";
 import Smart404 from "../components/Smart404";
+import StudentChat from "../pages/Student/StudentChat";
 
 /* ===== Material UI Icons ===== */
 import DashboardIcon from "@mui/icons-material/Dashboard";
@@ -40,6 +41,7 @@ import CloseIcon from "@mui/icons-material/Close";
 import PersonIcon from "@mui/icons-material/Person";
 import MenuIcon from "@mui/icons-material/Menu";
 import LogoutIcon from "@mui/icons-material/Logout";
+import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import SkeletonBox from "../components/skeletons/SkeletonBox";
 import { useAlertSound } from "../hooks/useAlertSound";
 
@@ -70,6 +72,7 @@ export default function StudentDashboard() {
     "insights",
     "resources",
     "alerts",
+    "ai-assistant",
   ];
 
   const resolvePageFromPath = (pathname) => {
@@ -251,6 +254,8 @@ export default function StudentDashboard() {
                 active={activePage === "insights"} onClick={() => goToPage("insights")} />
               <MenuItem icon={MenuBookIcon} label="Resources" open={sidebarOpen}
                 active={activePage === "resources"} onClick={() => goToPage("resources")} />
+              <MenuItem icon={AutoAwesomeIcon} label="AI Assistant" open={sidebarOpen}
+                active={activePage === "ai-assistant"} onClick={() => goToPage("ai-assistant")} isAI />
             </SidebarSection>
 
             <SidebarSection title="System" open={sidebarOpen}>
@@ -295,7 +300,8 @@ export default function StudentDashboard() {
             {activePage === "resources" && <Resources />}
             {activePage === "placement" && <Placement />}
             {activePage === "insights" && <Insights />}
-            {activePage === "alerts" && (<Alerts alerts={alerts} setAlerts={setAlerts} loading={loadingAlerts} />)}
+            {activePage === "alerts" && <Alerts alerts={alerts} setAlerts={setAlerts} loading={loadingAlerts} />}
+            {activePage === "ai-assistant" && <StudentChat />}
           </div>
 
           <div
@@ -337,7 +343,29 @@ function SidebarSection({ title, open, children }) {
   );
 }
 
-function MenuItem({ icon: Icon, label, open, active, onClick }) {
+function MenuItem({ icon: Icon, label, open, active, onClick, isAI }) {
+  if (isAI) {
+    return (
+      <div
+        onClick={onClick}
+        className={`flex items-center gap-3 px-3 py-2.5 rounded-xl cursor-pointer transition-all duration-300 relative
+          ${active 
+            ? "border-l-4 border-indigo-600 bg-gradient-to-r from-indigo-50 to-white text-indigo-700 shadow-sm" 
+            : "text-indigo-600 hover:bg-indigo-50/50 hover:shadow-sm"
+          }
+          ${!open && "justify-center border-l-0"}`}
+      >
+        <div className="relative">
+          <Icon fontSize="small" className={active ? "text-indigo-600" : "text-indigo-500"} />
+          {!active && (
+            <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-indigo-400 rounded-full animate-pulse blur-[1px]"></span>
+          )}
+        </div>
+        {open && <span className="font-semibold tracking-wide bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-indigo-400">{label}</span>}
+      </div>
+    );
+  }
+
   return (
     <div
       onClick={onClick}

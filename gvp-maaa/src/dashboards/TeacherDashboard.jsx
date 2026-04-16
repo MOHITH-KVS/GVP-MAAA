@@ -17,6 +17,7 @@ import TeacherProfilePage from "../pages/Teacher/TeacherProfilePage";
 import Placement from "../pages/Teacher/Placement";
 import PlacementCoordinator from "../pages/Teacher/PlacementCoordinator";
 import Smart404 from "../components/Smart404";
+import TeacherChat from "../pages/Teacher/TeacherChat";
 import Avatar from "../components/Avatar";
 import { recordRouteVisit } from "../utils/navigationHistory";
 import { useAlertSound } from "../hooks/useAlertSound";
@@ -35,6 +36,7 @@ import LinkedInIcon from "@mui/icons-material/LinkedIn";
 import LanguageIcon from "@mui/icons-material/Language";
 import PersonIcon from "@mui/icons-material/Person";
 import GitHubIcon from "@mui/icons-material/GitHub";
+import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import SkeletonBox from "../components/skeletons/SkeletonBox";
 
 /* EXTRA ICONS */
@@ -74,6 +76,7 @@ export default function TeacherDashboard() {
     "alerts",
     "placement",
     "placement-coordinator",
+    "ai-assistant",
   ];
 
   const resolvePageFromPath = (pathname) => {
@@ -280,6 +283,14 @@ export default function TeacherDashboard() {
                 active={activePage === "placement-coordinator"}
                 onClick={() => goToPage("placement-coordinator")}
               />
+              <MenuItem
+                icon={AutoAwesomeIcon}
+                label="AI Assistant"
+                open={sidebarOpen}
+                active={activePage === "ai-assistant"}
+                onClick={() => goToPage("ai-assistant")}
+                isAI
+              />
             </SidebarSection>
 
             <div className="mt-6 mb-6">
@@ -365,6 +376,7 @@ export default function TeacherDashboard() {
                 loading={loading}
               />
             )}
+            {activePage === "ai-assistant" && <TeacherChat />}
           </div>
 
           {/* ================= PROFILE ================= */}
@@ -496,14 +508,40 @@ function SidebarSection({ title, open, children }) {
   );
 }
 
-function MenuItem({ icon: Icon, label, open, active, onClick, danger }) {
+function MenuItem({ icon: Icon, label, open, active, onClick, danger, isAI }) {
+  if (isAI) {
+    return (
+      <div
+        onClick={onClick}
+        className={`flex items-center gap-3 px-3 py-2.5 rounded-xl cursor-pointer transition-all duration-300 relative
+          ${active 
+            ? "border-l-4 border-indigo-600 bg-gradient-to-r from-indigo-50 to-white text-indigo-700 shadow-sm" 
+            : "text-indigo-600 hover:bg-indigo-50/50 hover:shadow-sm"
+          }
+          ${!open && "justify-center border-l-0"}`}
+      >
+        <div className="relative">
+          <Icon fontSize="small" className={active ? "text-indigo-600" : "text-indigo-500"} />
+          {!active && (
+            <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-indigo-400 rounded-full animate-pulse blur-[1px]"></span>
+          )}
+        </div>
+        {open && <span className="font-semibold tracking-wide bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-indigo-400">{label}</span>}
+      </div>
+    );
+  }
+
   return (
     <div
       onClick={onClick}
       className={`flex items-center gap-3 px-3 py-2 rounded-xl cursor-pointer transition
-        ${active ? "bg-indigo-500/10 text-indigo-700" : "hover:bg-white/60"}
-        ${danger && "text-red-600 hover:bg-red-50"}
-        ${!open && "justify-center"}`}
+      ${!open && "justify-center"}
+      ${danger
+          ? "text-red-500 hover:bg-red-50"
+          : active
+            ? "bg-indigo-500/10 text-indigo-700"
+            : "hover:bg-gray-100"
+        }`}
     >
       <Icon fontSize="small" />
       {open && <span>{label}</span>}

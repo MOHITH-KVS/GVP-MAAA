@@ -51,6 +51,10 @@ import PlacementDriveDetails from "./pages/Admin/PlacementDriveDetails";
 /* ================= STUDENT SUB-PAGES ================= */
 import StudentAgentView from "./pages/Student/StudentAgentView";
 
+import StudentChat from "./pages/Student/StudentChat";
+import TeacherChat from "./pages/Teacher/TeacherChat";
+import AdminChat from "./pages/Admin/AdminChat";
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -104,6 +108,7 @@ export default function App() {
           <Route path="insights" element={<Insights />} />
           <Route path="placement" element={<AdminPlacement />} />
           <Route path="placement/drives/:id" element={<PlacementDriveDetails />} />
+          <Route path="ai-assistant" element={<AdminChat />} />
           <Route path="settings" element={<ErrorBoundary><Settings /></ErrorBoundary>} />
         </Route>
 

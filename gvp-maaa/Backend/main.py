@@ -15184,3 +15184,6 @@ from orchestrator import router as agent_router
 app.include_router(agent_router)
 from stream_router import router as stream_router
 app.include_router(stream_router)
+
+from chat_router import router as chat_router
+app.include_router(chat_router)
