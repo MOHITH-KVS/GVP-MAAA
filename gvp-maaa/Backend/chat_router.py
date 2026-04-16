@@ -1,88 +1,68 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
+from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from typing import List, Dict, Any
+from typing import List, Optional
+import traceback
 
 from auth import get_current_user
 from database import get_db
-from sqlalchemy.orm import Session
-
 from rag.chat_engine import answer_query
-from rag.query_router import is_query_allowed
 
 router = APIRouter(prefix="/chat", tags=["RAG Chatbot"])
 
 class ChatMessage(BaseModel):
-    from_: str = "user"  # "user" or "ai"
-    text: str
-    
-    # Handle alias for "from" which is a Python keyword
-    class Config:
-        fields = {'from_': 'from'}
+    role: str
+    content: str
 
 class ChatRequest(BaseModel):
     message: str
-    history: List[Dict[str, Any]] = []
+    history: Optional[List[ChatMessage]] = []
 
 @router.post("/message")
-def compute_chat_message(
+async def chat_message(
     request: ChatRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     try:
-        # Extract user_id and role from JWT payload (from our review of auth.py / login pattern, usually sub is email, and we might query the user or maybe the token has user_id)
-        # Actually standard tokens in this app: payload often includes "role" and "sub". Wait, let's look at `User` query if not.
-        email = current_user.get("sub") or current_user.get("email")
-        if not email:
-            raise HTTPException(status_code=401, detail="Invalid token")
-
-        # Query user to get ID and role exactly to be safe
-        from models import User
-        user = db.query(User).filter(User.email == email).first()
-        if not user:
-            raise HTTPException(status_code=401, detail="User not found")
-            
-        user_id = user.user_id
-        role = user.role
-
-        sys_role = "teacher" if role == "faculty" else role
-
-        # Check allowed early mapping to the query router
-        allowed, denial_msg = is_query_allowed(request.message, sys_role)
-        if not allowed:
-            return {
-                "reply": denial_msg,
-                "role": sys_role,
-                "allowed": False
-            }
-
-        reply = answer_query(user_id, role, request.message, request.history, db)
-
+        user_id = current_user["user_id"]
+        role = current_user["role"]
+        
+        # Convert history to simple list of dicts
+        history = [
+            {"role": m.role, "content": m.content} 
+            for m in (request.history or [])
+        ]
+        
+        reply = answer_query(
+            user_id=user_id,
+            role=role,
+            message=request.message,
+            history=history[-6:],
+            db=db
+        )
+        
         return {
             "reply": reply,
-            "role": sys_role,
+            "role": role,
             "allowed": True
         }
-
-    except Exception as e:
-        import logging
-        logging.getLogger(__name__).error(f"Chat route error: {e}")
         
-        sys_role = "student"
-        if "role" in locals() and role == "faculty":
-            sys_role = "teacher"
-        elif "role" in locals():
-            sys_role = role
-            
-        return {
-            "reply": "Service temporarily unavailable.",
-            "role": sys_role,
-            "allowed": True
-        }
-
+    except Exception as e:
+        # Print full traceback to terminal for debugging
+        traceback.print_exc()
+        return JSONResponse(
+            status_code=200,
+            content={
+                "reply": f"I encountered an error processing your request. Error: {str(e)}",
+                "role": "unknown",
+                "allowed": True
+            }
+        )
 
 @router.get("/suggested/{role}")
-def get_suggested_questions(role: str):
+async def get_suggested(role: str):
     suggestions = {
         "student": [
             "What is my current attendance percentage?",
@@ -106,6 +86,4 @@ def get_suggested_questions(role: str):
             "Which departments need immediate intervention?"
         ]
     }
-    
-    target_role = "teacher" if role == "faculty" else role
-    return suggestions.get(target_role, [])
+    return suggestions.get(role, suggestions["student"])
