@@ -2155,11 +2155,7 @@ def admin_overview(
     finally:
         db.close()
 
-    generic = settings.get("report_format")
-    if isinstance(generic, str) and generic.strip().lower() in {"pdf", "excel", "docx"}:
-        return generic.strip().lower()
 
-    return get_default_format_for_module(module_name)
 
 
 def build_attendance_trend(records, view: str = "daily"):
