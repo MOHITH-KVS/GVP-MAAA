@@ -7,8 +7,7 @@ import traceback
 
 from auth import get_current_user
 from database import get_db
-from rag.chat_engine import answer_query
-
+from rag.agent_pipeline import run_chat_pipeline
 router = APIRouter(prefix="/chat", tags=["RAG Chatbot"])
 
 class ChatMessage(BaseModel):
@@ -25,17 +24,19 @@ async def chat_message(
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    user_id = current_user["user_id"]
+    role = current_user["role"]
+    import traceback
+    print(f"[CHAT] user_id={user_id}, role={role}, msg={request.message[:50]}")
+    
     try:
-        user_id = current_user["user_id"]
-        role = current_user["role"]
-        
         # Convert history to simple list of dicts
         history = [
             {"role": m.role, "content": m.content} 
             for m in (request.history or [])
         ]
         
-        reply = answer_query(
+        reply = run_chat_pipeline(
             user_id=user_id,
             role=role,
             message=request.message,
@@ -50,12 +51,11 @@ async def chat_message(
         }
         
     except Exception as e:
-        # Print full traceback to terminal for debugging
         traceback.print_exc()
         return JSONResponse(
             status_code=200,
             content={
-                "reply": f"I encountered an error processing your request. Error: {str(e)}",
+                "reply": "I had trouble processing that. Please try again.",
                 "role": "unknown",
                 "allowed": True
             }
@@ -63,6 +63,10 @@ async def chat_message(
 
 @router.get("/suggested/{role}")
 async def get_suggested(role: str):
+    role = role.lower()
+    if role == "faculty":
+        role = "teacher"
+    
     suggestions = {
         "student": [
             "What is my current attendance percentage?",
@@ -73,15 +77,15 @@ async def get_suggested(role: str):
         ],
         "teacher": [
             "What is my class average attendance?",
-            "How many students are at risk?",
-            "Which subject has lowest performance?",
+            "How many students are at risk in my class?",
+            "Which subject has the lowest performance?",
             "How many assignments are pending submission?",
             "What should I focus on this week?"
         ],
         "admin": [
             "How many students are at risk institution-wide?",
-            "Which department has lowest attendance?",
-            "How many placement drives are open?",
+            "Which department has the lowest attendance?",
+            "How many placement drives are currently open?",
             "Give me this week's academic summary.",
             "Which departments need immediate intervention?"
         ]

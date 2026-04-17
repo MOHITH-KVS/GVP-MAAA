@@ -1,6 +1,23 @@
 from sqlalchemy.orm import Session
 import traceback
 
+def safe_mark_percentage(score, total):
+    try:
+        s = float(score) if score is not None else 0
+        t = float(total) if total is not None else 0
+        if t <= 0:
+            # total is null or zero — check if score looks
+            # like it's already out of 30 (mid exam pattern)
+            if s <= 30:
+                return round((s / 30) * 100, 1)
+            elif s <= 100:
+                return round(s, 1)
+            else:
+                return 0.0
+        return round((s / t) * 100, 1)
+    except Exception:
+        return 0.0
+
 # Import models using EXACT class names from models.py
 try:
     from models import (
@@ -60,8 +77,8 @@ def build_student_context(student_id: int, db: Session) -> dict:
         for m in marks_records:
             try:
                 score = float(m.marks) if m.marks is not None else 0
-                total_marks = float(m.total) if hasattr(m, 'total') and m.total else 100
-                pct = round((score / total_marks) * 100, 1) if total_marks > 0 else score
+                total_marks = float(m.total) if hasattr(m, 'total') and m.total else 0
+                pct = safe_mark_percentage(score, total_marks)
                 subject_name = "Unknown"
                 if hasattr(m, 'subject') and m.subject:
                     subject_name = getattr(m.subject, 'subject_name', 
@@ -402,10 +419,8 @@ def get_student_marks_detail(student_id: int, db: Session) -> dict:
         for m in marks_records:
             try:
                 score = float(m.marks) if m.marks is not None else 0
-                # Read models.py — use exact column name for total marks
-                out_of = float(m.total) if (hasattr(m, 'total') 
-                         and m.total is not None) else 100
-                pct = round((score / out_of) * 100, 1) if out_of > 0 else score
+                out_of = float(m.total) if (hasattr(m, 'total') and m.total is not None) else 0
+                pct = safe_mark_percentage(score, out_of)
                 
                 subj_name = "Unknown"
                 if hasattr(m, 'subject') and m.subject:

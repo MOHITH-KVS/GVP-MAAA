@@ -64,7 +64,7 @@ export default function ChatBot({ role }) {
       const errTimestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       setMessages([...newMessages, { 
         from: "ai", 
-        text: "Unable to connect to AI assistant. Please try again.",
+        text: `Error: ${error?.response?.data?.reply || error.message || "Unable to connect"}`,
         isError: true,
         timestamp: errTimestamp
       }]);
