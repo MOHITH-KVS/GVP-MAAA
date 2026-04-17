@@ -321,3 +321,279 @@ def build_admin_context(db: Session) -> dict:
         traceback.print_exc()
     
     return context
+
+def get_student_attendance_detail(student_id: int, db: Session) -> dict:
+    """Returns detailed attendance breakdown for a student."""
+    result = {
+        "attendance_pct": 0.0,
+        "total_classes": 0,
+        "present_classes": 0,
+        "subject_attendance": []
+    }
+    try:
+        total = db.query(Attendance).filter(
+            Attendance.student_id == student_id
+        ).count()
+        present = db.query(Attendance).filter(
+            Attendance.student_id == student_id,
+            Attendance.status == True
+        ).count()
+        result["total_classes"] = total
+        result["present_classes"] = present
+        if total > 0:
+            result["attendance_pct"] = round((present / total) * 100, 1)
+        
+        # Per-subject attendance
+        # Read models.py for exact subject relationship
+        try:
+            from sqlalchemy import func
+            from models import Subject
+            subject_ids = db.query(Attendance.subject_id).filter(
+                Attendance.student_id == student_id
+            ).distinct().all()
+            
+            for (subj_id,) in subject_ids[:10]:
+                if subj_id is None:
+                    continue
+                t = db.query(Attendance).filter(
+                    Attendance.student_id == student_id,
+                    Attendance.subject_id == subj_id
+                ).count()
+                p = db.query(Attendance).filter(
+                    Attendance.student_id == student_id,
+                    Attendance.subject_id == subj_id,
+                    Attendance.status == True
+                ).count()
+                pct = round((p / t) * 100, 1) if t > 0 else 0
+                
+                subj_name = str(subj_id)
+                try:
+                    subj = db.query(Subject).filter(Subject.id == subj_id).first()
+                    if subj:
+                        subj_name = getattr(subj, "subject_name",
+                                   getattr(subj, "name", str(subj_id)))
+                except Exception:
+                    pass
+                
+                result["subject_attendance"].append({
+                    "subject": subj_name,
+                    "pct": pct,
+                    "present": p,
+                    "total": t
+                })
+        except Exception:
+            pass
+    except Exception:
+        traceback.print_exc()
+    return result
+
+def get_student_marks_detail(student_id: int, db: Session) -> dict:
+    """Returns detailed marks breakdown for a student."""
+    result = {"subject_marks": [], "overall_avg": 0.0}
+    try:
+        marks_records = db.query(Mark).filter(
+            Mark.student_id == student_id
+        ).all()
+        
+        subject_marks = []
+        total_pct = 0
+        count = 0
+        
+        for m in marks_records:
+            try:
+                score = float(m.marks) if m.marks is not None else 0
+                # Read models.py — use exact column name for total marks
+                out_of = float(m.total) if (hasattr(m, 'total') 
+                         and m.total is not None) else 100
+                pct = round((score / out_of) * 100, 1) if out_of > 0 else score
+                
+                subj_name = "Unknown"
+                if hasattr(m, 'subject') and m.subject:
+                    subj_name = getattr(m.subject, 'subject_name',
+                               getattr(m.subject, 'name', 'Unknown'))
+                
+                subject_marks.append({
+                    "subject": subj_name,
+                    "score": score,
+                    "out_of": out_of,
+                    "pct": pct
+                })
+                total_pct += pct
+                count += 1
+            except Exception:
+                continue
+        
+        result["subject_marks"] = subject_marks
+        result["overall_avg"] = round(total_pct / count, 1) if count > 0 else 0
+    except Exception:
+        traceback.print_exc()
+    return result
+
+def get_student_assignments_detail(student_id: int, db: Session) -> dict:
+    result = {"pending_assignments": 0, "submitted_assignments": 0}
+    try:
+        pending = db.query(AssignmentSubmission).filter(
+            AssignmentSubmission.student_id == student_id,
+            AssignmentSubmission.status == "pending"
+        ).count()
+        submitted = db.query(AssignmentSubmission).filter(
+            AssignmentSubmission.student_id == student_id,
+            AssignmentSubmission.status == "submitted"
+        ).count()
+        result["pending_assignments"] = pending
+        result["submitted_assignments"] = submitted
+    except Exception:
+        traceback.print_exc()
+    return result
+
+def get_teacher_class_detail(teacher_id: int, db: Session) -> dict:
+    """Returns detailed class data for a teacher."""
+    result = {
+        "class_avg_attendance": 0.0,
+        "class_avg_marks": 0.0,
+        "at_risk_count": 0,
+        "low_attendance_count": 0,
+        "total_students": 0,
+        "pending_submissions": 0,
+        "subjects": []
+    }
+    try:
+        # Get teacher's subject IDs — read models.py for exact name
+        faculty_subjects = db.query(FacultySubject).filter(
+            FacultySubject.faculty_id == teacher_id
+        ).all()
+        
+        if not faculty_subjects:
+            return result
+        
+        subject_ids = [fs.subject_id for fs in faculty_subjects]
+        
+        # Get subject names
+        try:
+            from models import Subject
+            subjs = db.query(Subject).filter(Subject.id.in_(subject_ids)).all()
+            result["subjects"] = [
+                getattr(s, "subject_name", getattr(s, "name", "Unknown"))
+                for s in subjs
+            ]
+        except Exception:
+            pass
+        
+        # Student IDs in this teacher's subjects
+        student_ids_raw = db.query(Attendance.student_id).filter(
+            Attendance.subject_id.in_(subject_ids)
+        ).distinct().all()
+        student_ids = [s[0] for s in student_ids_raw if s[0] is not None]
+        result["total_students"] = len(student_ids)
+        
+        if not student_ids:
+            return result
+        
+        # Calculate per-student attendance
+        att_values = []
+        at_risk = 0
+        low_att = 0
+        
+        for sid in student_ids[:100]:
+            try:
+                t = db.query(Attendance).filter(
+                    Attendance.student_id == sid,
+                    Attendance.subject_id.in_(subject_ids)
+                ).count()
+                p = db.query(Attendance).filter(
+                    Attendance.student_id == sid,
+                    Attendance.subject_id.in_(subject_ids),
+                    Attendance.status == True
+                ).count()
+                pct = (p / t * 100) if t > 0 else 100
+                att_values.append(pct)
+                if pct < 75:
+                    at_risk += 1
+                    low_att += 1
+            except Exception:
+                continue
+        
+        if att_values:
+            result["class_avg_attendance"] = round(
+                sum(att_values) / len(att_values), 1
+            )
+        result["at_risk_count"] = at_risk
+        result["low_attendance_count"] = low_att
+        
+        # Pending submissions
+        try:
+            pending = db.query(AssignmentSubmission).filter(
+                AssignmentSubmission.status == "pending"
+            ).count()
+            result["pending_submissions"] = pending
+        except Exception:
+            pass
+            
+    except Exception:
+        traceback.print_exc()
+    return result
+
+def get_admin_department_detail(db: Session) -> dict:
+    """Returns per-department breakdown for admin."""
+    result = {"department_breakdown": [], "low_attendance_departments": []}
+    try:
+        departments = db.query(Department).all()
+        breakdown = []
+        low_depts = []
+        
+        for dept in departments:
+            try:
+                dept_name = getattr(dept, "name",
+                           getattr(dept, "department_name", "Unknown"))
+                
+                dept_students = db.query(Student).filter(
+                    Student.department_id == dept.id
+                ).all()
+                student_ids = [s.student_id for s in dept_students]
+                
+                if not student_ids:
+                    continue
+                
+                att_values = []
+                at_risk = 0
+                
+                for sid in student_ids[:30]:
+                    try:
+                        t = db.query(Attendance).filter(
+                            Attendance.student_id == sid
+                        ).count()
+                        p = db.query(Attendance).filter(
+                            Attendance.student_id == sid,
+                            Attendance.status == True
+                        ).count()
+                        pct = (p / t * 100) if t > 0 else 100
+                        att_values.append(pct)
+                        if pct < 75:
+                            at_risk += 1
+                    except Exception:
+                        continue
+                
+                avg_att = round(sum(att_values) / len(att_values), 1) \
+                         if att_values else 0
+                
+                breakdown.append({
+                    "dept": dept_name,
+                    "attendance": avg_att,
+                    "at_risk": at_risk,
+                    "total": len(student_ids)
+                })
+                
+                if avg_att < 75:
+                    low_depts.append(dept_name)
+                    
+            except Exception:
+                continue
+        
+        result["department_breakdown"] = sorted(
+            breakdown, key=lambda x: x["attendance"]
+        )
+        result["low_attendance_departments"] = low_depts
+        
+    except Exception:
+        traceback.print_exc()
+    return result
