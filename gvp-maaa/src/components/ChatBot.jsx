@@ -53,20 +53,42 @@ export default function ChatBot({ role }) {
     setLoading(true);
 
     try {
-      const response = await api.post("/chat/message", {
+      const response = await api.post('/chat/message', {
         message: textToSend,
-        history: messages
+        history: messages.slice(-6).map(m => ({
+          role: m.from === 'user' ? 'user' : 'assistant',
+          content: m.text
+        }))
       });
-      const aiTimestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      setMessages([...newMessages, { from: "ai", text: response.data.reply, timestamp: aiTimestamp }]);
+
+      const data = response.data;
+      const reply = data.reply || data.message ||
+                    "I received your message but could not generate a response.";
+
+      setMessages(prev => [...prev, {
+        from: 'ai',
+        text: reply,
+        timestamp: new Date().toLocaleTimeString([], {
+          hour: '2-digit', minute: '2-digit'
+        })
+      }]);
+
     } catch (error) {
-      console.error("Chat error:", error);
-      const errTimestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      setMessages([...newMessages, { 
-        from: "ai", 
-        text: `Error: ${error?.response?.data?.reply || error.message || "Unable to connect"}`,
-        isError: true,
-        timestamp: errTimestamp
+      console.error('[CHAT ERROR]', error);
+
+      // Show actual error for debugging, not generic message
+      const errMsg = error?.response?.data?.detail ||
+                     error?.response?.data?.message ||
+                     error?.message ||
+                     "Connection error. Please try again.";
+
+      setMessages(prev => [...prev, {
+        from: 'ai',
+        text: `I had trouble with that request. ${errMsg}`,
+        timestamp: new Date().toLocaleTimeString([], {
+          hour: '2-digit', minute: '2-digit'
+        }),
+        isError: false  // Don't show red — show as normal AI message
       }]);
     } finally {
       setLoading(false);

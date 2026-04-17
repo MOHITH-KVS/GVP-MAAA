@@ -153,19 +153,59 @@ def agent_input_processor(state: ChatPipelineState) -> ChatPipelineState:
         state["denial_reason"] = ""
 
         # Intent classification with scoring
-        intent_map = INTENT_KEYWORDS.get(role, INTENT_KEYWORDS["student"])
+        msg = message
+        filler = ["what", "is", "my", "the", "are", "do",
+                  "i", "have", "any", "this", "a", "an",
+                  "me", "tell", "show", "give", "how",
+                  "many", "much", "today", "week", "month"]
+        words = [w for w in msg.split() if w not in filler]
+        cleaned = " ".join(words)
+
+        intent_map = INTENT_KEYWORDS.get(
+            role,
+            INTENT_KEYWORDS.get("student", {})
+        )
+
         best_intent = "summary"
         best_score = 0
 
         for intent, keywords in intent_map.items():
             score = 0
             for kw in keywords:
-                if kw in message:
-                    # Longer keyword match = higher confidence
+                # Check original message
+                if kw in msg:
+                    score += len(kw.split()) * 2
+                # Check cleaned message (without fillers)
+                if kw in cleaned:
                     score += len(kw.split())
+                # Check individual words
+                for word in words:
+                    if word == kw or kw.startswith(word):
+                        score += 1
+
             if score > best_score:
                 best_score = score
                 best_intent = intent
+
+        # Special overrides for common patterns
+        if any(w in msg for w in ["hello", "hi", "hey", "help"]):
+            best_intent = "greeting"
+        elif "summary" in msg or "overview" in msg or "everything" in msg:
+            best_intent = "summary"
+        elif "assignment" in msg or "submit" in msg or "pending" in msg:
+            best_intent = "assignments"
+        elif "attendance" in msg or "present" in msg or "absent" in msg:
+            best_intent = "attendance"
+        elif "mark" in msg or "score" in msg or "result" in msg:
+            best_intent = "marks"
+        elif "risk" in msg or "fail" in msg or "danger" in msg:
+            best_intent = "risk"
+        elif "task" in msg or "today" in msg or "focus" in msg:
+            best_intent = "tasks"
+        elif "placement" in msg or "eligible" in msg or "drive" in msg:
+            best_intent = "placement"
+        elif "alert" in msg or "notification" in msg or "warn" in msg:
+            best_intent = "alerts"
 
         # Extract keywords found in message
         all_kws = []
@@ -304,6 +344,97 @@ def format_mark(score, total):
     except Exception:
         return "N/A"
 
+def call_gemini_with_context(
+    role: str,
+    intent: str,
+    context: dict,
+    rule_answer: str,
+    message: str,
+    history: list
+) -> str:
+    """
+    Uses Gemini to convert the rule-based answer into
+    a natural, conversational response.
+    """
+    if not GEMINI_AVAILABLE:
+        return None
+
+    try:
+        # Build conversation history string
+        history_str = ""
+        for h in history[-4:]:
+            r = h.get("role", "user")
+            c = h.get("content", "")
+            history_str += f"{r.capitalize()}: {c}\n"
+
+        # Role-specific instruction
+        role_instruction = {
+            "student": (
+                "You are an AI academic assistant for a student "
+                "at GVP college. Be encouraging, specific, and "
+                "helpful. Use the student's actual data below."
+            ),
+            "teacher": (
+                "You are an AI assistant for a faculty member "
+                "at GVP college. Be professional and data-focused. "
+                "Use the class data below."
+            ),
+            "faculty": (
+                "You are an AI assistant for a faculty member "
+                "at GVP college. Be professional and data-focused."
+            ),
+            "admin": (
+                "You are an institutional AI assistant for the "
+                "admin of GVP college. Be concise and data-driven."
+            )
+        }.get(role.lower(), "You are an academic AI assistant.")
+
+        prompt = f"""{role_instruction}
+
+STUDENT/USER DATA FROM DATABASE:
+{context}
+
+PRE-COMPUTED ACCURATE ANSWER (use these exact numbers):
+{rule_answer}
+
+CONVERSATION HISTORY:
+{history_str}
+
+USER'S QUESTION: {message}
+
+INSTRUCTIONS:
+- Use ONLY the numbers and facts from the pre-computed answer above
+- Rephrase it naturally and conversationally
+- Do NOT invent any numbers or facts
+- If data shows a problem (low attendance, high risk), be direct
+- If data is good, be encouraging
+- Keep response under 4 sentences
+- Do not use bullet points — write in natural sentences
+- If the pre-computed answer says "No data found", 
+  just say that clearly and suggest checking the dashboard
+
+YOUR RESPONSE:"""
+
+        model = genai.GenerativeModel(
+            "gemini-1.5-flash",
+            generation_config={
+                "temperature": 0.3,  # Low temp = more factual
+                "max_output_tokens": 200,
+                "top_p": 0.8
+            }
+        )
+
+        response = model.generate_content(prompt)
+
+        if (response and response.text and
+                len(response.text.strip()) > 15):
+            return response.text.strip()
+        return None
+
+    except Exception as e:
+        print(f"[GEMINI ERROR] {e}")
+        return None
+
 def agent_answer_generator(state: ChatPipelineState) -> ChatPipelineState:
     """
     Agent 3: Generates the answer.
@@ -323,31 +454,44 @@ def agent_answer_generator(state: ChatPipelineState) -> ChatPipelineState:
         context = state["context"]
         message = state["raw_message"]
 
-        # Generate rule-based answer first
+        # Generate rule-based answer first (always accurate)
         rule_answer = generate_rule_answer(role, intent, context, message)
         state["data_found"] = bool(context)
 
-        # Try Gemini enhancement
-        if GEMINI_AVAILABLE and context:
-            try:
-                system = build_role_system_prompt(role, context)
-                hint = f"Pre-computed answer: {rule_answer}"
-                full_prompt = (
-                    f"{system}\n\n{hint}\n\n"
-                    f"User asked: {message}\n\n"
-                    f"Using the data above, give a natural, "
-                    f"specific, helpful response. "
-                    f"Use the exact numbers from the data. "
-                    f"Keep it under 4 sentences."
+        # If intent was classified as summary but message is specific,
+        # let Gemini handle it with full context
+        if (intent == "summary" and
+                not any(w in message.lower()
+                        for w in ["summary", "overview", "everything",
+                                  "all", "hello", "hi", "hey"])):
+            if GEMINI_AVAILABLE and context:
+                gemini_reply = call_gemini_with_context(
+                    role=role,
+                    intent=intent,
+                    context=context,
+                    rule_answer=str(context),
+                    message=message,
+                    history=state.get("history", [])
                 )
-                model = genai.GenerativeModel("gemini-1.5-flash")
-                response = model.generate_content(full_prompt)
-                if response and response.text and len(response.text.strip()) > 20:
-                    state["raw_answer"] = response.text.strip()
-                    state["answer_source"] = "gemini"
+                if gemini_reply:
+                    state["raw_answer"] = gemini_reply
+                    state["answer_source"] = "gemini_freeform"
                     return state
-            except Exception:
-                traceback.print_exc()
+
+        # Try Gemini to make it more natural
+        if GEMINI_AVAILABLE and context and rule_answer:
+            gemini_reply = call_gemini_with_context(
+                role=role,
+                intent=intent,
+                context=context,
+                rule_answer=rule_answer,
+                message=message,
+                history=state.get("history", [])
+            )
+            if gemini_reply:
+                state["raw_answer"] = gemini_reply
+                state["answer_source"] = "gemini"
+                return state
 
         state["raw_answer"] = rule_answer
         state["answer_source"] = "rules"
@@ -731,25 +875,30 @@ def agent_response_formatter(state: ChatPipelineState) -> ChatPipelineState:
     """
     try:
         raw = state.get("raw_answer", "")
+        source = state.get("answer_source", "rules")
 
-        if not raw or len(raw.strip()) == 0:
+        if not raw or not raw.strip():
             state["final_reply"] = (
                 "I couldn't find specific data for that question. "
-                "Please check your dashboard for the latest information."
+                "Please check your dashboard for details."
             )
             state["formatted"] = True
             return state
 
-        # Clean up common artifacts
         cleaned = raw.strip()
 
-        # Remove any accidental Python dict artifacts
-        if cleaned.startswith("{") and cleaned.endswith("}"):
-            cleaned = "Please check your dashboard for this information."
+        # If source is gemini, it's already natural — just return it
+        if "gemini" in source:
+            state["final_reply"] = cleaned
+            state["formatted"] = True
+            return state
 
-        # If no data found, add helpful redirect
-        if not state.get("data_found", True):
-            cleaned += "\n\nℹ️ For full details, visit your dashboard."
+        # For rule-based answers, clean up display
+        # Replace multiple spaces
+        import re
+        cleaned = re.sub(r'  +', ' ', cleaned)
+        # Ensure newlines render properly
+        cleaned = cleaned.replace('\\n', '\n')
 
         state["final_reply"] = cleaned
         state["formatted"] = True
