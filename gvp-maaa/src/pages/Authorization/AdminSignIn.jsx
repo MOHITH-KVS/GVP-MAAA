@@ -19,6 +19,7 @@ export default function AdminSignIn() {
   const [fieldErrors, setFieldErrors] = useState({});
   const [touched, setTouched] = useState({ email: false, password: false, adminKey: false });
   const [typingStarted, setTypingStarted] = useState({ email: false, password: false, adminKey: false });
+  const [capsLockOn, setCapsLockOn] = useState(false);
   const [loginSuccess, setLoginSuccess] = useState(false);
   const emailRef = useRef(null);
   const passwordRef = useRef(null);
@@ -155,6 +156,15 @@ export default function AdminSignIn() {
     nextRef.current.focus();
   };
 
+  const isFieldValid = (field, value) => {
+    const interacted = touched[field] || typingStarted[field];
+    return interacted && String(value || "").trim() && !fieldErrors[field];
+  };
+
+  const handleCapsLock = (e) => {
+    setCapsLockOn(Boolean(e.getModifierState && e.getModifierState("CapsLock")));
+  };
+
 
   return (
     <div className="relative min-h-screen w-full flex items-center justify-center bg-slate-900 overflow-hidden">
@@ -249,6 +259,9 @@ export default function AdminSignIn() {
             onKeyDown={(e) => handleEnterToNext(e, passwordRef)}
           />
           {fieldErrors.email && <p className="text-sm text-red-400">{fieldErrors.email}</p>}
+          {!fieldErrors.email && isFieldValid("email", email) && (
+            <p className="text-sm text-emerald-400" role="status" aria-live="polite">✔ Looks good</p>
+          )}
 
           {/* PASSWORD */}
           <div className="relative">
@@ -272,7 +285,11 @@ export default function AdminSignIn() {
               }}
               onBlur={() => handleBlur("password")}
               inputRef={passwordRef}
-              onKeyDown={(e) => handleEnterToNext(e, adminKeyRef)}
+              onKeyUp={handleCapsLock}
+              onKeyDown={(e) => {
+                handleCapsLock(e);
+                handleEnterToNext(e, adminKeyRef);
+              }}
             />
 
             <button
@@ -288,6 +305,12 @@ export default function AdminSignIn() {
             </button>
           </div>
           {fieldErrors.password && <p className="text-sm text-red-400">{fieldErrors.password}</p>}
+          {!fieldErrors.password && isFieldValid("password", password) && (
+            <p className="text-sm text-emerald-400" role="status" aria-live="polite">✔ Looks good</p>
+          )}
+          {capsLockOn && (
+            <p className="text-xs text-amber-400" role="status" aria-live="polite">Caps Lock is on</p>
+          )}
 
           <Input
             label="Admin Access Key"
@@ -310,6 +333,9 @@ export default function AdminSignIn() {
             inputRef={adminKeyRef}
           />
           {fieldErrors.adminKey && <p className="text-sm text-red-400">{fieldErrors.adminKey}</p>}
+          {!fieldErrors.adminKey && isFieldValid("adminKey", adminKey) && (
+            <p className="text-sm text-emerald-400" role="status" aria-live="polite">✔ Looks good</p>
+          )}
 
           {error && (
             <p className="text-sm text-red-400 font-medium">
@@ -339,7 +365,7 @@ export default function AdminSignIn() {
 
 /* ================= HELPERS ================= */
 
-function Input({ label, type = "text", placeholder, value, onChange, inputRef, onKeyDown }) {
+function Input({ label, type = "text", placeholder, value, onChange, onBlur, inputRef, onKeyDown, onKeyUp }) {
   return (
     <div>
       <label className="block text-sm text-slate-400 mb-1">
@@ -351,7 +377,9 @@ function Input({ label, type = "text", placeholder, value, onChange, inputRef, o
         placeholder={placeholder}
         value={value}
         onChange={onChange}
+        onBlur={onBlur}
         onKeyDown={onKeyDown}
+        onKeyUp={onKeyUp}
         className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700
                    focus:outline-none focus:ring-2 focus:ring-red-600 text-slate-100"
       />

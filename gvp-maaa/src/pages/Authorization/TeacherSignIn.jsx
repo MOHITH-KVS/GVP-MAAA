@@ -20,6 +20,7 @@ export default function TeacherSignIn() {
   const [fieldErrors, setFieldErrors] = useState({});
   const [touched, setTouched] = useState({ email: false, password: false });
   const [typingStarted, setTypingStarted] = useState({ email: false, password: false });
+  const [capsLockOn, setCapsLockOn] = useState(false);
   const [loginSuccess, setLoginSuccess] = useState(false);
   const emailRef = useRef(null);
   const passwordRef = useRef(null);
@@ -152,6 +153,15 @@ export default function TeacherSignIn() {
     nextRef.current.focus();
   };
 
+  const isFieldValid = (field, value) => {
+    const interacted = touched[field] || typingStarted[field];
+    return interacted && String(value || "").trim() && !fieldErrors[field];
+  };
+
+  const handleCapsLock = (e) => {
+    setCapsLockOn(Boolean(e.getModifierState && e.getModifierState("CapsLock")));
+  };
+
 
   return (
     <div className="relative min-h-screen w-full flex items-center justify-center bg-slate-50 overflow-hidden">
@@ -241,6 +251,9 @@ export default function TeacherSignIn() {
             onKeyDown={(e) => handleEnterToNext(e, passwordRef)}
           />
           {fieldErrors.email && <p className="text-sm text-red-600">{fieldErrors.email}</p>}
+          {!fieldErrors.email && isFieldValid("email", email) && (
+            <p className="text-sm text-emerald-600" role="status" aria-live="polite">✔ Looks good</p>
+          )}
 
           <div className="relative">
             <Input
@@ -263,6 +276,10 @@ export default function TeacherSignIn() {
               }}
               onBlur={() => handleBlur("password")}
               inputRef={passwordRef}
+              onKeyUp={handleCapsLock}
+              onKeyDown={(e) => {
+                handleCapsLock(e);
+              }}
             />
 
             <button
@@ -279,6 +296,14 @@ export default function TeacherSignIn() {
           </div>
 
           {fieldErrors.password && <p className="text-sm text-red-600">{fieldErrors.password}</p>}
+          {!fieldErrors.password && isFieldValid("password", password) && (
+            <p className="text-sm text-emerald-600" role="status" aria-live="polite">✔ Looks good</p>
+          )}
+          {capsLockOn && (
+            <p className="text-xs text-amber-600" role="status" aria-live="polite">
+              Caps Lock is on
+            </p>
+          )}
 
           {error && <p className="text-sm text-red-600 font-medium">{error}</p>}
 
@@ -325,7 +350,7 @@ export default function TeacherSignIn() {
 
 /* ===== HELPERS ===== */
 
-function Input({ label, type = "text", placeholder, value, onChange, inputRef, onKeyDown }) {
+function Input({ label, type = "text", placeholder, value, onChange, onBlur, inputRef, onKeyDown, onKeyUp }) {
   return (
     <div>
       <label className="block text-sm text-slate-600 mb-1">{label}</label>
@@ -335,7 +360,9 @@ function Input({ label, type = "text", placeholder, value, onChange, inputRef, o
         placeholder={placeholder}
         value={value}
         onChange={onChange}
+        onBlur={onBlur}
         onKeyDown={onKeyDown}
+        onKeyUp={onKeyUp}
         className="w-full px-4 py-3 rounded-xl border focus:ring-2 focus:ring-indigo-500"
       />
     </div>

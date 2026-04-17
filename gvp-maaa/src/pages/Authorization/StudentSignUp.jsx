@@ -35,6 +35,8 @@ export default function StudentSignUp() {
     password: false,
     confirmPassword: false,
   });
+  const [capsLockOnPassword, setCapsLockOnPassword] = useState(false);
+  const [capsLockOnConfirm, setCapsLockOnConfirm] = useState(false);
   const [success, setSuccess] = useState("");
   const [loading, setLoading] = useState(false);
   const nameRef = useRef(null);
@@ -170,6 +172,15 @@ export default function StudentSignUp() {
         return next;
       });
     }
+  };
+
+  const isFieldValid = (field, value) => {
+    const interacted = touched[field] || typingStarted[field];
+    return interacted && String(value || "").trim() && !validationErrors[field] && !fieldErrors[field];
+  };
+
+  const handleCapsLock = (e, setter) => {
+    setter(Boolean(e.getModifierState && e.getModifierState("CapsLock")));
   };
 
   const focusFirstInvalid = (errorsMap) => {
@@ -347,6 +358,9 @@ export default function StudentSignUp() {
               {validationErrors.name}
             </p>
           )}
+          {!validationErrors.name && isFieldValid("name", form.name) && (
+            <p className="text-sm text-emerald-600" role="status" aria-live="polite">✔ Looks good</p>
+          )}
 
           <Input
               label="Roll Number"
@@ -385,6 +399,9 @@ export default function StudentSignUp() {
                 </p>
               )
           )}
+          {!validationErrors.roll && isFieldValid("roll", form.roll) && (
+            <p className="text-sm text-emerald-600" role="status" aria-live="polite">✔ Looks good</p>
+          )}
 
           <Input
             label="College Email"
@@ -417,7 +434,11 @@ export default function StudentSignUp() {
               }}
               onBlur={() => handleBlur("password")}
               inputRef={passwordRef}
-              onKeyDown={(e) => handleEnterToNext(e, confirmPasswordRef)}
+              onKeyUp={(e) => handleCapsLock(e, setCapsLockOnPassword)}
+              onKeyDown={(e) => {
+                handleCapsLock(e, setCapsLockOnPassword);
+                handleEnterToNext(e, confirmPasswordRef);
+              }}
             />
             <button
               type="button"
@@ -427,6 +448,12 @@ export default function StudentSignUp() {
               {showPassword ? <VisibilityOffIcon fontSize="small" /> : <VisibilityIcon fontSize="small" />}
             </button>
           </div>
+          {!validationErrors.password && isFieldValid("password", form.password) && (
+            <p className="text-sm text-emerald-600" role="status" aria-live="polite">✔ Looks good</p>
+          )}
+          {capsLockOnPassword && (
+            <p className="text-xs text-amber-600" role="status" aria-live="polite">Caps Lock is on</p>
+          )}
 
           {/* PASSWORD STRENGTH */}
           {form.password && (
@@ -477,6 +504,10 @@ export default function StudentSignUp() {
               }}
               onBlur={() => handleBlur("confirmPassword")}
               inputRef={confirmPasswordRef}
+              onKeyUp={(e) => handleCapsLock(e, setCapsLockOnConfirm)}
+              onKeyDown={(e) => {
+                handleCapsLock(e, setCapsLockOnConfirm);
+              }}
             />
             <button
               type="button"
@@ -497,6 +528,9 @@ export default function StudentSignUp() {
                   {validationErrors.confirmPassword || "Passwords do not match"}
               </p>
             )
+          )}
+          {capsLockOnConfirm && (
+            <p className="text-xs text-amber-600" role="status" aria-live="polite">Caps Lock is on</p>
           )}
 
 
@@ -579,7 +613,7 @@ export default function StudentSignUp() {
 
 /* ================= HELPERS ================= */
 
-function Input({ label, name, value, onChange, type = "text" , disabled, inputRef, onKeyDown }) {
+function Input({ label, name, value, onChange, onBlur, type = "text" , disabled, inputRef, onKeyDown, onKeyUp }) {
   return (
     <div>
       <label className="block text-sm text-slate-600 mb-1">{label}</label>
@@ -588,7 +622,9 @@ function Input({ label, name, value, onChange, type = "text" , disabled, inputRe
         name={name}
         value={value}
         onChange={onChange}
+        onBlur={onBlur}
         onKeyDown={onKeyDown}
+        onKeyUp={onKeyUp}
         type={type}
         disabled={disabled}
         className={`w-full px-4 py-2.5 rounded-xl border

@@ -51,6 +51,8 @@ export default function TeacherSignUp() {
     password: false,
     confirmPassword: false,
   });
+  const [capsLockOnPassword, setCapsLockOnPassword] = useState(false);
+  const [capsLockOnConfirm, setCapsLockOnConfirm] = useState(false);
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState("");
   const nameRef = useRef(null);
@@ -188,6 +190,15 @@ export default function TeacherSignUp() {
         return next;
       });
     }
+  };
+
+  const isFieldValid = (field, value) => {
+    const interacted = touched[field] || typingStarted[field];
+    return interacted && String(value || "").trim() && !validationErrors[field] && !fieldErrors[field];
+  };
+
+  const handleCapsLock = (e, setter) => {
+    setter(Boolean(e.getModifierState && e.getModifierState("CapsLock")));
   };
 
   const focusFirstInvalid = (errorsMap) => {
@@ -374,6 +385,9 @@ export default function TeacherSignUp() {
               {validationErrors.name}
             </p>
           )}
+          {!validationErrors.name && isFieldValid("name", form.name) && (
+            <p className="text-sm text-emerald-600" role="status" aria-live="polite">✔ Looks good</p>
+          )}
 
           <Input
             label="Employee ID"
@@ -393,6 +407,9 @@ export default function TeacherSignUp() {
             <p className="text-sm text-red-600">
               {validationErrors.employeeId}
             </p>
+          )}
+          {!validationErrors.employeeId && isFieldValid("employeeId", form.employeeId) && (
+            <p className="text-sm text-emerald-600" role="status" aria-live="polite">✔ Looks good</p>
           )}
 
           {/* DEPARTMENT DROPDOWN */}
@@ -424,6 +441,9 @@ export default function TeacherSignUp() {
             {validationErrors.departmentId && (
               <p className="text-sm text-red-600 mt-1">{validationErrors.departmentId}</p>
             )}
+            {!validationErrors.departmentId && isFieldValid("departmentId", form.departmentId) && (
+              <p className="text-sm text-emerald-600 mt-1" role="status" aria-live="polite">✔ Looks good</p>
+            )}
           </div>
           <Input
             label="Email"
@@ -444,6 +464,9 @@ export default function TeacherSignUp() {
             <p className="text-sm text-red-600">
               {validationErrors.email}
             </p>
+          )}
+          {!validationErrors.email && isFieldValid("email", form.email) && (
+            <p className="text-sm text-emerald-600" role="status" aria-live="polite">✔ Looks good</p>
           )}
 
 
@@ -466,7 +489,11 @@ export default function TeacherSignUp() {
               }}
               onBlur={() => handleBlur("password")}
               inputRef={passwordRef}
-              onKeyDown={(e) => handleEnterToNext(e, confirmPasswordRef)}
+              onKeyUp={(e) => handleCapsLock(e, setCapsLockOnPassword)}
+              onKeyDown={(e) => {
+                handleCapsLock(e, setCapsLockOnPassword);
+                handleEnterToNext(e, confirmPasswordRef);
+              }}
             />
             <button
               type="button"
@@ -476,6 +503,12 @@ export default function TeacherSignUp() {
               {showPassword ? <VisibilityOffIcon fontSize="small" /> : <VisibilityIcon fontSize="small" />}
             </button>
           </div>
+          {!validationErrors.password && isFieldValid("password", form.password) && (
+            <p className="text-sm text-emerald-600" role="status" aria-live="polite">✔ Looks good</p>
+          )}
+          {capsLockOnPassword && (
+            <p className="text-xs text-amber-600" role="status" aria-live="polite">Caps Lock is on</p>
+          )}
 
           {form.password && (
             <div className="space-y-2">
@@ -522,6 +555,10 @@ export default function TeacherSignUp() {
               }}
               onBlur={() => handleBlur("confirmPassword")}
               inputRef={confirmPasswordRef}
+              onKeyUp={(e) => handleCapsLock(e, setCapsLockOnConfirm)}
+              onKeyDown={(e) => {
+                handleCapsLock(e, setCapsLockOnConfirm);
+              }}
             />
             {(validationErrors.confirmPassword || form.confirmPassword) && (
               isPasswordMatch ? (
@@ -543,6 +580,9 @@ export default function TeacherSignUp() {
               {showConfirmPassword ? <VisibilityOffIcon fontSize="small" /> : <VisibilityIcon fontSize="small" />}
             </button>
           </div>
+          {capsLockOnConfirm && (
+            <p className="text-xs text-amber-600" role="status" aria-live="polite">Caps Lock is on</p>
+          )}
 
           {error && <p className="text-sm text-red-600 font-medium">{error}</p>}
 
@@ -633,7 +673,7 @@ export default function TeacherSignUp() {
 
 /* ===== HELPERS ===== */
 
-function Input({ label, name, value, onChange, type = "text", inputRef, onKeyDown }) {
+function Input({ label, name, value, onChange, onBlur, type = "text", inputRef, onKeyDown, onKeyUp }) {
   return (
     <div>
       <label className="block text-sm text-slate-600 mb-1">{label}</label>
@@ -642,7 +682,9 @@ function Input({ label, name, value, onChange, type = "text", inputRef, onKeyDow
         name={name}
         value={value}
         onChange={onChange}
+        onBlur={onBlur}
         onKeyDown={onKeyDown}
+        onKeyUp={onKeyUp}
         type={type}
         className="w-full px-4 py-2.5 rounded-xl border focus:ring-2 focus:ring-indigo-500"
       />
