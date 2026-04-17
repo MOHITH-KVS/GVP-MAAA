@@ -6,14 +6,27 @@ import os
 
 try:
     import google.generativeai as genai
+    from dotenv import load_dotenv
+    import os
+    
+    # Force load .env from Backend folder
+    env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
+    load_dotenv(env_path)
+    
     GEMINI_KEY = os.getenv("GEMINI_API_KEY", "")
-    if GEMINI_KEY:
+    print(f"[STARTUP] GEMINI_KEY present: {bool(GEMINI_KEY)}")
+    print(f"[STARTUP] GEMINI_KEY starts with: {GEMINI_KEY[:8] if GEMINI_KEY else 'EMPTY'}")
+    
+    if GEMINI_KEY and GEMINI_KEY.startswith("AIza"):
         genai.configure(api_key=GEMINI_KEY)
         GEMINI_AVAILABLE = True
+        print("[GEMINI] Configured successfully")
     else:
         GEMINI_AVAILABLE = False
-except Exception:
+        print(f"[GEMINI] Key missing or invalid: '{GEMINI_KEY[:10] if GEMINI_KEY else ''}'")
+except Exception as e:
     GEMINI_AVAILABLE = False
+    print(f"[GEMINI] Import failed: {e}")
 
 class ChatPipelineState(TypedDict):
     # Input
@@ -67,7 +80,22 @@ INTENT_KEYWORDS = {
         "greeting": ["hello", "hi", "hey", "help", "start",
                     "good morning", "good evening", "what can you"],
         "summary": ["summary", "overview", "overall", "everything",
-                   "how am i", "my status", "update", "all data"]
+                   "how am i", "my status", "update", "all data"],
+        "events": [
+            "event", "events", "current events", "upcoming events",
+            "what events", "college events", "fest", "workshop",
+            "seminar", "happening", "schedule", "registered",
+            "event registration", "attend event"
+        ],
+        "resources": [
+            "resource", "resources", "study material", "notes",
+            "uploaded", "recent upload", "material", "pdf",
+            "document", "files", "lecture notes", "reference"
+        ],
+        "timetable": [
+            "timetable", "schedule", "class schedule", "today class",
+            "tomorrow class", "when is", "time table", "periods"
+        ]
     },
     "teacher": {
         "attendance": ["attendance", "class attendance", "average",
@@ -188,24 +216,59 @@ def agent_input_processor(state: ChatPipelineState) -> ChatPipelineState:
                 best_intent = intent
 
         # Special overrides for common patterns
-        if any(w in msg for w in ["hello", "hi", "hey", "help"]):
+        msg_lower = msg.lower()
+        
+        marks_indicators = [
+            "mark", "marks", "score", "mid", "result",
+            "exam", "grade", "mid1", "mid2", "percentage", "test"
+        ]
+        
+        attendance_indicators = [
+            "attendance", "present", "absent", "bunk",
+            "how many classes", "classes attended"
+        ]
+
+        if any(w in msg_lower for w in ["hello", "hi", "hey", "help"]):
             best_intent = "greeting"
-        elif "summary" in msg or "overview" in msg or "everything" in msg:
+        elif "summary" in msg_lower or "overview" in msg_lower or "everything" in msg_lower:
             best_intent = "summary"
-        elif "assignment" in msg or "submit" in msg or "pending" in msg:
+        elif "assignment" in msg_lower or "submit" in msg_lower or "pending" in msg_lower:
             best_intent = "assignments"
-        elif "attendance" in msg or "present" in msg or "absent" in msg:
+        # Check attendance FIRST
+        elif any(w in msg_lower for w in attendance_indicators):
             best_intent = "attendance"
-        elif "mark" in msg or "score" in msg or "result" in msg:
+        # THEN check marks
+        elif any(w in msg_lower for w in marks_indicators):
             best_intent = "marks"
-        elif "risk" in msg or "fail" in msg or "danger" in msg:
+        elif "risk" in msg_lower or "fail" in msg_lower or "danger" in msg_lower:
             best_intent = "risk"
-        elif "task" in msg or "today" in msg or "focus" in msg:
+        elif "task" in msg_lower or "today" in msg_lower or "focus" in msg_lower:
             best_intent = "tasks"
-        elif "placement" in msg or "eligible" in msg or "drive" in msg:
+        elif "placement" in msg_lower or "eligible" in msg_lower or "drive" in msg_lower:
             best_intent = "placement"
-        elif "alert" in msg or "notification" in msg or "warn" in msg:
+        elif "alert" in msg_lower or "notification" in msg_lower or "warn" in msg_lower:
             best_intent = "alerts"
+        elif "event" in msg_lower or "events" in msg_lower or "happening" in msg_lower:
+            best_intent = "events"
+        elif "resource" in msg_lower or "material" in msg_lower or "notes" in msg_lower or "upload" in msg_lower:
+            best_intent = "resources"
+        elif "timetable" in msg_lower or "schedule" in msg_lower:
+            best_intent = "timetable"
+        
+        # If message mentions a specific subject name
+        import re
+        subject_pattern = re.compile(
+            r'\b(machine learning|python|java|dbms|os|cn|'
+            r'networks|algorithms|data structures|mathematics|'
+            r'physics|chemistry|english|ml|ai|web|cloud|'
+            r'computing|software|database)\b',
+            re.IGNORECASE
+        )
+        if subject_pattern.search(msg_lower):
+            if any(w in msg_lower for w in marks_indicators + ["about", "tell", "what"]):
+                best_intent = "marks"
+            if any(w in msg_lower for w in attendance_indicators):
+                best_intent = "attendance"
 
         # Extract keywords found in message
         all_kws = []
@@ -288,6 +351,32 @@ def agent_context_retriever(state: ChatPipelineState) -> ChatPipelineState:
                     "attendance_pct": att.get("attendance_pct", 0),
                     "risk_level": base.get("risk_level", "LOW")
                 }
+            elif intent == "events":
+                from rag.context_builder import get_student_events
+                context = get_student_events(user_id, db)
+            elif intent == "resources":
+                from rag.context_builder import get_student_resources
+                context = get_student_resources(user_id, db)
+            elif intent == "timetable":
+                try:
+                    from models import Timetable
+                    entries = db.query(Timetable).limit(20).all()
+                    context = {
+                        "timetable": [
+                            {
+                                "day": getattr(t, 'day', 'Unknown'),
+                                "subject": getattr(t, 'subject_name',
+                                          getattr(t, 'subject', 'Unknown')),
+                                "time": getattr(t, 'time',
+                                       getattr(t, 'start_time', 'Unknown')),
+                                "room": getattr(t, 'room',
+                                       getattr(t, 'venue', 'Unknown'))
+                            }
+                            for t in entries
+                        ]
+                    }
+                except Exception:
+                    context = {"timetable": [], "note": "No timetable data"}
             else:
                 # summary, greeting, tasks, xp
                 context = build_student_context(user_id, db)
@@ -344,104 +433,7 @@ def format_mark(score, total):
     except Exception:
         return "N/A"
 
-def call_gemini_with_context(
-    role: str,
-    intent: str,
-    context: dict,
-    rule_answer: str,
-    message: str,
-    history: list
-) -> str:
-    """
-    Uses Gemini to convert the rule-based answer into
-    a natural, conversational response.
-    """
-    if not GEMINI_AVAILABLE:
-        return None
-
-    try:
-        # Build conversation history string
-        history_str = ""
-        for h in history[-4:]:
-            r = h.get("role", "user")
-            c = h.get("content", "")
-            history_str += f"{r.capitalize()}: {c}\n"
-
-        # Role-specific instruction
-        role_instruction = {
-            "student": (
-                "You are an AI academic assistant for a student "
-                "at GVP college. Be encouraging, specific, and "
-                "helpful. Use the student's actual data below."
-            ),
-            "teacher": (
-                "You are an AI assistant for a faculty member "
-                "at GVP college. Be professional and data-focused. "
-                "Use the class data below."
-            ),
-            "faculty": (
-                "You are an AI assistant for a faculty member "
-                "at GVP college. Be professional and data-focused."
-            ),
-            "admin": (
-                "You are an institutional AI assistant for the "
-                "admin of GVP college. Be concise and data-driven."
-            )
-        }.get(role.lower(), "You are an academic AI assistant.")
-
-        prompt = f"""{role_instruction}
-
-STUDENT/USER DATA FROM DATABASE:
-{context}
-
-PRE-COMPUTED ACCURATE ANSWER (use these exact numbers):
-{rule_answer}
-
-CONVERSATION HISTORY:
-{history_str}
-
-USER'S QUESTION: {message}
-
-INSTRUCTIONS:
-- Use ONLY the numbers and facts from the pre-computed answer above
-- Rephrase it naturally and conversationally
-- Do NOT invent any numbers or facts
-- If data shows a problem (low attendance, high risk), be direct
-- If data is good, be encouraging
-- Keep response under 4 sentences
-- Do not use bullet points — write in natural sentences
-- If the pre-computed answer says "No data found", 
-  just say that clearly and suggest checking the dashboard
-
-YOUR RESPONSE:"""
-
-        model = genai.GenerativeModel(
-            "gemini-1.5-flash",
-            generation_config={
-                "temperature": 0.3,  # Low temp = more factual
-                "max_output_tokens": 200,
-                "top_p": 0.8
-            }
-        )
-
-        response = model.generate_content(prompt)
-
-        if (response and response.text and
-                len(response.text.strip()) > 15):
-            return response.text.strip()
-        return None
-
-    except Exception as e:
-        print(f"[GEMINI ERROR] {e}")
-        return None
-
 def agent_answer_generator(state: ChatPipelineState) -> ChatPipelineState:
-    """
-    Agent 3: Generates the answer.
-    - Access denied: returns denial message
-    - Rule-based: always generates a specific answer
-    - Gemini: enhances if available
-    """
     try:
         if not state["access_allowed"]:
             state["raw_answer"] = state["denial_reason"]
@@ -453,56 +445,330 @@ def agent_answer_generator(state: ChatPipelineState) -> ChatPipelineState:
         intent = state["intent"]
         context = state["context"]
         message = state["raw_message"]
+        history = state.get("history", [])
 
-        # Generate rule-based answer first (always accurate)
-        rule_answer = generate_rule_answer(role, intent, context, message)
         state["data_found"] = bool(context)
 
-        # If intent was classified as summary but message is specific,
-        # let Gemini handle it with full context
-        if (intent == "summary" and
-                not any(w in message.lower()
-                        for w in ["summary", "overview", "everything",
-                                  "all", "hello", "hi", "hey"])):
-            if GEMINI_AVAILABLE and context:
-                gemini_reply = call_gemini_with_context(
+        # Step 1: Handle unrecognized queries dynamically using Gemini
+        summary_trigger_words = [
+            "summary", "overview", "everything", "all data",
+            "hello", "hi", "hey", "help", "good morning"
+        ]
+        msg_lower = message.lower()
+        is_summary_request = any(
+            w in msg_lower for w in summary_trigger_words
+        )
+
+        if intent == "summary" and not is_summary_request:
+            # This is an unrecognized query — try Gemini with
+            # full context before falling back to summary
+            full_context = get_full_context_for_gemini(
+                user_id=state["user_id"],
+                role=role,
+                db=state["db"]
+            )
+            if GEMINI_AVAILABLE and full_context:
+                gemini_reply = call_gemini_freeform(
                     role=role,
-                    intent=intent,
-                    context=context,
-                    rule_answer=str(context),
+                    context=full_context,
                     message=message,
-                    history=state.get("history", [])
+                    history=history
                 )
                 if gemini_reply:
                     state["raw_answer"] = gemini_reply
                     state["answer_source"] = "gemini_freeform"
+                    state["data_found"] = True
                     return state
 
-        # Try Gemini to make it more natural
-        if GEMINI_AVAILABLE and context and rule_answer:
-            gemini_reply = call_gemini_with_context(
+            # Gemini not available or failed — tell user honestly
+            if not GEMINI_AVAILABLE:
+                state["raw_answer"] = (
+                    f"I understand you're asking about "
+                    f"'{message}'. I don't have specific data "
+                    f"for that in my current context. "
+                    f"Please check the relevant page in your "
+                    f"dashboard, or ask me about: attendance, "
+                    f"marks, assignments, events, resources, "
+                    f"placement eligibility, or risk level."
+                )
+                state["answer_source"] = "no_match"
+                state["data_found"] = False
+                return state
+
+            state["raw_answer"] = (
+                "I don't have specific data for that query in my "
+                "current context. Please check the relevant page "
+                "in your dashboard for that information."
+            )
+            state["answer_source"] = "no_data"
+            state["data_found"] = False
+            return state
+
+        # Step 2: Generate rule-based answer (always accurate data)
+        rule_answer = generate_rule_answer(role, intent, context, message)
+
+        # Step 2: Try Gemini as primary responder
+        if GEMINI_AVAILABLE:
+            gemini_reply = call_gemini_primary(
                 role=role,
                 intent=intent,
                 context=context,
                 rule_answer=rule_answer,
                 message=message,
-                history=state.get("history", [])
+                history=history
             )
-            if gemini_reply:
+            if gemini_reply and len(gemini_reply.strip()) > 20:
                 state["raw_answer"] = gemini_reply
                 state["answer_source"] = "gemini"
                 return state
 
+        # Step 3: Fall back to rule-based if Gemini unavailable
         state["raw_answer"] = rule_answer
         state["answer_source"] = "rules"
         return state
 
     except Exception:
         traceback.print_exc()
-        state["raw_answer"] = "I had trouble generating an answer. Please check your dashboard."
+        state["raw_answer"] = ("I had trouble retrieving your data. "
+                              "Please check your dashboard.")
         state["answer_source"] = "fallback"
         state["data_found"] = False
         return state
+
+def call_gemini_primary(role, intent, context, rule_answer,
+                        message, history) -> str:
+    try:
+        # Build conversation history
+        history_text = ""
+        for h in history[-4:]:
+            r = "Student" if h.get("role") == "user" else "Assistant"
+            history_text += f"{r}: {h.get('content', '')}\n"
+
+        # Build context summary based on intent
+        context_summary = build_context_summary(intent, context, role)
+
+        # Role-specific persona
+        personas = {
+            "student": (
+                "You are an AI academic assistant for a student "
+                "at GVP college. You have access to their real "
+                "academic data. Be helpful, encouraging, and specific."
+            ),
+            "teacher": (
+                "You are an AI assistant for a faculty member "
+                "at GVP college. You have access to class-level "
+                "academic data. Be professional and data-focused."
+            ),
+            "faculty": (
+                "You are an AI assistant for a faculty member "
+                "at GVP college. Be professional and data-focused."
+            ),
+            "admin": (
+                "You are an institutional AI assistant for the "
+                "admin of GVP college. You have full institutional "
+                "data. Be precise, concise, and data-driven."
+            )
+        }
+        persona = personas.get(role, personas["student"])
+
+        prompt = f"""{persona}
+
+REAL DATA FROM DATABASE FOR THIS USER:
+{context_summary}
+
+STRUCTURED ANSWER FROM DATA:
+{rule_answer}
+
+RECENT CONVERSATION:
+{history_text}
+
+USER'S QUESTION: "{message}"
+
+YOUR TASK:
+Using ONLY the data provided above, answer the user's question
+naturally and conversationally.
+
+STRICT RULES:
+- Use ONLY numbers and facts from the data above
+- NEVER invent, estimate, or assume any data
+- If the data shows 0 pending assignments, say that clearly
+- If asked about something not in the data (like events or
+  resources if not provided), say the data is not available
+  and suggest checking that page in the dashboard
+- Be specific — use actual numbers from the data
+- Write in natural sentences, not bullet points
+- Keep response under 5 sentences
+- If data is empty or null, say "No data available for that.
+  Please check your dashboard." — do not make up numbers
+
+RESPOND NOW:"""
+
+        model = genai.GenerativeModel(
+            "gemini-1.5-flash",
+            generation_config={
+                "temperature": 0.2,
+                "max_output_tokens": 250,
+                "top_p": 0.8
+            }
+        )
+
+        response = model.generate_content(prompt)
+
+        if response and response.text:
+            text = response.text.strip()
+            # Sanity check — if Gemini invented numbers not in
+            # context, fall back to rule answer
+            if len(text) > 15:
+                return text
+
+        return None
+
+    except Exception as e:
+        print(f"[GEMINI ERROR] {e}")
+        traceback.print_exc()
+        return None
+
+def build_context_summary(intent: str, context: dict,
+                          role: str) -> str:
+    """
+    Builds a clean, readable context string for Gemini.
+    Filters to only show data relevant to the intent.
+    """
+    try:
+        if not context:
+            return "No data available."
+
+        lines = []
+
+        # Always include these if available
+        if "attendance_pct" in context:
+            lines.append(f"Attendance: {context['attendance_pct']}%")
+        if "total_classes" in context:
+            lines.append(
+                f"Total classes: {context['total_classes']}, "
+                f"Present: {context.get('present_classes', 0)}"
+            )
+        if "risk_level" in context:
+            lines.append(f"Risk level: {context['risk_level']}")
+
+        # Marks
+        if "subject_marks" in context and context["subject_marks"]:
+            marks_lines = []
+            for s in context["subject_marks"]:
+                score = s.get("score", 0)
+                out_of = s.get("out_of", 0)
+                subj = s.get("subject", "Unknown")
+                if out_of > 0:
+                    marks_lines.append(
+                        f"{subj}: {score}/{out_of}"
+                    )
+                else:
+                    marks_lines.append(f"{subj}: {score} pts")
+            lines.append("Marks: " + ", ".join(marks_lines))
+
+        # Assignments
+        if "pending_assignments" in context:
+            lines.append(
+                f"Pending assignments: "
+                f"{context['pending_assignments']}"
+            )
+        if "submitted_assignments" in context:
+            lines.append(
+                f"Submitted assignments: "
+                f"{context['submitted_assignments']}"
+            )
+
+        # Alerts
+        if "active_alerts" in context:
+            alerts = context["active_alerts"]
+            lines.append(f"Active alerts: {len(alerts)}")
+            if alerts:
+                lines.append(
+                    "Alert details: " + "; ".join(
+                        str(a) for a in alerts[:3]
+                    )
+                )
+
+        # XP / Streak
+        if "xp" in context and context["xp"]:
+            lines.append(f"XP: {context['xp']}, "
+                        f"Streak: {context.get('streak', 0)} days")
+
+        # Events
+        if "upcoming_events" in context:
+            events = context["upcoming_events"]
+            lines.append(f"Events available: {len(events)}")
+            if events:
+                event_names = [e.get("name", "") for e in events[:3]]
+                lines.append(
+                    "Events: " + ", ".join(event_names)
+                )
+
+        # Resources
+        if "recent_resources" in context:
+            resources = context["recent_resources"]
+            lines.append(f"Resources available: {len(resources)}")
+            if resources:
+                res_names = [r.get("title", "") for r in resources[:3]]
+                lines.append(
+                    "Recent uploads: " + ", ".join(res_names)
+                )
+
+        # Teacher context
+        if "class_avg_attendance" in context:
+            lines.append(
+                f"Class average attendance: "
+                f"{context['class_avg_attendance']}%"
+            )
+        if "at_risk_count" in context:
+            lines.append(
+                f"At-risk students: {context['at_risk_count']} "
+                f"out of {context.get('total_students', 0)}"
+            )
+        if "pending_submissions" in context:
+            lines.append(
+                f"Pending assignment submissions: "
+                f"{context['pending_submissions']}"
+            )
+        if "subjects" in context and context["subjects"]:
+            lines.append(
+                "Subjects taught: " +
+                ", ".join(context["subjects"])
+            )
+
+        # Admin context
+        if "total_students" in context and "total_teachers" in context:
+            lines.append(
+                f"Total students: {context['total_students']}, "
+                f"Total faculty: {context['total_teachers']}"
+            )
+        if "overall_attendance_pct" in context:
+            lines.append(
+                f"Overall attendance: "
+                f"{context['overall_attendance_pct']}%"
+            )
+        if "active_alerts_count" in context:
+            lines.append(
+                f"Active alerts: {context['active_alerts_count']}"
+            )
+        if "placement_drives_open" in context:
+            lines.append(
+                f"Open placement drives: "
+                f"{context['placement_drives_open']}"
+            )
+        if "department_breakdown" in context:
+            depts = context["department_breakdown"]
+            if depts:
+                dept_summary = "; ".join([
+                    f"{d['dept']}: {d['attendance']}% attendance"
+                    for d in depts[:4]
+                ])
+                lines.append(f"Departments: {dept_summary}")
+
+        return "\n".join(lines) if lines else "No data available."
+
+    except Exception:
+        return str(context)[:500]
 
 def build_role_system_prompt(role: str, context: dict) -> str:
     ctx = str(context)
@@ -575,12 +841,48 @@ def generate_student_answer(intent, ctx, message) -> str:
         if not subjects:
             return "No marks records found for your account yet."
 
+        # Check if asking about specific exam type
+        msg_lower = message.lower()
+        asking_mid1 = any(w in msg_lower for w in [
+            "mid 1", "mid1", "first mid", "1st mid", "midterm 1"
+        ])
+        asking_mid2 = any(w in msg_lower for w in [
+            "mid 2", "mid2", "second mid", "2nd mid", "midterm 2"
+        ])
+
+        # Filter by exam type if specified
+        if asking_mid1:
+            filtered = [s for s in subjects
+                        if "1" in s.get("exam_type", "").lower()
+                        or "mid1" in s.get("exam_type", "").lower()
+                        or "first" in s.get("exam_type", "").lower()]
+            if filtered:
+                subjects = filtered
+        elif asking_mid2:
+            filtered = [s for s in subjects
+                        if "2" in s.get("exam_type", "").lower()
+                        or "mid2" in s.get("exam_type", "").lower()
+                        or "second" in s.get("exam_type", "").lower()]
+            if filtered:
+                subjects = filtered
+
+        # Check if asking about a specific subject
+        matching = [
+            s for s in subjects
+            if s.get("raw_subject", s.get("subject", "")).lower() in msg_lower
+            or any(
+                word in msg_lower
+                for word in s.get("raw_subject", s.get("subject", "")).lower().split()
+                if len(word) > 3
+            )
+        ]
+
+        # If asking about specific subject, show only that
+        display_subjects = matching if matching else subjects
+
         lines = []
         weak = []
-        best = None
-        best_score = -1
-
-        for s in subjects:
+        for s in display_subjects:
             subj = s.get("subject", "Unknown")
             score = s.get("score", 0)
             out_of = s.get("out_of", 0)
@@ -590,15 +892,21 @@ def generate_student_answer(intent, ctx, message) -> str:
             lines.append(f"{icon} {subj}: {display} ({pct}%)")
             if pct < 50:
                 weak.append(subj)
-            if pct > best_score:
-                best_score = pct
-                best = subj
+
+        if matching and len(matching) == 1:
+            # Specific subject query
+            s = matching[0]
+            pct = safe_pct(s.get("score", 0), s.get("out_of", 0))
+            display = format_mark(s.get("score", 0), s.get("out_of", 0))
+            status = "good" if pct >= 60 else ("needs improvement" if pct >= 40 else "critically low")
+            return (
+                f"Your {s.get('subject', 'subject')} marks: "
+                f"{display} ({pct}%) — {status}."
+            )
 
         result = "Your marks:\n" + "\n".join(lines)
         if weak:
             result += f"\n\n📚 Focus needed: {', '.join(weak)}"
-        elif best:
-            result += f"\n\n✨ Best subject: {best} ({best_score}%)"
         return result
 
     elif intent == "risk":
@@ -690,6 +998,39 @@ def generate_student_answer(intent, ctx, message) -> str:
             f"⚠️ Possible eligibility issues: {', '.join(issues)}. "
             f"Improve these areas before applying for placement drives."
         )
+
+    elif intent == "events":
+        events = ctx.get("upcoming_events", [])
+        total = ctx.get("total_events", 0)
+        if not events:
+            return ("No events found in the system currently. "
+                   "Check the Events page for updates.")
+        lines = [f"• {e['name']} — {e['date']} ({e['type']})"
+                 for e in events[:5]]
+        return (f"There are {total} event(s) available:\n" +
+                "\n".join(lines) +
+                "\n\nVisit the Events page to register.")
+
+    elif intent == "resources":
+        resources = ctx.get("recent_resources", [])
+        total = ctx.get("total_resources", 0)
+        if not resources:
+            return ("No resources uploaded yet. "
+                   "Check the Resources page for study materials.")
+        lines = [f"• {r['title']} — {r['subject']} ({r['type']})"
+                 for r in resources[:5]]
+        return (f"Recent study materials ({total} total):\n" +
+                "\n".join(lines) +
+                "\n\nVisit Resources page to download.")
+
+    elif intent == "timetable":
+        entries = ctx.get("timetable", [])
+        if not entries:
+            return ("No timetable data available. "
+                   "Check the Timetable page for your schedule.")
+        lines = [f"• {t['day']}: {t['subject']} at {t['time']}"
+                 for t in entries[:8]]
+        return "Your timetable:\n" + "\n".join(lines)
 
     elif intent == "greeting":
         att = ctx.get("attendance_pct", "N/A")
@@ -807,15 +1148,64 @@ def generate_admin_answer(intent, ctx, message) -> str:
         overall = ctx.get("overall_attendance_pct", 0)
         low_depts = ctx.get("low_attendance_departments", [])
         depts = ctx.get("department_breakdown", [])
+        msg_lower = message.lower()
+
+        # Check if asking about a specific department
+        dept_keywords = {
+            "cse": ["cse", "computer science", "cs"],
+            "ece": ["ece", "electronics"],
+            "mech": ["mech", "mechanical"],
+            "civil": ["civil"],
+            "it": [" it ", "information technology"],
+            "eee": ["eee", "electrical"]
+        }
+
+        specific_dept = None
+        for dept_name, keywords in dept_keywords.items():
+            if any(kw in msg_lower for kw in keywords):
+                specific_dept = dept_name
+                break
+
+        if specific_dept and depts:
+            # Find matching department
+            matching = [
+                d for d in depts
+                if specific_dept.lower() in d.get("dept", "").lower()
+                or any(
+                    kw in d.get("dept", "").lower()
+                    for kw in dept_keywords.get(specific_dept, [])
+                )
+            ]
+            if matching:
+                dept = matching[0]
+                att = dept.get("attendance", 0)
+                at_risk = dept.get("at_risk", 0)
+                # `total` is missing from `department_breakdown` initially, so let's default appropriately
+                total = dept.get("total", "N/A")
+                status = "✅ Good" if att >= 75 else "⚠️ Below threshold"
+                return (
+                    f"📊 {dept['dept']} Department attendance: "
+                    f"{att}% — {status}\n"
+                    f"At-risk: {at_risk}"
+                )
+            else:
+                return (
+                    f"No specific data found for that department. "
+                    f"Overall institution attendance is {overall}%. "
+                    f"Available departments: "
+                    f"{', '.join([d['dept'] for d in depts[:5]])}"
+                )
+
+        # No specific department — return overall with breakdown
         answer = f"📊 Overall institution attendance: {overall}%\n"
         if low_depts:
             answer += f"⚠️ Below 75%: {', '.join(low_depts)}\n"
         if depts:
-            breakdown = "\n".join([
-                f"  • {d['dept']}: {d['attendance']}% ({d.get('at_risk',0)} at-risk)"
-                for d in depts[:5]
-            ])
-            answer += f"Department breakdown:\n{breakdown}"
+            lines = [
+                f"  • {d['dept']}: {d['attendance']}%"
+                for d in depts[:6]
+            ]
+            answer += "Department breakdown:\n" + "\n".join(lines)
         return answer
 
     elif intent == "placement":
@@ -1002,3 +1392,104 @@ def run_chat_pipeline(user_id: int, role: str, message: str,
             "I'm having trouble processing your request right now. "
             "Please try again in a moment."
         )
+
+def get_full_context_for_gemini(user_id, role, db) -> dict:
+    """Gets all available context for Gemini to reason over."""
+    try:
+        from rag.context_builder import (
+            build_student_context,
+            build_teacher_context,
+            build_admin_context,
+            get_student_marks_detail,
+            get_student_attendance_detail,
+            get_student_assignments_detail,
+            get_student_events,
+            get_student_resources
+        )
+        role = role.lower()
+        if role == "student":
+            ctx = build_student_context(user_id, db)
+            ctx.update(get_student_marks_detail(user_id, db))
+            ctx.update(get_student_attendance_detail(user_id, db))
+            ctx.update(get_student_assignments_detail(user_id, db))
+            ctx.update(get_student_events(user_id, db))
+            ctx.update(get_student_resources(user_id, db))
+            return ctx
+        elif role in ("teacher", "faculty"):
+            # build_teacher_context doesn't exist, we use get_teacher_class_detail
+            from rag.context_builder import get_teacher_class_detail
+            return get_teacher_class_detail(user_id, db)
+        else:
+            from rag.context_builder import build_admin_context
+            return build_admin_context(db)
+    except Exception:
+        traceback.print_exc()
+        return {}
+
+def call_gemini_freeform(role, context, message, history) -> str:
+    """
+    Gemini answers any question from full context.
+    Used for queries that don't match known intents.
+    """
+    try:
+        context_str = build_context_summary("summary", context, role)
+        history_text = "\n".join([
+            f"{'User' if h.get('role')=='user' else 'Assistant'}: "
+            f"{h.get('content', '')}"
+            for h in history[-4:]
+        ])
+
+        personas = {
+            "student": "academic assistant for a student",
+            "teacher": "assistant for a faculty member",
+            "faculty": "assistant for a faculty member",
+            "admin": "institutional assistant for admin"
+        }
+        persona = personas.get(role.lower(),
+                              "academic assistant")
+
+        prompt = f"""You are an {persona} at GVP college.
+
+AVAILABLE DATA FROM DATABASE:
+{context_str}
+
+CONVERSATION HISTORY:
+{history_text}
+
+USER QUESTION: "{message}"
+
+INSTRUCTIONS:
+- Answer ONLY using the data provided above
+- If the data contains the answer, give it specifically
+- If the question is about something NOT in the data
+  (like faculty details, specific class names, personal
+  info about other people), say:
+  "I don't have that specific information in my current
+  context. Please check the relevant page in your dashboard."
+- If the question is a general knowledge question
+  not related to the user's academic data, you
+  MAY answer it briefly from your general knowledge,
+  but always add: 'Note: For academic data, ask me
+  about your attendance, marks, or assignments.'
+- Never invent numbers or facts
+- Be conversational and helpful
+- Maximum 4 sentences
+- If data is empty, say "No data available for that."
+
+ANSWER:"""
+
+        model = genai.GenerativeModel(
+            "gemini-1.5-flash",
+            generation_config={
+                "temperature": 0.2,
+                "max_output_tokens": 200
+            }
+        )
+        response = model.generate_content(prompt)
+        if response and response.text and len(response.text.strip()) > 10:
+            return response.text.strip()
+        return None
+    except Exception as e:
+        print(f"[GEMINI FREEFORM ERROR] {e}")
+        return None
+

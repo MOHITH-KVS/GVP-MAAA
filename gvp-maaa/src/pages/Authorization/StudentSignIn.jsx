@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import SchoolIcon from "@mui/icons-material/School";
 import CircularProgress from "@mui/material/CircularProgress";
@@ -17,7 +17,16 @@ export default function StudentSignIn() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [touched, setTouched] = useState({ email: false, password: false });
+  const [typingStarted, setTypingStarted] = useState({ email: false, password: false });
   const [loginSuccess, setLoginSuccess] = useState(false);
+  const emailRef = useRef(null);
+  const passwordRef = useRef(null);
+
+  useEffect(() => {
+    emailRef.current?.focus();
+  }, []);
 
 
 
@@ -29,16 +38,77 @@ export default function StudentSignIn() {
   password &&
   isValidCollegeEmail(email);
 
-  const handleSignIn = async () => {
+  const validateField = (field, values) => {
+    if (field === "email") {
+      if (!values.email.trim()) return "Please enter your email.";
+      if (!isValidCollegeEmail(values.email)) return "Please use your official college email (@gvpcdpgc.edu.in).";
+      return "";
+    }
+    if (field === "password") {
+      if (!values.password) return "Please enter your password.";
+      return "";
+    }
+    return "";
+  };
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setFieldErrors((prev) => {
+        const next = { ...prev };
+        const values = { email, password };
+        ["email", "password"].forEach((field) => {
+          const shouldValidate = touched[field] || (typingStarted[field] && values[field].trim().length > 1);
+          if (!shouldValidate) return;
+          const msg = validateField(field, values);
+          if (msg) next[field] = msg;
+          else delete next[field];
+        });
+        return next;
+      });
+    }, 350);
+
+    return () => clearTimeout(timer);
+  }, [email, password, touched, typingStarted]);
+
+  const handleBlur = (field) => {
+    const values = { email, password };
+    setTouched((prev) => ({ ...prev, [field]: true }));
+    const msg = validateField(field, values);
+    setFieldErrors((prev) => {
+      const next = { ...prev };
+      if (msg) next[field] = msg;
+      else delete next[field];
+      return next;
+    });
+  };
+
+  const focusFirstInvalid = (errorsMap) => {
+    if (errorsMap.email) {
+      emailRef.current?.focus();
+      return;
+    }
+    if (errorsMap.password) {
+      passwordRef.current?.focus();
+    }
+  };
+
+  const handleSignIn = async (e) => {
+  e.preventDefault();
+  if (loading) return;
   setError("");
 
-  if (!email || !password) {
-    setError("Please enter both email and password.");
-    return;
-  }
-
-  if (!isValidCollegeEmail(email)) {
-    setError("Please use your official college email (@gvpcdpgc.edu.in).");
+  const clientErrors = {
+    email: validateField("email", { email, password }),
+    password: validateField("password", { email, password }),
+  };
+  const normalizedErrors = Object.fromEntries(
+    Object.entries(clientErrors).filter(([, value]) => value)
+  );
+  if (Object.keys(normalizedErrors).length > 0) {
+    setTouched({ email: true, password: true });
+    setFieldErrors(normalizedErrors);
+    setError(Object.values(normalizedErrors)[0]);
+    focusFirstInvalid(normalizedErrors);
     return;
   }
 
@@ -75,6 +145,13 @@ export default function StudentSignIn() {
     }, 1000);
   }
  };
+
+  const handleEnterToNext = (e, nextRef) => {
+    if (e.key !== "Enter") return;
+    if (!nextRef?.current) return;
+    e.preventDefault();
+    nextRef.current.focus();
+  };
 
 
   return (
@@ -148,19 +225,36 @@ export default function StudentSignIn() {
         </div>
 
         {/* FORM */}
-        <div className="space-y-5">
+        <form className="space-y-5" onSubmit={handleSignIn}>
 
           <Input
             label="College email"
             placeholder="student@gvpcdpgc.edu.in"
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            onChange={(e) => {
+              const value = e.target.value;
+              setTypingStarted((prev) => ({ ...prev, email: true }));
+              setEmail(value);
+              setError("");
+              if (fieldErrors.email && validateField("email", { email: value, password }) === "") {
+                setFieldErrors((prev) => {
+                  const next = { ...prev };
+                  delete next.email;
+                  return next;
+                });
+              }
+            }}
+            onBlur={() => handleBlur("email")}
+            inputRef={emailRef}
+            onKeyDown={(e) => handleEnterToNext(e, passwordRef)}
           />
-          {email && !isValidCollegeEmail(email) && (
+          {fieldErrors.email ? (
+            <p className="text-sm text-red-600">{fieldErrors.email}</p>
+          ) : email && !isValidCollegeEmail(email) ? (
             <p className="text-sm text-red-600">
               Use official college email (@gvpcdpgc.edu.in)
             </p>
-          )}
+          ) : null}
 
 
           {/* PASSWORD WITH TOGGLE */}
@@ -170,7 +264,21 @@ export default function StudentSignIn() {
               type={showPassword ? "text" : "password"}
               placeholder="••••••••"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(e) => {
+                const value = e.target.value;
+                setTypingStarted((prev) => ({ ...prev, password: true }));
+                setPassword(value);
+                setError("");
+                if (fieldErrors.password && validateField("password", { email, password: value }) === "") {
+                  setFieldErrors((prev) => {
+                    const next = { ...prev };
+                    delete next.password;
+                    return next;
+                  });
+                }
+              }}
+              onBlur={() => handleBlur("password")}
+              inputRef={passwordRef}
             />
 
             <button
@@ -186,6 +294,8 @@ export default function StudentSignIn() {
             </button>
           </div>
 
+          {fieldErrors.password && <p className="text-sm text-red-600">{fieldErrors.password}</p>}
+
           {error && (
             <p className="text-sm text-red-600 font-medium">
               {error}
@@ -193,7 +303,7 @@ export default function StudentSignIn() {
           )}
 
           <button
-          onClick={handleSignIn}
+          type="submit"
           disabled={loading || !isFormValid}
           className={`w-full py-3 rounded-xl font-medium transition flex items-center justify-center gap-2
             ${
@@ -212,7 +322,7 @@ export default function StudentSignIn() {
           )}
         </button>
 
-        </div>
+        </form>
 
         {/* EXTRA LINKS */}
         <div className="flex justify-between text-sm text-slate-500 mt-4">
@@ -237,17 +347,19 @@ export default function StudentSignIn() {
 
 /* ================= HELPERS ================= */
 
-function Input({ label, type = "text", placeholder, value, onChange }) {
+function Input({ label, type = "text", placeholder, value, onChange, inputRef, onKeyDown }) {
   return (
     <div>
       <label className="block text-sm text-slate-600 mb-1">
         {label}
       </label>
       <input
+        ref={inputRef}
         type={type}
         placeholder={placeholder}
         value={value}
         onChange={onChange}
+        onKeyDown={onKeyDown}
         className="w-full px-4 py-3 rounded-xl border 
                    focus:outline-none focus:ring-2 focus:ring-indigo-500"
       />

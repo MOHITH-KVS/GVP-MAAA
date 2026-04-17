@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import AdminPanelSettingsIcon from "@mui/icons-material/AdminPanelSettings";
 import VisibilityIcon from "@mui/icons-material/Visibility";
@@ -16,16 +16,101 @@ export default function AdminSignIn() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [touched, setTouched] = useState({ email: false, password: false, adminKey: false });
+  const [typingStarted, setTypingStarted] = useState({ email: false, password: false, adminKey: false });
   const [loginSuccess, setLoginSuccess] = useState(false);
+  const emailRef = useRef(null);
+  const passwordRef = useRef(null);
+  const adminKeyRef = useRef(null);
+
+  useEffect(() => {
+    emailRef.current?.focus();
+  }, []);
 
   const isFormValid = email && password && adminKey;
 
+  const validateField = (field, values) => {
+    if (field === "email") {
+      if (!values.email.trim()) return "Admin email is required.";
+      return "";
+    }
+    if (field === "password") {
+      if (!values.password) return "Password is required.";
+      return "";
+    }
+    if (field === "adminKey") {
+      if (!values.adminKey) return "Admin access key is required.";
+      return "";
+    }
+    return "";
+  };
 
-  const handleSignIn = async () => {
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setFieldErrors((prev) => {
+        const next = { ...prev };
+        const values = { email, password, adminKey };
+        ["email", "password", "adminKey"].forEach((field) => {
+          const currentValue = field === "adminKey" ? values.adminKey : values[field];
+          const shouldValidate = touched[field] || (typingStarted[field] && currentValue.trim().length > 1);
+          if (!shouldValidate) return;
+          const msg = validateField(field, values);
+          if (msg) next[field] = msg;
+          else delete next[field];
+        });
+        return next;
+      });
+    }, 350);
+
+    return () => clearTimeout(timer);
+  }, [email, password, adminKey, touched, typingStarted]);
+
+  const handleBlur = (field) => {
+    const values = { email, password, adminKey };
+    setTouched((prev) => ({ ...prev, [field]: true }));
+    const msg = validateField(field, values);
+    setFieldErrors((prev) => {
+      const next = { ...prev };
+      if (msg) next[field] = msg;
+      else delete next[field];
+      return next;
+    });
+  };
+
+  const focusFirstInvalid = (errorsMap) => {
+    if (errorsMap.email) {
+      emailRef.current?.focus();
+      return;
+    }
+    if (errorsMap.password) {
+      passwordRef.current?.focus();
+      return;
+    }
+    if (errorsMap.adminKey) {
+      adminKeyRef.current?.focus();
+    }
+  };
+
+
+  const handleSignIn = async (e) => {
+    e.preventDefault();
+    if (loading) return;
     setError("");
 
-    if (!email || !password || !adminKey) {
-      setError("All fields are required for administrative access.");
+    const clientErrors = {
+      email: validateField("email", { email, password, adminKey }),
+      password: validateField("password", { email, password, adminKey }),
+      adminKey: validateField("adminKey", { email, password, adminKey }),
+    };
+    const normalizedErrors = Object.fromEntries(
+      Object.entries(clientErrors).filter(([, value]) => value)
+    );
+    if (Object.keys(normalizedErrors).length > 0) {
+      setTouched({ email: true, password: true, adminKey: true });
+      setFieldErrors(normalizedErrors);
+      setError(Object.values(normalizedErrors)[0]);
+      focusFirstInvalid(normalizedErrors);
       return;
     }
 
@@ -61,6 +146,13 @@ export default function AdminSignIn() {
       setError(err.response?.data?.detail || err.message || "Admin login failed");
       setLoading(false);
     }
+  };
+
+  const handleEnterToNext = (e, nextRef) => {
+    if (e.key !== "Enter") return;
+    if (!nextRef?.current) return;
+    e.preventDefault();
+    nextRef.current.focus();
   };
 
 
@@ -133,14 +225,30 @@ export default function AdminSignIn() {
         </div>
 
         {/* FORM */}
-        <div className="space-y-4">
+        <form className="space-y-4" onSubmit={handleSignIn}>
 
           <Input
             label="Admin Email"
             placeholder="admin@gvpcdpgc.edu.in"
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            onChange={(e) => {
+              const value = e.target.value;
+              setTypingStarted((prev) => ({ ...prev, email: true }));
+              setEmail(value);
+              setError("");
+              if (fieldErrors.email && validateField("email", { email: value, password, adminKey }) === "") {
+                setFieldErrors((prev) => {
+                  const next = { ...prev };
+                  delete next.email;
+                  return next;
+                });
+              }
+            }}
+            onBlur={() => handleBlur("email")}
+            inputRef={emailRef}
+            onKeyDown={(e) => handleEnterToNext(e, passwordRef)}
           />
+          {fieldErrors.email && <p className="text-sm text-red-400">{fieldErrors.email}</p>}
 
           {/* PASSWORD */}
           <div className="relative">
@@ -149,7 +257,22 @@ export default function AdminSignIn() {
               type={showPassword ? "text" : "password"}
               placeholder="••••••••"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(e) => {
+                const value = e.target.value;
+                setTypingStarted((prev) => ({ ...prev, password: true }));
+                setPassword(value);
+                setError("");
+                if (fieldErrors.password && validateField("password", { email, password: value, adminKey }) === "") {
+                  setFieldErrors((prev) => {
+                    const next = { ...prev };
+                    delete next.password;
+                    return next;
+                  });
+                }
+              }}
+              onBlur={() => handleBlur("password")}
+              inputRef={passwordRef}
+              onKeyDown={(e) => handleEnterToNext(e, adminKeyRef)}
             />
 
             <button
@@ -164,13 +287,29 @@ export default function AdminSignIn() {
               )}
             </button>
           </div>
+          {fieldErrors.password && <p className="text-sm text-red-400">{fieldErrors.password}</p>}
 
           <Input
             label="Admin Access Key"
             placeholder="Enter admin key"
             value={adminKey}
-            onChange={(e) => setAdminKey(e.target.value)}
+            onChange={(e) => {
+              const value = e.target.value;
+              setTypingStarted((prev) => ({ ...prev, adminKey: true }));
+              setAdminKey(value);
+              setError("");
+              if (fieldErrors.adminKey && validateField("adminKey", { email, password, adminKey: value }) === "") {
+                setFieldErrors((prev) => {
+                  const next = { ...prev };
+                  delete next.adminKey;
+                  return next;
+                });
+              }
+            }}
+            onBlur={() => handleBlur("adminKey")}
+            inputRef={adminKeyRef}
           />
+          {fieldErrors.adminKey && <p className="text-sm text-red-400">{fieldErrors.adminKey}</p>}
 
           {error && (
             <p className="text-sm text-red-400 font-medium">
@@ -179,7 +318,7 @@ export default function AdminSignIn() {
           )}
 
           <button
-            onClick={handleSignIn}
+            type="submit"
             disabled={loading || !isFormValid}
             className={`w-full py-3 mt-2 rounded-xl font-semibold transition
               ${
@@ -191,7 +330,7 @@ export default function AdminSignIn() {
             {loading ? "Signing in..." : "Sign In as Administrator"}
           </button>
 
-        </div>
+        </form>
 
       </div>
     </div>
@@ -200,17 +339,19 @@ export default function AdminSignIn() {
 
 /* ================= HELPERS ================= */
 
-function Input({ label, type = "text", placeholder, value, onChange }) {
+function Input({ label, type = "text", placeholder, value, onChange, inputRef, onKeyDown }) {
   return (
     <div>
       <label className="block text-sm text-slate-400 mb-1">
         {label}
       </label>
       <input
+        ref={inputRef}
         type={type}
         placeholder={placeholder}
         value={value}
         onChange={onChange}
+        onKeyDown={onKeyDown}
         className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700
                    focus:outline-none focus:ring-2 focus:ring-red-600 text-slate-100"
       />

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import LocalLibraryIcon from "@mui/icons-material/LocalLibrary";
 import VisibilityIcon from "@mui/icons-material/Visibility";
@@ -34,8 +34,35 @@ export default function TeacherSignUp() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [error, setError] = useState("");
   const [fieldErrors, setFieldErrors] = useState({});
+  const [validationErrors, setValidationErrors] = useState({});
+  const [touched, setTouched] = useState({
+    name: false,
+    employeeId: false,
+    departmentId: false,
+    email: false,
+    password: false,
+    confirmPassword: false,
+  });
+  const [typingStarted, setTypingStarted] = useState({
+    name: false,
+    employeeId: false,
+    departmentId: false,
+    email: false,
+    password: false,
+    confirmPassword: false,
+  });
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState("");
+  const nameRef = useRef(null);
+  const employeeIdRef = useRef(null);
+  const departmentRef = useRef(null);
+  const emailRef = useRef(null);
+  const passwordRef = useRef(null);
+  const confirmPasswordRef = useRef(null);
+
+  useEffect(() => {
+    nameRef.current?.focus();
+  }, []);
 
 
 
@@ -65,17 +92,129 @@ export default function TeacherSignUp() {
   setFieldErrors({});
  };
 
+  const handleEnterToNext = (e, nextRef) => {
+    if (e.key !== "Enter") return;
+    if (!nextRef?.current) return;
+    e.preventDefault();
+    nextRef.current.focus();
+  };
+
 
   const isValidCollegeEmail = (email) =>
     ALLOWED_DOMAINS.some((domain) => email.endsWith(domain));
 
-  const getPasswordStrength = (password) => {
-  if (password.length < 6) return "Weak";
-  if (/[0-9]/.test(password) && /[^A-Za-z0-9]/.test(password)) return "Strong";
-  return "Medium";
- };
+  const getPasswordStrengthMeta = (password) => {
+    const checks = {
+      length: password.length >= 8,
+      uppercase: /[A-Z]/.test(password),
+      lowercase: /[a-z]/.test(password),
+      number: /[0-9]/.test(password),
+      special: /[^A-Za-z0-9]/.test(password),
+    };
+    const score = Object.values(checks).filter(Boolean).length;
+    const label = score <= 2 ? "Weak" : score <= 4 ? "Medium" : "Strong";
+    return { checks, score, label };
+  };
 
-  const passwordStrength = getPasswordStrength(form.password);
+  const passwordStrengthMeta = getPasswordStrengthMeta(form.password);
+
+  const validateField = (field, values) => {
+    if (field === "name") {
+      if (!values.name.trim()) return "Name cannot be empty";
+      return "";
+    }
+    if (field === "employeeId") {
+      if (!values.employeeId.trim()) return "Employee ID is required";
+      return "";
+    }
+    if (field === "departmentId") {
+      if (!values.departmentId) return "Please select your department";
+      return "";
+    }
+    if (field === "email") {
+      if (!values.email.trim()) return "Please enter your email";
+      if (!isValidCollegeEmail(values.email)) return "Please use your college email (@gvpcdpgc.edu.in)";
+      return "";
+    }
+    if (field === "password") {
+      if (!values.password) return "Password is required";
+      return "";
+    }
+    if (field === "confirmPassword") {
+      if (!values.confirmPassword) return "Please confirm your password";
+      if (values.password !== values.confirmPassword) return "Passwords do not match";
+      return "";
+    }
+    return "";
+  };
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setValidationErrors((prev) => {
+        const next = { ...prev };
+        const values = { ...form };
+        ["name", "employeeId", "departmentId", "email", "password", "confirmPassword"].forEach((field) => {
+          const currentValue = values[field] || "";
+          const shouldValidate = touched[field] || (typingStarted[field] && currentValue.toString().trim().length > 1);
+          if (!shouldValidate) return;
+          const msg = validateField(field, values);
+          if (msg) next[field] = msg;
+          else delete next[field];
+        });
+        return next;
+      });
+    }, 350);
+
+    return () => clearTimeout(timer);
+  }, [form, touched, typingStarted]);
+
+  const handleBlur = (field) => {
+    const values = { ...form };
+    setTouched((prev) => ({ ...prev, [field]: true }));
+    const msg = validateField(field, values);
+    setValidationErrors((prev) => {
+      const next = { ...prev };
+      if (msg) next[field] = msg;
+      else delete next[field];
+      return next;
+    });
+  };
+
+  const clearFieldErrorIfValid = (field, nextForm) => {
+    if (validationErrors[field] && validateField(field, nextForm) === "") {
+      setValidationErrors((prev) => {
+        const next = { ...prev };
+        delete next[field];
+        return next;
+      });
+    }
+  };
+
+  const focusFirstInvalid = (errorsMap) => {
+    if (errorsMap.name) {
+      nameRef.current?.focus();
+      return;
+    }
+    if (errorsMap.employeeId) {
+      employeeIdRef.current?.focus();
+      return;
+    }
+    if (errorsMap.departmentId) {
+      departmentRef.current?.focus();
+      return;
+    }
+    if (errorsMap.email) {
+      emailRef.current?.focus();
+      return;
+    }
+    if (errorsMap.password) {
+      passwordRef.current?.focus();
+      return;
+    }
+    if (errorsMap.confirmPassword) {
+      confirmPasswordRef.current?.focus();
+    }
+  };
 
 
   const isNameValid = form.name.trim().length > 0;
@@ -88,11 +227,39 @@ export default function TeacherSignUp() {
     form.password === form.confirmPassword;
 
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (e) => {
+  e.preventDefault();
   if (loading) return;   // prevent double click
   setLoading(true);
   setError("");
   setSuccess("");
+
+  const clientErrors = {
+    name: validateField("name", form),
+    employeeId: validateField("employeeId", form),
+    departmentId: validateField("departmentId", form),
+    email: validateField("email", form),
+    password: validateField("password", form),
+    confirmPassword: validateField("confirmPassword", form),
+  };
+  const normalizedErrors = Object.fromEntries(
+    Object.entries(clientErrors).filter(([, value]) => value)
+  );
+  if (Object.keys(normalizedErrors).length > 0) {
+    setTouched({
+      name: true,
+      employeeId: true,
+      departmentId: true,
+      email: true,
+      password: true,
+      confirmPassword: true,
+    });
+    setValidationErrors(normalizedErrors);
+    setError(Object.values(normalizedErrors)[0]);
+    focusFirstInvalid(normalizedErrors);
+    setLoading(false);
+    return;
+  }
 
 
   if (!form.name || !form.email || !form.password || !form.confirmPassword) {
@@ -187,18 +354,44 @@ export default function TeacherSignUp() {
           </p>
         </div>
 
-        <div className="space-y-3">
-          <Input label="Full Name" name="name" value={form.name} onChange={handleChange} />
-          {!isNameValid && (
+        <form className="space-y-3" onSubmit={handleSubmit}>
+          <Input
+            label="Full Name"
+            name="name"
+            value={form.name}
+            onChange={(e) => {
+              setTypingStarted((prev) => ({ ...prev, name: true }));
+              handleChange(e);
+              const nextForm = { ...form, name: e.target.value.replace(/[^A-Za-z\s]/g, "") };
+              clearFieldErrorIfValid("name", nextForm);
+            }}
+            onBlur={() => handleBlur("name")}
+            inputRef={nameRef}
+            onKeyDown={(e) => handleEnterToNext(e, employeeIdRef)}
+          />
+          {validationErrors.name && (
             <p className="text-sm text-red-600">
-              Name cannot be empty
+              {validationErrors.name}
             </p>
           )}
 
-          <Input label="Employee ID" name="employeeId" value={form.employeeId} onChange={handleChange} />
-          {!isEmployeeIdValid && (
+          <Input
+            label="Employee ID"
+            name="employeeId"
+            value={form.employeeId}
+            onChange={(e) => {
+              setTypingStarted((prev) => ({ ...prev, employeeId: true }));
+              handleChange(e);
+              const nextForm = { ...form, employeeId: e.target.value.replace(/[^A-Za-z0-9/]/g, "") };
+              clearFieldErrorIfValid("employeeId", nextForm);
+            }}
+            onBlur={() => handleBlur("employeeId")}
+            inputRef={employeeIdRef}
+            onKeyDown={(e) => handleEnterToNext(e, departmentRef)}
+          />
+          {validationErrors.employeeId && (
             <p className="text-sm text-red-600">
-              Employee ID is required
+              {validationErrors.employeeId}
             </p>
           )}
 
@@ -208,9 +401,17 @@ export default function TeacherSignUp() {
               Department
             </label>
             <select
+              ref={departmentRef}
               name="departmentId"
               value={form.departmentId}
-              onChange={handleChange}
+              onChange={(e) => {
+                setTypingStarted((prev) => ({ ...prev, departmentId: true }));
+                handleChange(e);
+                const nextForm = { ...form, departmentId: e.target.value };
+                clearFieldErrorIfValid("departmentId", nextForm);
+              }}
+              onBlur={() => handleBlur("departmentId")}
+              onKeyDown={(e) => handleEnterToNext(e, emailRef)}
               className="w-full px-4 py-2.5 rounded-xl border focus:ring-2 focus:ring-indigo-500"
             >
               <option value="">Select Department</option>
@@ -220,11 +421,28 @@ export default function TeacherSignUp() {
                 </option>
               ))}
             </select>
+            {validationErrors.departmentId && (
+              <p className="text-sm text-red-600 mt-1">{validationErrors.departmentId}</p>
+            )}
           </div>
-          <Input label="Email" name="email" type="email" value={form.email} onChange={handleChange} />
-          {form.email && !isValidCollegeEmail(form.email) && (
+          <Input
+            label="Email"
+            name="email"
+            type="email"
+            value={form.email}
+            onChange={(e) => {
+              setTypingStarted((prev) => ({ ...prev, email: true }));
+              handleChange(e);
+              const nextForm = { ...form, email: e.target.value.toLowerCase() };
+              clearFieldErrorIfValid("email", nextForm);
+            }}
+            onBlur={() => handleBlur("email")}
+            inputRef={emailRef}
+            onKeyDown={(e) => handleEnterToNext(e, passwordRef)}
+          />
+          {validationErrors.email && (
             <p className="text-sm text-red-600">
-              Please use your college email (@gvpcdpgc.edu.in)
+              {validationErrors.email}
             </p>
           )}
 
@@ -236,7 +454,19 @@ export default function TeacherSignUp() {
               name="password"
               type={showPassword ? "text" : "password"}
               value={form.password}
-              onChange={handleChange}
+              onChange={(e) => {
+                setTypingStarted((prev) => ({ ...prev, password: true }));
+                handleChange(e);
+                const nextForm = { ...form, password: e.target.value };
+                clearFieldErrorIfValid("password", nextForm);
+                clearFieldErrorIfValid("confirmPassword", {
+                  ...nextForm,
+                  confirmPassword: form.confirmPassword,
+                });
+              }}
+              onBlur={() => handleBlur("password")}
+              inputRef={passwordRef}
+              onKeyDown={(e) => handleEnterToNext(e, confirmPasswordRef)}
             />
             <button
               type="button"
@@ -248,15 +478,34 @@ export default function TeacherSignUp() {
           </div>
 
           {form.password && (
-            <p className={`text-sm font-medium ${
-              passwordStrength === "Strong"
-                ? "text-emerald-600"
-                : passwordStrength === "Medium"
-                ? "text-amber-600"
-                : "text-red-600"
-            }`}>
-              Password Strength: {passwordStrength}
-            </p>
+            <div className="space-y-2">
+              <div className="flex gap-1">
+                {[1, 2, 3].map((step) => {
+                  const level = passwordStrengthMeta.score <= 2 ? 1 : passwordStrengthMeta.score <= 4 ? 2 : 3;
+                  const active = step <= level;
+                  const color = passwordStrengthMeta.label === "Strong"
+                    ? "bg-emerald-500"
+                    : passwordStrengthMeta.label === "Medium"
+                    ? "bg-amber-500"
+                    : "bg-red-500";
+                  return (
+                    <div
+                      key={step}
+                      className={`h-2 flex-1 rounded-full ${active ? color : "bg-slate-200"}`}
+                    />
+                  );
+                })}
+              </div>
+              <p className={`text-sm font-medium ${
+                passwordStrengthMeta.label === "Strong"
+                  ? "text-emerald-600"
+                  : passwordStrengthMeta.label === "Medium"
+                  ? "text-amber-600"
+                  : "text-red-600"
+              }`}>
+                Password Strength: {passwordStrengthMeta.label}
+              </p>
+            </div>
           )}
 
           <div className="relative">
@@ -265,16 +514,23 @@ export default function TeacherSignUp() {
               name="confirmPassword"
               type={showConfirmPassword ? "text" : "password"}
               value={form.confirmPassword}
-              onChange={handleChange}
+              onChange={(e) => {
+                setTypingStarted((prev) => ({ ...prev, confirmPassword: true }));
+                handleChange(e);
+                const nextForm = { ...form, confirmPassword: e.target.value };
+                clearFieldErrorIfValid("confirmPassword", nextForm);
+              }}
+              onBlur={() => handleBlur("confirmPassword")}
+              inputRef={confirmPasswordRef}
             />
-            {form.confirmPassword && (
+            {(validationErrors.confirmPassword || form.confirmPassword) && (
               isPasswordMatch ? (
                 <p className="text-sm text-emerald-600">
                   ✔ Passwords match
                 </p>
               ) : (
                 <p className="text-sm text-red-600">
-                  Passwords do not match
+                  {validationErrors.confirmPassword || "Passwords do not match"}
                 </p>
               )
             )}
@@ -291,7 +547,7 @@ export default function TeacherSignUp() {
           {error && <p className="text-sm text-red-600 font-medium">{error}</p>}
 
           <button
-            onClick={handleSubmit}
+            type="submit"
             disabled={
               loading ||
               !isNameValid ||
@@ -321,7 +577,7 @@ export default function TeacherSignUp() {
               "Create Account"
             )}
           </button>
-        </div>
+        </form>
 
         <p className="text-sm text-center text-slate-500 mt-4">
           Already have an account?{" "}
@@ -377,14 +633,16 @@ export default function TeacherSignUp() {
 
 /* ===== HELPERS ===== */
 
-function Input({ label, name, value, onChange, type = "text" }) {
+function Input({ label, name, value, onChange, type = "text", inputRef, onKeyDown }) {
   return (
     <div>
       <label className="block text-sm text-slate-600 mb-1">{label}</label>
       <input
+        ref={inputRef}
         name={name}
         value={value}
         onChange={onChange}
+        onKeyDown={onKeyDown}
         type={type}
         className="w-full px-4 py-2.5 rounded-xl border focus:ring-2 focus:ring-indigo-500"
       />

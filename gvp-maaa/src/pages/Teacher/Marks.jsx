@@ -109,26 +109,6 @@ export default function Marks() {
     }
   };
 
-  if (pageLoading) {
-    return (
-      <div className="space-y-8">
-        <div>
-          <SkeletonBox className="h-9 w-72" />
-          <SkeletonBox className="h-4 w-96 mt-2" />
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <SkeletonCard />
-          <SkeletonCard />
-          <SkeletonCard />
-          <SkeletonCard />
-        </div>
-        <div className="rounded-2xl border bg-white p-6">
-          <SkeletonTable rows={6} />
-        </div>
-      </div>
-    );
-  }
-
   const downloadTemplate = async () => {
     if (!year || !section || !subject) {
       setMessage("Please select year, section and subject");
@@ -170,6 +150,26 @@ export default function Marks() {
         return valB - valA;
       });
   }, [students, search]);
+
+  if (pageLoading) {
+    return (
+      <div className="space-y-8">
+        <div>
+          <SkeletonBox className="h-9 w-72" />
+          <SkeletonBox className="h-4 w-96 mt-2" />
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <SkeletonCard />
+          <SkeletonCard />
+          <SkeletonCard />
+          <SkeletonCard />
+        </div>
+        <div className="rounded-2xl border bg-white p-6">
+          <SkeletonTable rows={6} />
+        </div>
+      </div>
+    );
+  }
 
   /* ====================== UPLOAD EXCEL FILE PARSING ====================== */
   const handleFileChange = async (e) => {

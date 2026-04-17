@@ -108,11 +108,26 @@ def build_student_context(student_id: int, db: Session) -> dict:
     
     # Pending assignments
     try:
-        pending = db.query(AssignmentSubmission).filter(
-            AssignmentSubmission.student_id == student_id,
-            AssignmentSubmission.status == "pending"
-        ).count()
-        context["pending_assignments"] = pending
+        student = db.query(Student).filter(Student.student_id == student_id).first()
+        if student:
+            assignments = db.query(Assignment).filter(
+                Assignment.year == student.year,
+                Assignment.section == student.section,
+                Assignment.is_active == True
+            ).all()
+            
+            submissions = db.query(AssignmentSubmission).filter(
+                AssignmentSubmission.student_id == student_id
+            ).all()
+            
+            submitted_ids = {s.assignment_id for s in submissions}
+            
+            pending_count = 0
+            for a in assignments:
+                if a.id not in submitted_ids:
+                    pending_count += 1
+                    
+            context["pending_assignments"] = pending_count
     except Exception:
         traceback.print_exc()
     
@@ -145,29 +160,63 @@ def build_teacher_context(teacher_id: int, db: Session) -> dict:
     if not MODELS_AVAILABLE:
         return context
     
-    # Get this teacher's subject IDs
+    # Get this teacher's subjects exactly like main.py
     try:
-        faculty_subjects = db.query(FacultySubject).filter(
-            FacultySubject.faculty_id == teacher_id
-        ).all()
+        from models import FacultySubject, Subject
+        assignments = (
+            db.query(FacultySubject, Subject)
+            .join(Subject, FacultySubject.subject_id == Subject.subject_id)
+            .filter(
+                FacultySubject.faculty_id == teacher_id,
+                FacultySubject.is_active == True
+            )
+            .all()
+        )
         
-        if not faculty_subjects:
-            return context
-        
-        subject_ids = [fs.subject_id for fs in faculty_subjects]
-        
-        # Subject names
-        try:
-            from models import Subject
-            subjects = db.query(Subject).filter(
-                Subject.id.in_(subject_ids)
-            ).all()
-            context["subjects"] = [
-                getattr(s, 'subject_name', getattr(s, 'name', 'Unknown')) 
-                for s in subjects
-            ]
-        except Exception:
-            pass
+        if not assignments:
+            # Fallback: get subjects from Attendance table
+            try:
+                from models import Attendance, Subject
+                teacher_attendances = db.query(
+                    Attendance.subject_id
+                ).filter(
+                    getattr(Attendance, 'faculty_id',
+                    getattr(Attendance, 'teacher_id',
+                    Attendance.subject_id)) == teacher_id
+                ).distinct().all()
+
+                subject_ids = [a[0] for a in teacher_attendances if a[0] is not None]
+
+                if subject_ids:
+                    subjects = db.query(Subject).filter(
+                        Subject.id.in_(subject_ids)
+                    ).all()
+                    context["subjects"] = [
+                        getattr(s, 'subject_name',
+                               getattr(s, 'name', 'Unknown'))
+                        for s in subjects
+                    ]
+                else:
+                    # Emergency fallback logic as requested
+                    context["subjects"] = ["Unable to load - check faculty mapping"]
+                    context["class_avg_attendance"] = "Data not available"
+                    context["at_risk_count"] = "Data not available"
+                    context["total_students"] = "Data not available"
+                    context["pending_submissions"] = "Data not available"
+                    context["note"] = "Faculty-subject mapping not found in database"
+                    return context
+            except Exception:
+                traceback.print_exc()
+                context["subjects"] = ["Unable to load - check faculty mapping"]
+                context["class_avg_attendance"] = "Data not available"
+                context["at_risk_count"] = "Data not available"
+                context["total_students"] = "Data not available"
+                context["pending_submissions"] = "Data not available"
+                context["note"] = "Faculty-subject mapping not found in database"
+                return context
+        else:    
+            subject_ids = [s.subject_id for fs, s in assignments]
+            context["subjects"] = [s.subject_name for fs, s in assignments]
         
         # Students in these subjects via attendance
         try:
@@ -215,10 +264,18 @@ def build_teacher_context(teacher_id: int, db: Session) -> dict:
         
         # Pending submissions
         try:
-            pending = db.query(AssignmentSubmission).filter(
-                AssignmentSubmission.status == "pending"
-            ).count()
-            context["pending_submissions"] = pending
+            from models import AssignmentSubmission, Assignment
+            # Find assignments for these subjects
+            assignment_ids = db.query(Assignment.id).filter(
+                Assignment.subject_id.in_(subject_ids)
+            ).all()
+            a_ids = [a[0] for a in assignment_ids]
+            if a_ids:
+                pending = db.query(AssignmentSubmission).filter(
+                    AssignmentSubmission.assignment_id.in_(a_ids),
+                    AssignmentSubmission.status == "pending"
+                ).count()
+                context["pending_submissions"] = pending
         except Exception:
             pass
             
@@ -226,6 +283,31 @@ def build_teacher_context(teacher_id: int, db: Session) -> dict:
         traceback.print_exc()
     
     return context
+
+from sqlalchemy.sql import func
+
+def count_at_risk_students(db):
+    try:
+        from models import Attendance
+        from sqlalchemy import Integer
+        # Count students where attendance < 75%
+        # using a direct aggregate query
+        subquery = db.query(
+            Attendance.student_id,
+            (func.sum(
+                func.cast(Attendance.status, Integer)
+            ) * 100.0 / func.count(Attendance.id)
+            ).label('att_pct')
+        ).group_by(Attendance.student_id).subquery()
+
+        at_risk = db.query(func.count()).filter(
+            subquery.c.att_pct < 75
+        ).scalar()
+
+        return int(at_risk) if at_risk else 0
+    except Exception:
+        traceback.print_exc()
+        return 0
 
 def build_admin_context(db: Session) -> dict:
     context = {
@@ -298,7 +380,7 @@ def build_admin_context(db: Session) -> dict:
                 # At-risk in dept (use attendance threshold)
                 at_risk_dept = 0
                 att_values = []
-                for sid in dept_student_ids[:20]:
+                for sid in dept_student_ids:
                     try:
                         t = db.query(Attendance).filter(
                             Attendance.student_id == sid
@@ -332,7 +414,7 @@ def build_admin_context(db: Session) -> dict:
         context["low_attendance_departments"] = low_att_depts
         
         # Total at-risk count
-        context["at_risk_count"] = sum(d["at_risk"] for d in breakdown)
+        context["at_risk_count"] = count_at_risk_students(db)
         
     except Exception:
         traceback.print_exc()
@@ -419,16 +501,33 @@ def get_student_marks_detail(student_id: int, db: Session) -> dict:
         for m in marks_records:
             try:
                 score = float(m.marks) if m.marks is not None else 0
-                out_of = float(m.total) if (hasattr(m, 'total') and m.total is not None) else 0
-                pct = safe_mark_percentage(score, out_of)
+                out_of = float(m.total) if (
+                    hasattr(m, 'total') and m.total
+                    and float(m.total) > 0
+                ) else 30
+                
+                pct = round((score / out_of) * 100, 1)
                 
                 subj_name = "Unknown"
                 if hasattr(m, 'subject') and m.subject:
                     subj_name = getattr(m.subject, 'subject_name',
                                getattr(m.subject, 'name', 'Unknown'))
                 
+                # Get exam type
+                exam_type = getattr(m, 'exam_type',
+                           getattr(m, 'exam_name',
+                           getattr(m, 'type',
+                           getattr(m, 'assessment_type', ''))))
+                
+                # Build label: "MACHINE LEARNING (Mid 1)"
+                label = subj_name
+                if exam_type:
+                    label = f"{subj_name} ({exam_type})"
+
                 subject_marks.append({
-                    "subject": subj_name,
+                    "subject": label,
+                    "raw_subject": subj_name,
+                    "exam_type": str(exam_type),
                     "score": score,
                     "out_of": out_of,
                     "pct": pct
@@ -447,16 +546,88 @@ def get_student_marks_detail(student_id: int, db: Session) -> dict:
 def get_student_assignments_detail(student_id: int, db: Session) -> dict:
     result = {"pending_assignments": 0, "submitted_assignments": 0}
     try:
-        pending = db.query(AssignmentSubmission).filter(
-            AssignmentSubmission.student_id == student_id,
-            AssignmentSubmission.status == "pending"
-        ).count()
-        submitted = db.query(AssignmentSubmission).filter(
-            AssignmentSubmission.student_id == student_id,
-            AssignmentSubmission.status == "submitted"
-        ).count()
-        result["pending_assignments"] = pending
-        result["submitted_assignments"] = submitted
+        student = db.query(Student).filter(Student.student_id == student_id).first()
+        if student:
+            assignments = db.query(Assignment).filter(
+                Assignment.year == student.year,
+                Assignment.section == student.section,
+                Assignment.is_active == True
+            ).all()
+            
+            submissions = db.query(AssignmentSubmission).filter(
+                AssignmentSubmission.student_id == student_id
+            ).all()
+            
+            submitted_ids = {s.assignment_id for s in submissions}
+            
+            pending_count = sum(1 for a in assignments if a.id not in submitted_ids)
+            
+            result["pending_assignments"] = pending_count
+            result["submitted_assignments"] = len(submissions)
+    except Exception:
+        traceback.print_exc()
+    return result
+
+def get_student_events(student_id: int, db: Session) -> dict:
+    result = {
+        "upcoming_events": [],
+        "registered_events": [],
+        "total_events": 0
+    }
+    try:
+        from models import Event, EventRegistration
+        # Get all upcoming events
+        all_events = db.query(Event).filter(Event.status == "upcoming").limit(10).all()
+        result["total_events"] = len(all_events)
+
+        for e in all_events:
+            event_name = getattr(e, 'title', getattr(e, 'event_name', getattr(e, 'name', 'Unknown Event')))
+            event_date = getattr(e, 'event_date', getattr(e, 'date', getattr(e, 'start_date', None)))
+            event_type = getattr(e, 'event_type', getattr(e, 'type', getattr(e, 'category', 'General')))
+
+            result["upcoming_events"].append({
+                "name": str(event_name),
+                "date": str(event_date) if event_date else "TBD",
+                "type": str(event_type)
+            })
+
+        # Check if student is registered for any events
+        try:
+            regs = db.query(EventRegistration).filter(EventRegistration.student_id == student_id).all()
+            result["registered_events"] = [
+                {"event_id": r.event_id, "status": getattr(r, 'status', 'registered')} 
+                for r in regs
+            ]
+        except Exception:
+            pass
+
+    except Exception:
+        traceback.print_exc()
+    return result
+
+def get_student_resources(student_id: int, db: Session) -> dict:
+    result = {
+        "recent_resources": [],
+        "total_resources": 0
+    }
+    try:
+        from models import Resource
+        resources = db.query(Resource).order_by(Resource.id.desc()).limit(10).all()
+        result["total_resources"] = len(resources)
+
+        for r in resources:
+            title = getattr(r, 'title', getattr(r, 'resource_name', getattr(r, 'name', 'Resource')))
+            subject = getattr(r, 'subject_name', getattr(r, 'subject', getattr(r, 'topic', 'General')))
+            rtype = getattr(r, 'type', getattr(r, 'resource_type', getattr(r, 'file_type', 'Document')))
+            uploaded = getattr(r, 'uploaded_at', getattr(r, 'created_at', getattr(r, 'date', None)))
+
+            result["recent_resources"].append({
+                "title": str(title),
+                "subject": str(subject),
+                "type": str(rtype),
+                "uploaded": str(uploaded) if uploaded else "Recent"
+            })
+
     except Exception:
         traceback.print_exc()
     return result

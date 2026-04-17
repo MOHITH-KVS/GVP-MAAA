@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import LocalLibraryIcon from "@mui/icons-material/LocalLibrary";
 import VisibilityIcon from "@mui/icons-material/Visibility";
@@ -22,8 +22,29 @@ export default function StudentSignUp() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [error, setError] = useState("");
   const [fieldErrors, setFieldErrors] = useState({});
+  const [validationErrors, setValidationErrors] = useState({});
+  const [touched, setTouched] = useState({
+    name: false,
+    roll: false,
+    password: false,
+    confirmPassword: false,
+  });
+  const [typingStarted, setTypingStarted] = useState({
+    name: false,
+    roll: false,
+    password: false,
+    confirmPassword: false,
+  });
   const [success, setSuccess] = useState("");
   const [loading, setLoading] = useState(false);
+  const nameRef = useRef(null);
+  const rollRef = useRef(null);
+  const passwordRef = useRef(null);
+  const confirmPasswordRef = useRef(null);
+
+  useEffect(() => {
+    nameRef.current?.focus();
+  }, []);
 
 
   /* ===== HANDLE INPUT CHANGE ===== */
@@ -60,15 +81,20 @@ export default function StudentSignUp() {
   const isValidCollegeEmail = (email) =>
     ALLOWED_DOMAINS.some((domain) => email.endsWith(domain));
 
-  /* ===== PASSWORD STRENGTH ===== */
-  const getPasswordStrength = (password) => {
-    if (password.length < 6) return "Weak";
-    if (/[0-9]/.test(password) && /[^A-Za-z0-9]/.test(password)) return "Strong";
-    return "Medium";
+  const getPasswordStrengthMeta = (password) => {
+    const checks = {
+      length: password.length >= 8,
+      uppercase: /[A-Z]/.test(password),
+      lowercase: /[a-z]/.test(password),
+      number: /[0-9]/.test(password),
+      special: /[^A-Za-z0-9]/.test(password),
+    };
+    const score = Object.values(checks).filter(Boolean).length;
+    const label = score <= 2 ? "Weak" : score <= 4 ? "Medium" : "Strong";
+    return { checks, score, label };
   };
 
-  const passwordStrength = getPasswordStrength(form.password);
-  const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+  const passwordStrengthMeta = getPasswordStrengthMeta(form.password);
 
   const isRollValid =
   form.roll.length > 0 && /^\d{10}$/.test(form.roll);
@@ -82,13 +108,114 @@ export default function StudentSignUp() {
 
   const isNameValid = form.name.trim().length > 0;
 
+  const validateField = (field, values) => {
+    if (field === "name") {
+      if (!values.name.trim()) return "Name cannot be empty";
+      return "";
+    }
+    if (field === "roll") {
+      if (!values.roll) return "Roll number is required";
+      if (!/^\d{10}$/.test(values.roll)) return "Roll number must be exactly 10 digits";
+      return "";
+    }
+    if (field === "password") {
+      if (!values.password) return "Password is required";
+      return "";
+    }
+    if (field === "confirmPassword") {
+      if (!values.confirmPassword) return "Please confirm your password";
+      if (values.password !== values.confirmPassword) return "Passwords do not match";
+      return "";
+    }
+    return "";
+  };
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setValidationErrors((prev) => {
+        const next = { ...prev };
+        const values = { ...form };
+        ["name", "roll", "password", "confirmPassword"].forEach((field) => {
+          const currentValue = values[field] || "";
+          const shouldValidate = touched[field] || (typingStarted[field] && currentValue.toString().trim().length > 1);
+          if (!shouldValidate) return;
+          const msg = validateField(field, values);
+          if (msg) next[field] = msg;
+          else delete next[field];
+        });
+        return next;
+      });
+    }, 350);
+
+    return () => clearTimeout(timer);
+  }, [form, touched, typingStarted]);
+
+  const handleBlur = (field) => {
+    const values = { ...form };
+    setTouched((prev) => ({ ...prev, [field]: true }));
+    const msg = validateField(field, values);
+    setValidationErrors((prev) => {
+      const next = { ...prev };
+      if (msg) next[field] = msg;
+      else delete next[field];
+      return next;
+    });
+  };
+
+  const clearFieldErrorIfValid = (field, nextForm) => {
+    if (validationErrors[field] && validateField(field, nextForm) === "") {
+      setValidationErrors((prev) => {
+        const next = { ...prev };
+        delete next[field];
+        return next;
+      });
+    }
+  };
+
+  const focusFirstInvalid = (errorsMap) => {
+    if (errorsMap.name) {
+      nameRef.current?.focus();
+      return;
+    }
+    if (errorsMap.roll) {
+      rollRef.current?.focus();
+      return;
+    }
+    if (errorsMap.password) {
+      passwordRef.current?.focus();
+      return;
+    }
+    if (errorsMap.confirmPassword) {
+      confirmPasswordRef.current?.focus();
+    }
+  };
+
   /* ===== SUBMIT ===== */
-  const handleSubmit = async () => {
+  const handleSubmit = async (e) => {
+  e.preventDefault();
   if (loading) return;   // 🚫 BLOCK double click
 
   setLoading(true);
   setError("");
   setSuccess("");
+
+  const clientErrors = {
+    name: validateField("name", form),
+    roll: validateField("roll", form),
+    password: validateField("password", form),
+    confirmPassword: validateField("confirmPassword", form),
+  };
+  const normalizedErrors = Object.fromEntries(
+    Object.entries(clientErrors).filter(([, value]) => value)
+  );
+  if (Object.keys(normalizedErrors).length > 0) {
+    setTouched({ name: true, roll: true, password: true, confirmPassword: true });
+    setValidationErrors(normalizedErrors);
+    setError(Object.values(normalizedErrors)[0]);
+    focusFirstInvalid(normalizedErrors);
+    setLoading(false);
+    return;
+  }
 
 
 
@@ -161,6 +288,13 @@ export default function StudentSignUp() {
  }
 };
 
+  const handleEnterToNext = (e, nextRef) => {
+    if (e.key !== "Enter") return;
+    if (!nextRef?.current) return;
+    e.preventDefault();
+    nextRef.current.focus();
+  };
+
   return (
     <div className="relative min-h-screen w-full flex items-center justify-center bg-slate-50 overflow-hidden">
 
@@ -186,18 +320,31 @@ export default function StudentSignUp() {
         </div>
 
         {/* FORM */}
-        <div className="space-y-3">
+        <form className="space-y-3" onSubmit={handleSubmit}>
 
-          <Input label="Full Name" name="name" value={form.name} onChange={handleChange} />
+          <Input
+            label="Full Name"
+            name="name"
+            value={form.name}
+            onChange={(e) => {
+              setTypingStarted((prev) => ({ ...prev, name: true }));
+              handleChange(e);
+              const nextForm = { ...form, name: e.target.value.replace(/[^A-Za-z\s]/g, "") };
+              clearFieldErrorIfValid("name", nextForm);
+            }}
+            onBlur={() => handleBlur("name")}
+            inputRef={nameRef}
+            onKeyDown={(e) => handleEnterToNext(e, rollRef)}
+          />
           {fieldErrors.name && (
             <p className="text-sm text-red-600">
               {fieldErrors.name}
             </p>
           )}
 
-          {!isNameValid && (
+          {validationErrors.name && (
             <p className="text-sm text-red-600">
-              Name cannot be empty
+              {validationErrors.name}
             </p>
           )}
 
@@ -205,7 +352,20 @@ export default function StudentSignUp() {
               label="Roll Number"
               name="roll"
               value={form.roll}
-              onChange={handleChange}
+              onChange={(e) => {
+                setTypingStarted((prev) => ({ ...prev, roll: true }));
+                handleChange(e);
+                const cleanRoll = e.target.value.replace(/\D/g, "").slice(0, 10);
+                const nextForm = {
+                  ...form,
+                  roll: cleanRoll,
+                  email: cleanRoll ? `${cleanRoll}@gvpcdpgc.edu.in` : "",
+                };
+                clearFieldErrorIfValid("roll", nextForm);
+              }}
+              onBlur={() => handleBlur("roll")}
+              inputRef={rollRef}
+              onKeyDown={(e) => handleEnterToNext(e, passwordRef)}
             />
             {fieldErrors.roll_no && (
               <p className="text-sm text-red-600">
@@ -214,14 +374,14 @@ export default function StudentSignUp() {
             )}
 
             {/* 🔴 LIVE ROLL VALIDATION MESSAGE */}
-            {form.roll && (
+            {(validationErrors.roll || (touched.roll && form.roll)) && (
               isRollValid ? (
                 <p className="text-sm text-emerald-600">
                   ✔ Valid roll number
                 </p>
               ) : (
                 <p className="text-sm text-red-600">
-                  Roll number must be exactly 10 digits
+                  {validationErrors.roll || "Roll number must be exactly 10 digits"}
                 </p>
               )
           )}
@@ -245,7 +405,19 @@ export default function StudentSignUp() {
               name="password"
               type={showPassword ? "text" : "password"}
               value={form.password}
-              onChange={handleChange}
+              onChange={(e) => {
+                setTypingStarted((prev) => ({ ...prev, password: true }));
+                handleChange(e);
+                const nextForm = { ...form, password: e.target.value };
+                clearFieldErrorIfValid("password", nextForm);
+                clearFieldErrorIfValid("confirmPassword", {
+                  ...nextForm,
+                  confirmPassword: form.confirmPassword,
+                });
+              }}
+              onBlur={() => handleBlur("password")}
+              inputRef={passwordRef}
+              onKeyDown={(e) => handleEnterToNext(e, confirmPasswordRef)}
             />
             <button
               type="button"
@@ -258,17 +430,36 @@ export default function StudentSignUp() {
 
           {/* PASSWORD STRENGTH */}
           {form.password && (
-            <p
-              className={`text-sm font-medium ${
-                passwordStrength === "Strong"
-                  ? "text-emerald-600"
-                  : passwordStrength === "Medium"
-                  ? "text-amber-600"
-                  : "text-red-600"
-              }`}
-            >
-              Password Strength: {passwordStrength}
-            </p>
+            <div className="space-y-2">
+              <div className="flex gap-1">
+                {[1, 2, 3].map((step) => {
+                  const level = passwordStrengthMeta.score <= 2 ? 1 : passwordStrengthMeta.score <= 4 ? 2 : 3;
+                  const active = step <= level;
+                  const color = passwordStrengthMeta.label === "Strong"
+                    ? "bg-emerald-500"
+                    : passwordStrengthMeta.label === "Medium"
+                    ? "bg-amber-500"
+                    : "bg-red-500";
+                  return (
+                    <div
+                      key={step}
+                      className={`h-2 flex-1 rounded-full ${active ? color : "bg-slate-200"}`}
+                    />
+                  );
+                })}
+              </div>
+              <p
+                className={`text-sm font-medium ${
+                  passwordStrengthMeta.label === "Strong"
+                    ? "text-emerald-600"
+                    : passwordStrengthMeta.label === "Medium"
+                    ? "text-amber-600"
+                    : "text-red-600"
+                }`}
+              >
+                Password Strength: {passwordStrengthMeta.label}
+              </p>
+            </div>
           )}
 
           {/* CONFIRM PASSWORD */}
@@ -278,7 +469,14 @@ export default function StudentSignUp() {
               name="confirmPassword"
               type={showConfirmPassword ? "text" : "password"}
               value={form.confirmPassword}
-              onChange={handleChange}
+              onChange={(e) => {
+                setTypingStarted((prev) => ({ ...prev, confirmPassword: true }));
+                handleChange(e);
+                const nextForm = { ...form, confirmPassword: e.target.value };
+                clearFieldErrorIfValid("confirmPassword", nextForm);
+              }}
+              onBlur={() => handleBlur("confirmPassword")}
+              inputRef={confirmPasswordRef}
             />
             <button
               type="button"
@@ -296,7 +494,7 @@ export default function StudentSignUp() {
               </p>
             ) : (
               <p className="text-sm text-red-600">
-                Passwords do not match
+                  {validationErrors.confirmPassword || "Passwords do not match"}
               </p>
             )
           )}
@@ -339,7 +537,7 @@ export default function StudentSignUp() {
           )}
 
         <button
-            onClick={handleSubmit}
+          type="submit"
              disabled={loading || !isPasswordMatch || !isRollValid || !isNameValid}
             className={`w-full py-2.5 mt-2 rounded-xl text-white font-medium
               transition flex items-center justify-center gap-2
@@ -360,7 +558,7 @@ export default function StudentSignUp() {
             )}
         </button>
 
-        </div>
+        </form>
 
         {/* SIGN IN LINK */}
         <p className="text-sm text-center text-slate-500 mt-4">
@@ -381,14 +579,16 @@ export default function StudentSignUp() {
 
 /* ================= HELPERS ================= */
 
-function Input({ label, name, value, onChange, type = "text" , disabled }) {
+function Input({ label, name, value, onChange, type = "text" , disabled, inputRef, onKeyDown }) {
   return (
     <div>
       <label className="block text-sm text-slate-600 mb-1">{label}</label>
       <input
+        ref={inputRef}
         name={name}
         value={value}
         onChange={onChange}
+        onKeyDown={onKeyDown}
         type={type}
         disabled={disabled}
         className={`w-full px-4 py-2.5 rounded-xl border
