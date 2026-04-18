@@ -66,32 +66,16 @@ async def chat_message(
 
         history = normalize_history(request.history or [])
 
-        # ── STEP 1: RETRIEVE — query the database ─────────────────
+        # ── Run LangGraph RAG pipeline ──────────────────────────
         role_lower = str(role).lower()
         try:
-            from rag.retriever import (
-                retrieve_student_data,
-                retrieve_teacher_data,
-                retrieve_admin_data
-            )
-            if role_lower == "student":
-                retrieved = retrieve_student_data(int(user_id), db)
-            elif role_lower in ("teacher", "faculty"):
-                retrieved = retrieve_teacher_data(int(user_id), db)
-            else:
-                retrieved = retrieve_admin_data(db)
-        except Exception:
-            traceback.print_exc()
-            retrieved = {}
-
-        # ── STEP 2: GENERATE — call Gemini with retrieved context ──
-        try:
-            from rag.generator import generate_answer
-            reply = generate_answer(
+            from rag.graph_pipeline import run_rag_pipeline
+            reply = run_rag_pipeline(
+                user_id=int(user_id),
                 role=role_lower,
-                retrieved_data=retrieved,
-                user_question=request.message,
-                conversation_history=history
+                question=request.message,
+                history=history[-6:],
+                db=db,
             )
         except Exception:
             traceback.print_exc()

@@ -419,16 +419,101 @@ def retrieve_teacher_data(teacher_id: int, db: Session) -> dict:
         except Exception:
             traceback.print_exc()
 
-        # ── PENDING SUBMISSIONS ───────────────────────────────────
+        # ── PENDING SUBMISSIONS (per assignment) ──────────────────
         try:
-            pending = db.query(
-                func.count(AssignmentSubmission.id)
-            ).filter(
-                AssignmentSubmission.is_submitted == False
-            ).scalar() or 0
-            data["assignments"] = {"pending_submissions": pending}
+            from models import Assignment, AssignmentSubmission, FacultySubject, Student as St
+
+            # Get teacher's subject IDs
+            subject_ids_for_assignments = []
+            try:
+                fs_records = db.query(FacultySubject).filter(
+                    FacultySubject.faculty_id == actual_faculty_id
+                ).all()
+                subject_ids_for_assignments = [fs.subject_id for fs in fs_records]
+            except Exception:
+                pass
+
+            total_pending = 0
+            assignment_details = []
+
+            if subject_ids_for_assignments:
+                active_assignments = db.query(Assignment).filter(
+                    Assignment.subject_id.in_(subject_ids_for_assignments),
+                    Assignment.is_active == True
+                ).all()
+            else:
+                active_assignments = db.query(Assignment).filter(
+                    Assignment.is_active == True
+                ).all()
+
+            for assg in active_assignments:
+                try:
+                    # Count students in this class
+                    student_count = db.query(St).filter(
+                        St.year == assg.year,
+                        St.section == assg.section,
+                        St.is_deleted == False
+                    ).count()
+
+                    # Count actual submissions for this assignment
+                    submitted_count = db.query(AssignmentSubmission).filter(
+                        AssignmentSubmission.assignment_id == assg.id
+                    ).count()
+
+                    pending = max(0, student_count - submitted_count)
+                    if pending > 0:
+                        total_pending += pending
+                        assignment_details.append({
+                            "title": str(assg.title),
+                            "year": assg.year,
+                            "section": assg.section,
+                            "pending": pending,
+                            "submitted": submitted_count,
+                            "total_students": student_count,
+                            "due_date": str(assg.due_date) if assg.due_date else "No deadline"
+                        })
+                except Exception:
+                    continue
+
+            data["assignments"] = {
+                "pending_submissions": total_pending,
+                "assignment_details": assignment_details[:10]
+            }
+            print(f"[RETRIEVER] Teacher: {len(active_assignments)} assignments, {total_pending} pending")
         except Exception:
-            pass
+            traceback.print_exc()
+
+        # ── RESOURCES UPLOADED BY THIS TEACHER ────────────────────
+        try:
+            from models import Resource, Subject as SubjR
+            res_rows = db.query(Resource).filter(
+                Resource.faculty_id == actual_faculty_id
+            ).order_by(Resource.id.desc()).limit(10).all()
+
+            res_list = []
+            for r in res_rows:
+                subj_name = "General"
+                if r.subject_id:
+                    try:
+                        subj = db.query(SubjR).filter(
+                            SubjR.subject_id == r.subject_id
+                        ).first()
+                        if subj and subj.subject_name:
+                            subj_name = subj.subject_name
+                    except Exception:
+                        pass
+                res_list.append({
+                    "title":    r.title or "Resource",
+                    "subject":  subj_name,
+                    "type":     getattr(r, 'type', 'Document') or 'Document',
+                    "uploaded": str(r.created_at or 'Recent'),
+                })
+
+            data["resources"] = res_list
+            print(f"[RETRIEVER] Teacher resources: {len(res_list)}")
+        except Exception:
+            traceback.print_exc()
+
 
     except Exception:
         traceback.print_exc()
@@ -446,7 +531,7 @@ def retrieve_admin_data(db: Session) -> dict:
     }
 
     try:
-        from models import Student, Faculty, Attendance, Department
+        from models import Student, Faculty, Attendance, Department, User
         from models import Alert, PlacementDrive
 
         # ── INSTITUTION TOTALS ────────────────────────────────────
@@ -476,69 +561,136 @@ def retrieve_admin_data(db: Session) -> dict:
         except Exception:
             traceback.print_exc()
 
-        # ── DEPARTMENT BREAKDOWN ──────────────────────────────────
+        # ── DEPARTMENT BREAKDOWN ────────────────────────────────
         try:
-            departments    = db.query(Department).all()
-            dept_breakdown = []
+            departments = db.query(Department).all()
+            print(f"[RETRIEVER] Departments found: {len(departments)}")
 
-            for dept in departments:
-                dept_name = getattr(dept, 'name', 'Unknown')
-                dept_id   = dept.id
+            dept_list = []
+            for dept in departments[:20]:
+                try:
+                    # Get primary key — try multiple common names
+                    dept_id = (
+                        getattr(dept, 'department_id', None) or
+                        getattr(dept, 'dept_id', None) or
+                        getattr(dept, 'id', None)
+                    )
+                    dept_name = (
+                        getattr(dept, 'name', None) or
+                        getattr(dept, 'department_name', None) or
+                        getattr(dept, 'dept_name', None) or
+                        'Unknown'
+                    )
 
-                dept_students = db.query(Student).filter(
-                    Student.department_id == dept_id,
-                    Student.is_deleted == False
-                ).all()
-                student_ids = [s.student_id for s in dept_students]
+                    print(f"[RETRIEVER] Dept: id={dept_id} name={dept_name}")
 
-                if not student_ids:
-                    continue
-
-                d_total = db.query(func.count(Attendance.attendance_id)).filter(
-                    Attendance.student_id.in_(student_ids)
-                ).scalar() or 0
-
-                d_present = db.query(func.count(Attendance.attendance_id)).filter(
-                    Attendance.student_id.in_(student_ids),
-                    Attendance.status == True
-                ).scalar() or 0
-
-                d_att = round(
-                    (d_present / d_total) * 100, 1
-                ) if d_total > 0 else 0
-
-                # At-risk in this dept (sample first 30)
-                at_risk = 0
-                for sid in student_ids[:30]:
-                    try:
-                        t = db.query(func.count(Attendance.attendance_id)).filter(
-                            Attendance.student_id == sid
-                        ).scalar() or 0
-                        p = db.query(func.count(Attendance.attendance_id)).filter(
-                            Attendance.student_id == sid,
-                            Attendance.status == True
-                        ).scalar() or 0
-                        if t > 0 and (p / t * 100) < 75:
-                            at_risk += 1
-                    except Exception:
+                    if not dept_id:
                         continue
 
-                dept_breakdown.append({
-                    "department":           dept_name,
-                    "total_students":       len(student_ids),
-                    "attendance_percentage": d_att,
-                    "at_risk_count":        at_risk,
-                    "status": "Good" if d_att >= 75 else "LOW ATTENDANCE"
-                })
+                    student_dept_col = getattr(Student, 'department_id', None)
+
+                    if student_dept_col is not None:
+                        total_students = db.query(Student).filter(
+                            student_dept_col == dept_id,
+                            Student.is_deleted == False
+                        ).count()
+
+                        dept_student_ids = [
+                            s.student_id for s in db.query(Student).filter(
+                                student_dept_col == dept_id,
+                                Student.is_deleted == False
+                            ).limit(100).all()
+                        ]
+                    else:
+                        # Fallback for schemas where department is on users table.
+                        total_students = db.query(func.count(Student.student_id)).join(
+                            User, User.user_id == Student.student_id
+                        ).filter(
+                            User.department_id == dept_id,
+                            Student.is_deleted == False,
+                            User.is_deleted == False
+                        ).scalar() or 0
+
+                        dept_student_ids = [
+                            r[0] for r in db.query(Student.student_id).join(
+                                User, User.user_id == Student.student_id
+                            ).filter(
+                                User.department_id == dept_id,
+                                Student.is_deleted == False,
+                                User.is_deleted == False
+                            ).limit(100).all()
+                        ]
+
+                    if total_students == 0:
+                        continue
+
+                    total_att = db.query(
+                        func.count(Attendance.attendance_id)
+                    ).filter(
+                        Attendance.student_id.in_(dept_student_ids)
+                    ).scalar() or 0
+
+                    present_att = db.query(
+                        func.count(Attendance.attendance_id)
+                    ).filter(
+                        Attendance.student_id.in_(dept_student_ids),
+                        Attendance.status == True
+                    ).scalar() or 0
+
+                    att_pct = round(
+                        (present_att / total_att) * 100, 1
+                    ) if total_att > 0 else 0
+
+                    at_risk = 0
+                    for sid in dept_student_ids[:50]:
+                        try:
+                            t = db.query(
+                                func.count(Attendance.attendance_id)
+                            ).filter(
+                                Attendance.student_id == sid
+                            ).scalar() or 0
+                            p = db.query(
+                                func.count(Attendance.attendance_id)
+                            ).filter(
+                                Attendance.student_id == sid,
+                                Attendance.status == True
+                            ).scalar() or 0
+                            if t > 0 and (p / t * 100) < 75:
+                                at_risk += 1
+                        except Exception:
+                            continue
+
+                    dept_list.append({
+                        "department": dept_name,
+                        "attendance_percentage": att_pct,
+                        "at_risk_count": at_risk,
+                        "total_students": total_students,
+                        "status": "Good" if att_pct >= 75 else "LOW ATTENDANCE"
+                    })
+
+                    print(
+                        f"[RETRIEVER] {dept_name}: {att_pct}% att, "
+                        f"{at_risk} at-risk, {total_students} students"
+                    )
+
+                except Exception as dept_err:
+                    print(f"[RETRIEVER] Dept error: {dept_err}")
+                    continue
 
             data["departments"] = sorted(
-                dept_breakdown,
+                dept_list,
                 key=lambda x: x["attendance_percentage"]
             )
             data["institution"]["at_risk_count"] = sum(
-                d["at_risk_count"] for d in dept_breakdown
+                d["at_risk_count"] for d in dept_list
             )
-        except Exception:
+            print(
+                f"[RETRIEVER] Admin dept summary: "
+                f"{len(dept_list)} departments loaded"
+            )
+
+        except Exception as e:
+            print(f"[RETRIEVER] Department section failed: {e}")
             traceback.print_exc()
 
         # ── ALERTS ───────────────────────────────────────────────

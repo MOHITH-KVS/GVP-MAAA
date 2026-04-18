@@ -14,6 +14,8 @@ python-dotenv==1.0.0
 passlib==1.7.4
 bcrypt>=4.1.0
 langgraph
+langchain
 langchain-core
 langchain-community
+langchain-google-genai
 google-genai

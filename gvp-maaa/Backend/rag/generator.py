@@ -3,7 +3,7 @@ rag/generator.py  —  G in RAG
 Takes retrieved DB data, formats it as context, calls Gemini.
 
 SDK: google.genai (new SDK)
-Fallback: 3 API keys × 5 models — cycles until one works.
+Fallback: 3 API keys × 4 models — cycles until one works.
 """
 import os
 import traceback
@@ -12,143 +12,140 @@ from dotenv import load_dotenv
 
 load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env", override=True)
 
-# ── All API keys (primary + backups) ────────────────────────────
-ALL_API_KEYS = [
+# ── ALL KEYS ─────────────────────────────────────────────────────
+ALL_KEYS = [
     k.strip() for k in [
         os.environ.get("GEMINI_API_KEY",   ""),
         os.environ.get("GEMINI_API_KEY_2", ""),
         os.environ.get("GEMINI_API_KEY_3", ""),
-    ] if k.strip().startswith("AIzaSy")
+    ] if k and len(k.strip()) > 20
 ]
 
-# ── Models in fallback order ─────────────────────────────────
+print(f"[GENERATOR] Found {len(ALL_KEYS)} API key(s)")
+
 FALLBACK_MODELS = [
-    "gemini-2.0-flash-lite",
-    "gemini-1.5-flash-8b",
-    "gemini-1.5-flash",
-    "gemini-2.0-flash",
+    # Prioritize models confirmed working by check_gemini_keys.py.
+    "gemini-flash-latest",
     "gemini-2.5-flash",
+    "gemini-flash-lite-latest",
+    "gemini-2.0-flash-lite",
+    "gemini-2.0-flash",
 ]
 
 GEMINI_AVAILABLE = False
 GEMINI_CLIENT    = None
 GEMINI_MODEL     = None
+ACTIVE_KEY_INDEX = 0
+KEY_MODEL_CACHE  = {}
 
-print(f"[GENERATOR] API keys found: {len(ALL_API_KEYS)}")
+def try_connect():
+    global GEMINI_CLIENT, GEMINI_MODEL, GEMINI_AVAILABLE, ACTIVE_KEY_INDEX, KEY_MODEL_CACHE
+    try:
+        from google import genai as _genai
+    except ImportError:
+        print("[GENERATOR] google-genai not installed")
+        return False
 
-try:
-    from google import genai as _genai_sdk
-
-    # Try every key × every model until one succeeds
-    _found = False
-    for _key in ALL_API_KEYS:
-        if _found:
-            break
-        try:
-            _client = _genai_sdk.Client(api_key=_key)
-        except Exception as _ce:
-            print(f"[GENERATOR] Client init failed for key ...{_key[-6:]}: {_ce}")
-            continue
-
-        for _model in FALLBACK_MODELS:
+    for key_idx, key in enumerate(ALL_KEYS):
+        for model in FALLBACK_MODELS:
             try:
-                _r = _client.models.generate_content(
-                    model=_model, contents="Say OK"
+                client = _genai.Client(api_key=key)
+                test = client.models.generate_content(
+                    model=model,
+                    contents="Say OK"
                 )
-                if _r and _r.text:
-                    GEMINI_CLIENT    = _client
-                    GEMINI_MODEL     = _model
+                if test and test.text:
+                    GEMINI_CLIENT    = client
+                    GEMINI_MODEL     = model
+                    ACTIVE_KEY_INDEX = key_idx
                     GEMINI_AVAILABLE = True
-                    print(f"[GENERATOR] Gemini ready: {_model} (key ...{_key[-6:]})")
-                    _found = True
-                    break
-            except Exception as _me:
-                err = str(_me)
-                if "429" in err or "quota" in err.lower() or "exhausted" in err.lower():
-                    print(f"[GENERATOR] {_model}/key-{_key[-4:]} quota hit, trying next...")
+                    KEY_MODEL_CACHE[key_idx] = model
+                    print(f"[GENERATOR] Connected: key {key_idx+1}, model {model}")
+                    return True
+            except Exception as e:
+                err = str(e)
+                if "429" in err or "quota" in err.lower():
+                    print(f"[GENERATOR] Key {key_idx+1} {model}: quota exhausted")
+                    continue
                 elif "404" in err or "not found" in err.lower():
-                    pass  # model not available in region
+                    print(f"[GENERATOR] Key {key_idx+1} {model}: model not available")
+                    continue
                 else:
-                    print(f"[GENERATOR] {_model} error: {err[:70]}")
-                continue
+                    print(f"[GENERATOR] Key {key_idx+1} {model}: {err[:50]}")
+                    continue
+    return False
 
-    if not GEMINI_AVAILABLE:
-        print("[GENERATOR] All keys/models exhausted — using rule-based fallback")
+# Initial connection attempt
+try_connect()
 
-except ImportError:
-    print("[GENERATOR] google-genai not installed: pip install google-genai")
-except Exception as _e:
-    print(f"[GENERATOR] Setup error: {_e}")
-
-
-# ── Core Gemini caller with per-call fallback ──────────────────────
 
 def call_gemini(prompt: str) -> str:
     """
-    Try active model first, then all other models/keys on 429.
-    Returns the text response or None if all fail.
+    Calls Gemini with automatic failover across all keys and models.
+    Updates global state (GEMINI_CLIENT, GEMINI_MODEL) on successful switch.
     """
-    global GEMINI_CLIENT, GEMINI_MODEL, GEMINI_AVAILABLE
+    global GEMINI_CLIENT, GEMINI_MODEL, GEMINI_AVAILABLE, ACTIVE_KEY_INDEX, ALL_KEYS, KEY_MODEL_CACHE
 
-    if not GEMINI_CLIENT:
+    print(
+        f"[GEMINI_CALL] client={GEMINI_CLIENT is not None} "
+        f"model={GEMINI_MODEL} "
+        f"keys={len(ALL_KEYS)}"
+    )
+
+    if not ALL_KEYS:
+        print("[GEMINI_CALL] No keys available")
         return None
 
-    # Build try-list: active model first, then remaining fallbacks
-    models_to_try = [GEMINI_MODEL] + [
-        m for m in FALLBACK_MODELS if m != GEMINI_MODEL
-    ]
-
-    for model in models_to_try:
-        if not model:
-            continue
-        try:
-            response = GEMINI_CLIENT.models.generate_content(
-                model=model,
-                contents=prompt,
-                config={"temperature": 0.1, "max_output_tokens": 350}
-            )
-            if response and response.text and len(response.text.strip()) > 5:
-                if model != GEMINI_MODEL:
-                    print(f"[GENERATOR] Switched to model: {model}")
-                    GEMINI_MODEL = model
-                return response.text.strip()
-        except Exception as e:
-            err = str(e)
-            if "429" in err or "quota" in err.lower():
-                print(f"[GENERATOR] {model} quota hit, trying next...")
-                continue
-            else:
-                print(f"[GENERATOR] {model} error: {err[:80]}")
-                continue
-
-    # All models on current key failed: try backup keys
     try:
-        from google import genai as _sdk
-        for _key in ALL_API_KEYS:
-            if GEMINI_CLIENT and _key == getattr(GEMINI_CLIENT, '_api_key', None):
-                continue  # skip current key
-            try:
-                _backup = _sdk.Client(api_key=_key)
-                for model in FALLBACK_MODELS:
-                    try:
-                        response = _backup.models.generate_content(
-                            model=model, contents=prompt,
-                            config={"temperature": 0.1, "max_output_tokens": 350}
-                        )
-                        if response and response.text and len(response.text.strip()) > 5:
-                            print(f"[GENERATOR] Failover: key ...{_key[-4:]} / {model}")
-                            GEMINI_CLIENT = _backup
-                            GEMINI_MODEL  = model
-                            GEMINI_AVAILABLE = True
-                            return response.text.strip()
-                    except Exception:
-                        continue
-            except Exception:
-                continue
-    except Exception:
-        pass
+        from google import genai as _genai
+    except ImportError:
+        return None
 
-    print("[GENERATOR] All keys/models exhausted — using fallback response")
+    for key_idx, key in enumerate(ALL_KEYS):
+        preferred_models = []
+        cached_model = KEY_MODEL_CACHE.get(key_idx)
+        if cached_model:
+            preferred_models.append(cached_model)
+        preferred_models.extend([m for m in FALLBACK_MODELS if m != cached_model])
+
+        for model in preferred_models:
+            try:
+                print(f"[GEMINI_CALL] Trying key {key_idx+1} model {model}")
+                client = _genai.Client(api_key=key)
+                response = client.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                    config={
+                        "temperature": 0.1,
+                        "max_output_tokens": 300
+                    }
+                )
+                print(f"[GEMINI_CALL] Response: {str(response)[:100]}")
+
+                if response and response.text:
+                    text = response.text.strip()
+                    print(f"[GEMINI_CALL] SUCCESS: {text[:80]}")
+
+                    # Update global pointer if we switched
+                    if key_idx != ACTIVE_KEY_INDEX or model != GEMINI_MODEL:
+                        print(f"[GENERATOR] Failover to key {key_idx+1}, model {model}")
+                        ACTIVE_KEY_INDEX = key_idx
+                        GEMINI_MODEL     = model
+                        GEMINI_CLIENT    = client
+                        GEMINI_AVAILABLE = True
+                    KEY_MODEL_CACHE[key_idx] = model
+                    return text
+                else:
+                    print("[GEMINI_CALL] Empty response.text")
+            except Exception as e:
+                err = str(e)
+                print(f"[GEMINI_CALL] Error key {key_idx+1} {model}: {err[:100]}")
+                if "429" in err or "quota" in err.lower():
+                    continue
+                else:
+                    continue
+
+    print("[GEMINI_CALL] All attempts failed")
     GEMINI_AVAILABLE = False
     return None
 
@@ -277,11 +274,31 @@ def format_data_for_gemini(data: dict, role: str) -> str:
             )
 
         assg = data.get("assignments", {})
-        if assg:
-            lines.append(
-                f"\nASSIGNMENTS:\n"
-                f"Pending submissions: {assg.get('pending_submissions', 0)}"
-            )
+        pending_total = assg.get("pending_submissions", 0)
+        details = assg.get("assignment_details", [])
+
+        lines.append(f"\nASSIGNMENTS:")
+        lines.append(f"Total pending submissions: {pending_total}")
+
+        if details:
+            lines.append("Breakdown by assignment:")
+            for d in details:
+                lines.append(
+                    f"  - {d['title']} (Year {d.get('year','?')} "
+                    f"Sec {d.get('section','?')}): "
+                    f"{d['pending']} students pending, "
+                    f"{d['submitted']} submitted"
+                )
+
+        resources = data.get("resources", [])
+        if resources:
+            lines.append(f"\nRESOURCES YOU UPLOADED ({len(resources)}):")
+            for r in resources:
+                lines.append(
+                    f"  - {r['title']} [{r['subject']}] ({r['type']})"
+                )
+        else:
+            lines.append("\nRESOURCES: None uploaded yet")
 
     else:  # admin
         inst = data.get("institution", {})
@@ -322,9 +339,29 @@ def generate_answer(
 ) -> str:
     """
     Core RAG generation: formats context → builds prompt → calls Gemini.
-    Falls back to deterministic answer if Gemini unavailable.
+    Analytical / complex queries are first routed to the LangChain chain;
+    simple queries go directly to Gemini; rule-based fallback if all fail.
     """
     try:
+        # ── 1. Try LangChain for analytical/complex queries ────────────
+        try:
+            from rag.analytical_chain import (
+                is_analytical_query,
+                run_analytical_chain,
+            )
+            print(f"[GENERATOR] Answering: {user_question[:50]}")
+            if is_analytical_query(user_question):
+                print("[GENERATOR] Routing to analytical chain")
+                chain_answer = run_analytical_chain(
+                    role, retrieved_data, user_question
+                )
+                if chain_answer and len(chain_answer) > 10:
+                    return chain_answer
+                print("[GENERATOR] Chain returned nothing — falling through to Gemini")
+        except Exception as _ce:
+            print(f"[GENERATOR] Chain import/run error: {_ce}")
+
+        # ── 2. Direct Gemini for simple queries ────────────────────────
         context = format_data_for_gemini(retrieved_data, role)
 
         history_text = ""
@@ -398,7 +435,7 @@ ANSWER:"""
         answer = call_gemini(prompt)
 
         if answer:
-            print(f"[GENERATOR] Gemini replied: {answer[:80]}")
+            print(f"[GENERATOR] Gemini LIVE — replied: {answer[:80]}")
             return answer
 
         print("[GENERATOR] No Gemini response, using fallback")
