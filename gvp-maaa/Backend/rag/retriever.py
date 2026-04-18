@@ -8,6 +8,14 @@ from sqlalchemy import func
 import traceback
 
 
+def _safe_rollback(db: Session) -> None:
+    """Roll back only when the session is in a failed transaction state."""
+    try:
+        db.rollback()
+    except Exception:
+        pass
+
+
 def retrieve_student_data(student_id: int, db: Session) -> dict:
     """Retrieves ALL data for a student in one call."""
     data = {
@@ -615,27 +623,47 @@ def retrieve_admin_data(db: Session) -> dict:
             }
         except Exception:
             traceback.print_exc()
+            _safe_rollback(db)
 
         # ── DEPARTMENT BREAKDOWN ────────────────────────────────
         try:
-            departments = db.query(Department).all()
+            departments = []
+            try:
+                departments = db.query(Department).all()
+            except Exception:
+                # Some DB variants have departments table columns that do not
+                # match ORM (e.g., no "id"). Fallback to users.department_id.
+                _safe_rollback(db)
+                dept_ids = [
+                    r[0] for r in db.query(User.department_id).distinct().all()
+                    if r[0] is not None
+                ]
+                departments = [
+                    {"_fallback_id": did, "_fallback_name": f"Department_{did}"}
+                    for did in dept_ids
+                ]
+
             print(f"[RETRIEVER] Departments found: {len(departments)}")
 
             dept_list = []
             for dept in departments[:20]:
                 try:
                     # Get primary key — try multiple common names
-                    dept_id = (
-                        getattr(dept, 'department_id', None) or
-                        getattr(dept, 'dept_id', None) or
-                        getattr(dept, 'id', None)
-                    )
-                    dept_name = (
-                        getattr(dept, 'name', None) or
-                        getattr(dept, 'department_name', None) or
-                        getattr(dept, 'dept_name', None) or
-                        'Unknown'
-                    )
+                    if isinstance(dept, dict):
+                        dept_id = dept.get("_fallback_id")
+                        dept_name = dept.get("_fallback_name", "Unknown")
+                    else:
+                        dept_id = (
+                            getattr(dept, 'department_id', None) or
+                            getattr(dept, 'dept_id', None) or
+                            getattr(dept, 'id', None)
+                        )
+                        dept_name = (
+                            getattr(dept, 'name', None) or
+                            getattr(dept, 'department_name', None) or
+                            getattr(dept, 'dept_name', None) or
+                            'Unknown'
+                        )
 
                     print(f"[RETRIEVER] Dept: id={dept_id} name={dept_name}")
 
@@ -730,6 +758,7 @@ def retrieve_admin_data(db: Session) -> dict:
 
                 except Exception as dept_err:
                     print(f"[RETRIEVER] Dept error: {dept_err}")
+                    _safe_rollback(db)
                     continue
 
             data["departments"] = sorted(
@@ -747,12 +776,14 @@ def retrieve_admin_data(db: Session) -> dict:
         except Exception as e:
             print(f"[RETRIEVER] Department section failed: {e}")
             traceback.print_exc()
+            _safe_rollback(db)
 
         # ── ALERTS ───────────────────────────────────────────────
         try:
             alert_count = db.query(func.count(Alert.id)).scalar() or 0
             data["alerts"] = {"total_active": alert_count}
         except Exception:
+            _safe_rollback(db)
             pass
 
         # ── PLACEMENT ────────────────────────────────────────────
@@ -762,9 +793,11 @@ def retrieve_admin_data(db: Session) -> dict:
             ).count()
             data["placement"] = {"open_drives": open_drives}
         except Exception:
+            _safe_rollback(db)
             pass
 
     except Exception:
         traceback.print_exc()
+        _safe_rollback(db)
 
     return data

@@ -466,6 +466,11 @@ ANSWER:"""
 
 def build_fallback(role: str, data: dict, question: str) -> str:
     """Honest, data-driven fallback when Gemini is unavailable."""
+    notice = "Live AI response is temporarily unavailable. Showing verified dashboard data."
+
+    def with_notice(body: str) -> str:
+        return f"{notice}\n{body}"
+
     q = question.lower()
     try:
         if role == "student":
@@ -481,27 +486,29 @@ def build_fallback(role: str, data: dict, question: str) -> str:
                     if low:
                         names = ", ".join(s["subject_name"] for s in low[:3])
                         reply += f" Subjects below 75%: {names}."
-                return reply
+                return with_notice(reply)
 
             if any(w in q for w in ["mark", "score", "mid", "exam", "result", "cgpa", "sgpa"]):
                 marks = data.get("marks", [])
                 if not marks:
-                    return "No marks data found in the system."
+                    return with_notice("No marks data found in the system.")
                 lines = [
                     f"{m['subject']}: {m['score']}/{m['total']} ({m['percentage']}%)"
                     for m in marks[:4]
                 ]
-                return "Your marks: " + " | ".join(lines)
+                return with_notice("Your marks: " + " | ".join(lines))
 
             if any(w in q for w in ["assignment", "pending", "submit", "homework"]):
                 assg    = data.get("assignments", {})
                 pending = assg.get("pending_count", 0)
                 total   = assg.get("total", 0)
                 if pending == 0:
-                    return f"All {total} assignment(s) submitted — nothing pending!"
+                    return with_notice(
+                        f"All {total} assignment(s) submitted — nothing pending!"
+                    )
                 pending_list = assg.get("pending_list", [])
                 titles = ", ".join(p["title"] for p in pending_list[:3])
-                return (
+                return with_notice(
                     f"You have {pending} pending assignment(s) out of {total} total. "
                     + (f"Pending: {titles}." if titles else "")
                 )
@@ -509,29 +516,37 @@ def build_fallback(role: str, data: dict, question: str) -> str:
             if any(w in q for w in ["event", "happening", "workshop", "fest"]):
                 events = data.get("events", [])
                 if not events:
-                    return "No events found. Check the Events page in your dashboard."
+                    return with_notice(
+                        "No events found. Check the Events page in your dashboard."
+                    )
                 names = [e["name"] for e in events[:4]]
-                return f"Upcoming events: {', '.join(names)}."
+                return with_notice(f"Upcoming events: {', '.join(names)}.")
 
             if any(w in q for w in ["resource", "material", "note", "upload", "study"]):
                 resources = data.get("resources", [])
                 if not resources:
-                    return "No study materials found. Check the Resources page."
+                    return with_notice(
+                        "No study materials found. Check the Resources page."
+                    )
                 names = [r["title"] for r in resources[:4]]
-                return f"Available study materials: {', '.join(names)}."
+                return with_notice(
+                    f"Available study materials: {', '.join(names)}."
+                )
 
             if any(w in q for w in ["risk", "fail", "danger", "warning"]):
                 risk  = data.get("risk", {})
                 level = risk.get("level", "N/A")
                 reasons = risk.get("reasons", [])
                 r_text  = "; ".join(reasons[:2]) if reasons else "No specific reasons flagged"
-                return f"Your academic risk level is {level}. Reasons: {r_text}."
+                return with_notice(
+                    f"Your academic risk level is {level}. Reasons: {r_text}."
+                )
 
             # Generic summary
             att  = data.get("attendance", {}).get("overall_percentage", "N/A")
             risk = data.get("risk", {}).get("level", "N/A")
             assg = data.get("assignments", {}).get("pending_count", 0)
-            return (
+            return with_notice(
                 f"Your overview: Attendance {att}%, "
                 f"Risk level {risk}, "
                 f"Pending assignments: {assg}."
@@ -540,7 +555,7 @@ def build_fallback(role: str, data: dict, question: str) -> str:
         elif role in ("teacher", "faculty"):
             att  = data.get("class_attendance", {})
             risk = data.get("at_risk_students", {})
-            return (
+            return with_notice(
                 f"Class average attendance: {att.get('average_percentage', 'N/A')}%. "
                 f"At-risk students: {risk.get('count', 'N/A')} "
                 f"out of {risk.get('total', 'N/A')} total."
@@ -548,7 +563,7 @@ def build_fallback(role: str, data: dict, question: str) -> str:
 
         else:  # admin
             inst = data.get("institution", {})
-            return (
+            return with_notice(
                 f"Institution: {inst.get('total_students', 'N/A')} students, "
                 f"{inst.get('total_faculty', 'N/A')} faculty, "
                 f"{inst.get('overall_attendance', 'N/A')}% overall attendance, "
@@ -556,4 +571,4 @@ def build_fallback(role: str, data: dict, question: str) -> str:
             )
 
     except Exception:
-        return "Please check your dashboard for the latest information."
+        return with_notice("Please check your dashboard for the latest information.")
