@@ -1,32 +1,85 @@
-from typing import TypedDict, Optional, List, Dict, Any
-from langgraph.graph import StateGraph, END
-from sqlalchemy.orm import Session
-import traceback
 import os
+import sys
+import traceback
+from pathlib import Path
 
+# ── Load .env first — search all possible locations ────────────
 try:
-    import google.generativeai as genai
     from dotenv import load_dotenv
-    import os
-    
-    # Force load .env from Backend folder
-    env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
-    load_dotenv(env_path)
-    
-    GEMINI_KEY = os.getenv("GEMINI_API_KEY", "")
-    print(f"[STARTUP] GEMINI_KEY present: {bool(GEMINI_KEY)}")
-    print(f"[STARTUP] GEMINI_KEY starts with: {GEMINI_KEY[:8] if GEMINI_KEY else 'EMPTY'}")
-    
-    if GEMINI_KEY and GEMINI_KEY.startswith("AIza"):
-        genai.configure(api_key=GEMINI_KEY)
-        GEMINI_AVAILABLE = True
-        print("[GEMINI] Configured successfully")
-    else:
-        GEMINI_AVAILABLE = False
-        print(f"[GEMINI] Key missing or invalid: '{GEMINI_KEY[:10] if GEMINI_KEY else ''}'")
-except Exception as e:
-    GEMINI_AVAILABLE = False
-    print(f"[GEMINI] Import failed: {e}")
+    _this = Path(__file__).resolve()
+    _found = False
+    for _parent in [_this.parent, _this.parent.parent, _this.parent.parent.parent]:
+        _env = _parent / ".env"
+        if _env.exists():
+            load_dotenv(dotenv_path=_env, override=True)
+            print(f"[ENV] Loaded .env from: {_env}")
+            _found = True
+            break
+    if not _found:
+        for _alt in [Path("Backend/.env"), Path(".env")]:
+            if _alt.exists():
+                load_dotenv(dotenv_path=_alt, override=True)
+                print(f"[ENV] Loaded .env from: {_alt.resolve()}")
+                break
+except Exception as _e:
+    print(f"[ENV] dotenv error: {_e}")
+
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
+print(f"[ENV] GEMINI_API_KEY present: {bool(GEMINI_API_KEY)}")
+if GEMINI_API_KEY:
+    print(f"[ENV] Key starts with: '{GEMINI_API_KEY[:12]}'")
+else:
+    print("[ENV] KEY IS EMPTY")
+
+GEMINI_AVAILABLE = False
+GEMINI_CLIENT = None  # google.genai Client instance
+
+if GEMINI_API_KEY and GEMINI_API_KEY.startswith("AIzaSy"):
+    try:
+        # Use the NEW google.genai SDK (google.generativeai is deprecated)
+        from google import genai as _genai_module
+        _client = _genai_module.Client(api_key=GEMINI_API_KEY)
+        # Try models in order — some may hit quota limits
+        _STARTUP_MODELS = [
+            "models/gemini-2.5-flash",
+            "models/gemini-2.0-flash-lite",
+            "models/gemini-2.0-flash",
+        ]
+        _test = None
+        _working_model = None
+        for _m in _STARTUP_MODELS:
+            try:
+                _test = _client.models.generate_content(
+                    model=_m,
+                    contents="Say OK"
+                )
+                _working_model = _m
+                break
+            except Exception as _me:
+                print(f"[GEMINI] {_m} unavailable: {str(_me)[:60]}")
+                continue
+        if _test and _test.text and _working_model:
+            GEMINI_CLIENT = _client
+            GEMINI_AVAILABLE = True
+            print(f"[GEMINI] LIVE AND WORKING ({_working_model}): {_test.text.strip()[:20]}")
+        else:
+            print("[GEMINI] All models failed quota/availability check")
+    except Exception as _e:
+        print(f"[GEMINI] FAILED: {_e}")
+        traceback.print_exc()
+elif GEMINI_API_KEY:
+    print(f"[GEMINI] INVALID KEY — must start with 'AIzaSy'")
+    print(f"[GEMINI] Current key: '{GEMINI_API_KEY[:20]}'")
+    print("[GEMINI] Get a valid key at: https://aistudio.google.com/apikey")
+else:
+    print("[GEMINI] No API key set in .env")
+
+# All other imports come AFTER this block
+import traceback
+from typing import TypedDict, Optional, List, Dict, Any
+from datetime import datetime, timedelta
+from sqlalchemy.orm import Session
+from langgraph.graph import StateGraph, END
 
 class ChatPipelineState(TypedDict):
     # Input
@@ -435,8 +488,10 @@ def format_mark(score, total):
 
 def agent_answer_generator(state: ChatPipelineState) -> ChatPipelineState:
     try:
-        if not state["access_allowed"]:
-            state["raw_answer"] = state["denial_reason"]
+        # Access denied — return immediately
+        if not state.get("access_allowed", True):
+            state["raw_answer"] = state.get("denial_reason",
+                "You don't have access to that information.")
             state["answer_source"] = "access_control"
             state["data_found"] = False
             return state
@@ -449,326 +504,625 @@ def agent_answer_generator(state: ChatPipelineState) -> ChatPipelineState:
 
         state["data_found"] = bool(context)
 
-        # Step 1: Handle unrecognized queries dynamically using Gemini
-        summary_trigger_words = [
-            "summary", "overview", "everything", "all data",
-            "hello", "hi", "hey", "help", "good morning"
-        ]
-        msg_lower = message.lower()
-        is_summary_request = any(
-            w in msg_lower for w in summary_trigger_words
-        )
+        print(f"[ANSWER] role={role} intent={intent} "
+              f"gemini={GEMINI_AVAILABLE} "
+              f"context_keys={list(context.keys())[:5]}")
 
-        if intent == "summary" and not is_summary_request:
-            # This is an unrecognized query — try Gemini with
-            # full context before falling back to summary
-            full_context = get_full_context_for_gemini(
-                user_id=state["user_id"],
-                role=role,
-                db=state["db"]
-            )
-            if GEMINI_AVAILABLE and full_context:
-                gemini_reply = call_gemini_freeform(
-                    role=role,
-                    context=full_context,
-                    message=message,
-                    history=history
-                )
-                if gemini_reply:
-                    state["raw_answer"] = gemini_reply
-                    state["answer_source"] = "gemini_freeform"
-                    state["data_found"] = True
-                    return state
-
-            # Gemini not available or failed — tell user honestly
-            if not GEMINI_AVAILABLE:
-                state["raw_answer"] = (
-                    f"I understand you're asking about "
-                    f"'{message}'. I don't have specific data "
-                    f"for that in my current context. "
-                    f"Please check the relevant page in your "
-                    f"dashboard, or ask me about: attendance, "
-                    f"marks, assignments, events, resources, "
-                    f"placement eligibility, or risk level."
-                )
-                state["answer_source"] = "no_match"
-                state["data_found"] = False
-                return state
-
-            state["raw_answer"] = (
-                "I don't have specific data for that query in my "
-                "current context. Please check the relevant page "
-                "in your dashboard for that information."
-            )
-            state["answer_source"] = "no_data"
-            state["data_found"] = False
-            return state
-
-        # Step 2: Generate rule-based answer (always accurate data)
-        rule_answer = generate_rule_answer(role, intent, context, message)
-
-        # Step 2: Try Gemini as primary responder
-        if GEMINI_AVAILABLE:
-            gemini_reply = call_gemini_primary(
+        if GEMINI_AVAILABLE and GEMINI_CLIENT:
+            answer = call_gemini_answer(
                 role=role,
                 intent=intent,
                 context=context,
-                rule_answer=rule_answer,
                 message=message,
                 history=history
             )
-            if gemini_reply and len(gemini_reply.strip()) > 20:
-                state["raw_answer"] = gemini_reply
+            if answer:
+                state["raw_answer"] = answer
                 state["answer_source"] = "gemini"
+                print(f"[ANSWER] Gemini replied: {answer[:60]}")
                 return state
 
-        # Step 3: Fall back to rule-based if Gemini unavailable
-        state["raw_answer"] = rule_answer
-        state["answer_source"] = "rules"
+        # Gemini failed or unavailable
+        # Use simple honest fallback — do NOT use templates
+        state["raw_answer"] = build_honest_fallback(
+            role, intent, context, message
+        )
+        state["answer_source"] = "fallback"
         return state
 
     except Exception:
         traceback.print_exc()
-        state["raw_answer"] = ("I had trouble retrieving your data. "
-                              "Please check your dashboard.")
-        state["answer_source"] = "fallback"
-        state["data_found"] = False
+        state["raw_answer"] = (
+            "I had trouble processing that. "
+            "Please check your dashboard."
+        )
+        state["answer_source"] = "error"
         return state
 
-def call_gemini_primary(role, intent, context, rule_answer,
-                        message, history) -> str:
-    try:
-        # Build conversation history
-        history_text = ""
-        for h in history[-4:]:
-            r = "Student" if h.get("role") == "user" else "Assistant"
-            history_text += f"{r}: {h.get('content', '')}\n"
 
-        # Build context summary based on intent
-        context_summary = build_context_summary(intent, context, role)
-
-        # Role-specific persona
-        personas = {
-            "student": (
-                "You are an AI academic assistant for a student "
-                "at GVP college. You have access to their real "
-                "academic data. Be helpful, encouraging, and specific."
-            ),
-            "teacher": (
-                "You are an AI assistant for a faculty member "
-                "at GVP college. You have access to class-level "
-                "academic data. Be professional and data-focused."
-            ),
-            "faculty": (
-                "You are an AI assistant for a faculty member "
-                "at GVP college. Be professional and data-focused."
-            ),
-            "admin": (
-                "You are an institutional AI assistant for the "
-                "admin of GVP college. You have full institutional "
-                "data. Be precise, concise, and data-driven."
-            )
-        }
-        persona = personas.get(role, personas["student"])
-
-        prompt = f"""{persona}
-
-REAL DATA FROM DATABASE FOR THIS USER:
-{context_summary}
-
-STRUCTURED ANSWER FROM DATA:
-{rule_answer}
-
-RECENT CONVERSATION:
-{history_text}
-
-USER'S QUESTION: "{message}"
-
-YOUR TASK:
-Using ONLY the data provided above, answer the user's question
-naturally and conversationally.
-
-STRICT RULES:
-- Use ONLY numbers and facts from the data above
-- NEVER invent, estimate, or assume any data
-- If the data shows 0 pending assignments, say that clearly
-- If asked about something not in the data (like events or
-  resources if not provided), say the data is not available
-  and suggest checking that page in the dashboard
-- Be specific — use actual numbers from the data
-- Write in natural sentences, not bullet points
-- Keep response under 5 sentences
-- If data is empty or null, say "No data available for that.
-  Please check your dashboard." — do not make up numbers
-
-RESPOND NOW:"""
-
-        model = genai.GenerativeModel(
-            "gemini-1.5-flash",
-            generation_config={
-                "temperature": 0.2,
-                "max_output_tokens": 250,
-                "top_p": 0.8
-            }
-        )
-
-        response = model.generate_content(prompt)
-
-        if response and response.text:
-            text = response.text.strip()
-            # Sanity check — if Gemini invented numbers not in
-            # context, fall back to rule answer
-            if len(text) > 15:
-                return text
-
-        return None
-
-    except Exception as e:
-        print(f"[GEMINI ERROR] {e}")
-        traceback.print_exc()
-        return None
-
-def build_context_summary(intent: str, context: dict,
-                          role: str) -> str:
+def call_gemini_answer(role, intent, context,
+                       message, history) -> str:
     """
-    Builds a clean, readable context string for Gemini.
-    Filters to only show data relevant to the intent.
+    Single Gemini call that handles ALL query types.
+    Context contains the real database data.
+    Gemini generates a natural, specific answer.
     """
     try:
-        if not context:
-            return "No data available."
+        # Build readable context string
+        ctx_lines = []
 
-        lines = []
-
-        # Always include these if available
+        # --- Student context ---
         if "attendance_pct" in context:
-            lines.append(f"Attendance: {context['attendance_pct']}%")
-        if "total_classes" in context:
-            lines.append(
-                f"Total classes: {context['total_classes']}, "
-                f"Present: {context.get('present_classes', 0)}"
+            att = context["attendance_pct"]
+            total = context.get("total_classes", 0)
+            present = context.get("present_classes", 0)
+            ctx_lines.append(
+                f"ATTENDANCE: {att}% "
+                f"({present}/{total} classes attended)"
             )
+
+        if "subject_attendance" in context:
+            per_subj = context["subject_attendance"]
+            if per_subj:
+                lines = [
+                    f"  {s['subject']}: {s['pct']}% "
+                    f"({s['present']}/{s['total']})"
+                    for s in per_subj
+                ]
+                ctx_lines.append(
+                    "PER-SUBJECT ATTENDANCE:\n" +
+                    "\n".join(lines)
+                )
+
+        if "subject_marks" in context:
+            marks = context["subject_marks"]
+            if marks:
+                lines = []
+                for m in marks:
+                    subj = m.get("subject", "Unknown")
+                    score = m.get("score", 0)
+                    out_of = m.get("out_of", 0)
+                    pct = m.get("pct", 0)
+                    exam = m.get("exam_type", "")
+                    label = f"{subj}"
+                    if exam:
+                        label += f" [{exam}]"
+                    if out_of > 0:
+                        lines.append(
+                            f"  {label}: {score}/{out_of} ({pct}%)"
+                        )
+                    else:
+                        lines.append(f"  {label}: {score} pts ({pct}%)")
+                ctx_lines.append(
+                    "MARKS:\n" + "\n".join(lines)
+                )
+
         if "risk_level" in context:
-            lines.append(f"Risk level: {context['risk_level']}")
-
-        # Marks
-        if "subject_marks" in context and context["subject_marks"]:
-            marks_lines = []
-            for s in context["subject_marks"]:
-                score = s.get("score", 0)
-                out_of = s.get("out_of", 0)
-                subj = s.get("subject", "Unknown")
-                if out_of > 0:
-                    marks_lines.append(
-                        f"{subj}: {score}/{out_of}"
-                    )
-                else:
-                    marks_lines.append(f"{subj}: {score} pts")
-            lines.append("Marks: " + ", ".join(marks_lines))
-
-        # Assignments
-        if "pending_assignments" in context:
-            lines.append(
-                f"Pending assignments: "
-                f"{context['pending_assignments']}"
-            )
-        if "submitted_assignments" in context:
-            lines.append(
-                f"Submitted assignments: "
-                f"{context['submitted_assignments']}"
+            ctx_lines.append(
+                f"RISK LEVEL: {context['risk_level']}"
             )
 
-        # Alerts
         if "active_alerts" in context:
             alerts = context["active_alerts"]
-            lines.append(f"Active alerts: {len(alerts)}")
+            ctx_lines.append(
+                f"ACTIVE ALERTS: {len(alerts)}"
+            )
             if alerts:
-                lines.append(
-                    "Alert details: " + "; ".join(
-                        str(a) for a in alerts[:3]
-                    )
+                ctx_lines.append(
+                    "ALERT DETAILS: " +
+                    "; ".join(str(a) for a in alerts[:3])
                 )
 
-        # XP / Streak
-        if "xp" in context and context["xp"]:
-            lines.append(f"XP: {context['xp']}, "
-                        f"Streak: {context.get('streak', 0)} days")
+        if "pending_assignments" in context:
+            ctx_lines.append(
+                f"PENDING ASSIGNMENTS: "
+                f"{context['pending_assignments']}"
+            )
 
-        # Events
+        if "xp" in context:
+            ctx_lines.append(
+                f"XP: {context['xp']} | "
+                f"STREAK: {context.get('streak', 0)} days"
+            )
+
         if "upcoming_events" in context:
             events = context["upcoming_events"]
-            lines.append(f"Events available: {len(events)}")
+            ctx_lines.append(
+                f"EVENTS AVAILABLE: {len(events)}"
+            )
             if events:
-                event_names = [e.get("name", "") for e in events[:3]]
-                lines.append(
-                    "Events: " + ", ".join(event_names)
-                )
+                ev_list = [
+                    f"  {e['name']} on {e['date']}"
+                    for e in events[:5]
+                ]
+                ctx_lines.append("\n".join(ev_list))
 
-        # Resources
         if "recent_resources" in context:
             resources = context["recent_resources"]
-            lines.append(f"Resources available: {len(resources)}")
+            ctx_lines.append(
+                f"STUDY MATERIALS: {len(resources)} available"
+            )
             if resources:
-                res_names = [r.get("title", "") for r in resources[:3]]
-                lines.append(
-                    "Recent uploads: " + ", ".join(res_names)
-                )
+                res_list = [
+                    f"  {r['title']} ({r['subject']})"
+                    for r in resources[:5]
+                ]
+                ctx_lines.append("\n".join(res_list))
 
-        # Teacher context
+        # --- Teacher context ---
         if "class_avg_attendance" in context:
-            lines.append(
-                f"Class average attendance: "
+            ctx_lines.append(
+                f"CLASS AVG ATTENDANCE: "
                 f"{context['class_avg_attendance']}%"
             )
         if "at_risk_count" in context:
-            lines.append(
-                f"At-risk students: {context['at_risk_count']} "
-                f"out of {context.get('total_students', 0)}"
+            ctx_lines.append(
+                f"AT-RISK STUDENTS: "
+                f"{context['at_risk_count']} out of "
+                f"{context.get('total_students', 0)}"
             )
         if "pending_submissions" in context:
-            lines.append(
-                f"Pending assignment submissions: "
+            ctx_lines.append(
+                f"PENDING SUBMISSIONS: "
                 f"{context['pending_submissions']}"
             )
         if "subjects" in context and context["subjects"]:
-            lines.append(
-                "Subjects taught: " +
-                ", ".join(context["subjects"])
+            ctx_lines.append(
+                f"YOUR SUBJECTS: "
+                f"{', '.join(context['subjects'])}"
+            )
+        if "low_attendance_count" in context:
+            ctx_lines.append(
+                f"STUDENTS BELOW 75% ATTENDANCE: "
+                f"{context['low_attendance_count']}"
             )
 
-        # Admin context
-        if "total_students" in context and "total_teachers" in context:
-            lines.append(
-                f"Total students: {context['total_students']}, "
-                f"Total faculty: {context['total_teachers']}"
+        # --- Admin context ---
+        if "total_students" in context:
+            ctx_lines.append(
+                f"TOTAL STUDENTS: {context['total_students']}"
+            )
+        if "total_teachers" in context:
+            ctx_lines.append(
+                f"TOTAL FACULTY: {context['total_teachers']}"
             )
         if "overall_attendance_pct" in context:
-            lines.append(
-                f"Overall attendance: "
+            ctx_lines.append(
+                f"OVERALL ATTENDANCE: "
                 f"{context['overall_attendance_pct']}%"
-            )
-        if "active_alerts_count" in context:
-            lines.append(
-                f"Active alerts: {context['active_alerts_count']}"
-            )
-        if "placement_drives_open" in context:
-            lines.append(
-                f"Open placement drives: "
-                f"{context['placement_drives_open']}"
             )
         if "department_breakdown" in context:
             depts = context["department_breakdown"]
             if depts:
-                dept_summary = "; ".join([
-                    f"{d['dept']}: {d['attendance']}% attendance"
+                dept_lines = [
+                    f"  {d['dept']}: "
+                    f"{d['attendance']}% attendance, "
+                    f"{d.get('at_risk', 0)} at-risk"
+                    for d in depts
+                ]
+                ctx_lines.append(
+                    "DEPARTMENT DATA:\n" +
+                    "\n".join(dept_lines)
+                )
+        if "active_alerts_count" in context:
+            ctx_lines.append(
+                f"SYSTEM ALERTS: "
+                f"{context['active_alerts_count']}"
+            )
+        if "placement_drives_open" in context:
+            ctx_lines.append(
+                f"OPEN PLACEMENT DRIVES: "
+                f"{context['placement_drives_open']}"
+            )
+
+        context_string = "\n".join(ctx_lines) if ctx_lines else "No data available."
+
+        # Build history string
+        history_text = ""
+        for h in history[-4:]:
+            r = "User" if h.get("role") == "user" else "Assistant"
+            history_text += f"{r}: {h.get('content', '')}\n"
+
+        # Role-specific persona
+        personas = {
+            "student": (
+                "You are a helpful AI academic assistant "
+                "for a student at GVP college."
+            ),
+            "teacher": (
+                "You are a helpful AI assistant for a "
+                "faculty member at GVP college."
+            ),
+            "faculty": (
+                "You are a helpful AI assistant for a "
+                "faculty member at GVP college."
+            ),
+            "admin": (
+                "You are a helpful institutional AI "
+                "assistant for the admin of GVP college."
+            )
+        }
+        persona = personas.get(role, personas["student"])
+
+        # Access rules per role
+        access_rules = {
+            "student": (
+                "You can only answer about this student's "
+                "own data. If asked about other students, "
+                "say: I don't have access to that."
+            ),
+            "teacher": (
+                "You can answer about your class-level "
+                "data only. Do not reveal individual "
+                "student personal details."
+            ),
+            "faculty": (
+                "You can answer about your class-level "
+                "data only."
+            ),
+            "admin": (
+                "You have full institutional data access. "
+                "Answer any academic question."
+            )
+        }
+        access = access_rules.get(role, "")
+
+        prompt = f"""{persona}
+{access}
+
+REAL DATA FROM DATABASE:
+{context_string}
+
+CONVERSATION HISTORY:
+{history_text}
+
+USER QUESTION: "{message}"
+
+RULES FOR YOUR ANSWER:
+1. Use ONLY the numbers and facts from DATABASE DATA above
+2. Never invent numbers — if data is missing say so clearly
+3. Be specific — use actual values from the data
+4. If the question is about something not in the data,
+   say: "I don't have that specific data. Please check
+   the [relevant] page in your dashboard."
+5. Write in natural conversational sentences
+6. Maximum 4 sentences
+7. If data shows 0 for something the user expects to be
+   non-zero, say the data shows 0 and suggest checking
+   the dashboard directly
+8. For general knowledge questions not about academics,
+   answer briefly and note you're better at academic queries
+
+ANSWER:"""
+
+        print(f"[GEMINI] Sending request for: {message[:50]}")
+        from google.genai import types as genai_types
+        response = GEMINI_CLIENT.models.generate_content(
+            model="models/gemini-2.5-flash",
+            contents=prompt,
+            config=genai_types.GenerateContentConfig(
+                temperature=0.1,
+                max_output_tokens=300,
+                top_p=0.8
+            )
+        )
+
+        if response and response.text:
+            text = response.text.strip()
+            print(f"[GEMINI] Got response: {text[:80]}")
+            if len(text) > 10:
+                return text
+
+        print("[GEMINI] Empty response received")
+        return None
+
+    except Exception as e:
+        print(f"[GEMINI] Call failed: {e}")
+        traceback.print_exc()
+        return None
+
+
+def build_honest_fallback(role, intent, context, message) -> str:
+    """
+    Used ONLY when Gemini is unavailable.
+    Returns honest, specific data — no templates.
+    Different response for each intent.
+    """
+    if not context:
+        return (
+            f"I don't have data for that query right now. "
+            f"Please check your dashboard directly."
+        )
+
+    role = role.lower()
+
+    if role == "student":
+        if intent == "attendance":
+            att = context.get("attendance_pct", None)
+            if att is None:
+                return "No attendance data found for your account."
+            total = context.get("total_classes", 0)
+            present = context.get("present_classes", 0)
+            warn = (" ⚠️ Below required 75%." if att < 75
+                    else " ✅ Above 75% threshold.")
+            return (f"Your attendance is {att}% "
+                   f"({present}/{total} classes attended).{warn}")
+
+        elif intent == "marks":
+            subjects = context.get("subject_marks", [])
+            if not subjects:
+                return "No marks data found for your account."
+            lines = []
+            for s in subjects[:5]:
+                score = s.get("score", 0)
+                out_of = s.get("out_of", 0)
+                exam = s.get("exam_type", "")
+                subj = s.get("subject", "Unknown")
+                label = f"{subj} [{exam}]" if exam else subj
+                if out_of > 0:
+                    pct = round(score / out_of * 100, 1)
+                    lines.append(f"{label}: {score}/{out_of} ({pct}%)")
+                else:
+                    lines.append(f"{label}: {score} pts")
+            return "Your marks: " + " | ".join(lines)
+
+        elif intent == "risk":
+            risk = context.get("risk_level", "Unknown")
+            att = context.get("attendance_pct", "N/A")
+            return (f"Your risk level is {risk}. "
+                   f"Attendance: {att}%.")
+
+        elif intent == "assignments":
+            pending = context.get("pending_assignments", 0)
+            if pending == 0:
+                return "No pending assignments found."
+            return f"You have {pending} pending assignment(s)."
+
+        elif intent == "events":
+            events = context.get("upcoming_events", [])
+            if not events:
+                return "No events found. Check the Events page."
+            names = [e.get("name", "") for e in events[:3]]
+            return f"Current events: {', '.join(names)}."
+
+        elif intent == "resources":
+            resources = context.get("recent_resources", [])
+            if not resources:
+                return "No resources found. Check the Resources page."
+            names = [r.get("title", "") for r in resources[:3]]
+            return f"Recent study materials: {', '.join(names)}."
+
+        else:
+            att = context.get("attendance_pct", "N/A")
+            risk = context.get("risk_level", "N/A")
+            pending = context.get("pending_assignments", 0)
+            return (f"Your attendance: {att}%, "
+                   f"risk level: {risk}, "
+                   f"pending assignments: {pending}.")
+
+    elif role in ("teacher", "faculty"):
+        avg_att = context.get("class_avg_attendance", "N/A")
+        at_risk = context.get("at_risk_count", "N/A")
+        total = context.get("total_students", "N/A")
+        pending = context.get("pending_submissions", 0)
+
+        if intent == "attendance":
+            return (f"Class average attendance: {avg_att}%. "
+                   f"Total students: {total}.")
+        elif intent == "risk":
+            return (f"{at_risk} out of {total} students "
+                   f"are at risk.")
+        elif intent == "assignments":
+            return (f"{pending} assignment submission(s) "
+                   f"are pending.")
+        else:
+            return (f"Class summary: {avg_att}% avg attendance, "
+                   f"{at_risk}/{total} students at risk, "
+                   f"{pending} pending submissions.")
+
+    else:  # admin
+        total = context.get("total_students", "N/A")
+        at_risk = context.get("at_risk_count", "N/A")
+        att = context.get("overall_attendance_pct", "N/A")
+        drives = context.get("placement_drives_open", 0)
+
+        if intent == "attendance":
+            depts = context.get("department_breakdown", [])
+            if depts:
+                dept_str = ", ".join([
+                    f"{d['dept']}: {d['attendance']}%"
                     for d in depts[:4]
                 ])
-                lines.append(f"Departments: {dept_summary}")
+                return (f"Overall: {att}%. "
+                       f"By department: {dept_str}.")
+            return f"Overall institution attendance: {att}%."
+        elif intent == "risk":
+            return (f"{at_risk} out of {total} students "
+                   f"are at risk institution-wide.")
+        elif intent == "placement":
+            return f"Active placement drives: {drives}."
+        else:
+            return (f"Institution: {total} students, "
+                   f"{at_risk} at risk, "
+                   f"{att}% overall attendance.")
 
-        return "\n".join(lines) if lines else "No data available."
+def build_complete_context_string(context: dict, role: str) -> str:
+    lines = []
+    r = role.lower()
 
-    except Exception:
-        return str(context)[:500]
+    if r == "student":
+        # Attendance
+        att = context.get("attendance_pct")
+        if att is not None:
+            total_cls = context.get("total_classes", 0)
+            present = context.get("present_classes", 0)
+            lines.append(
+                f"OVERALL ATTENDANCE: {att}% "
+                f"({present} present out of {total_cls} classes)"
+            )
+
+        # Per-subject attendance
+        subj_att = context.get("subject_attendance", [])
+        if subj_att:
+            lines.append("PER-SUBJECT ATTENDANCE:")
+            for s in subj_att:
+                lines.append(
+                    f"  - {s['subject']}: {s['pct']}% "
+                    f"({s['present']}/{s['total']} classes)"
+                )
+
+        # Marks with exam type
+        marks = context.get("subject_marks", [])
+        if marks:
+            lines.append("MARKS / EXAM SCORES:")
+            for m in marks:
+                subj = m.get("subject", "Unknown")
+                exam = m.get("exam_type", "")
+                score = m.get("score", 0)
+                out_of = m.get("out_of", 0)
+                pct = m.get("pct", 0)
+                mid1 = m.get("mid1")
+                mid2 = m.get("mid2")
+
+                label = f"{subj}"
+                if exam:
+                    label += f" (Exam: {exam})"
+                if out_of > 0:
+                    lines.append(
+                        f"  - {label}: {score}/{out_of} = {pct}%"
+                    )
+                else:
+                    lines.append(f"  - {label}: {score} pts")
+
+                if mid1 is not None:
+                    lines.append(f"    Mid 1 score: {mid1}")
+                if mid2 is not None:
+                    lines.append(f"    Mid 2 score: {mid2}")
+
+        # Risk
+        risk = context.get("risk_level")
+        if risk:
+            lines.append(f"ACADEMIC RISK LEVEL: {risk}")
+
+        # Alerts
+        alerts = context.get("active_alerts", [])
+        lines.append(f"ACTIVE ALERTS: {len(alerts)}")
+        for a in alerts[:3]:
+            lines.append(f"  - {a}")
+
+        # Assignments
+        pending = context.get("pending_assignments", 0)
+        submitted = context.get("submitted_assignments", 0)
+        total_assg = context.get("total_assignments", 0)
+        lines.append(
+            f"ASSIGNMENTS: {pending} pending, "
+            f"{submitted} submitted out of {total_assg} total"
+        )
+        details = context.get("assignment_details", [])
+        for d in details[:3]:
+            lines.append(
+                f"  - Pending: {d['title']} "
+                f"(due: {d['due_date']})"
+            )
+
+        # Events
+        events = context.get("upcoming_events", [])
+        if events:
+            lines.append(f"EVENTS ({len(events)} available):")
+            for e in events[:4]:
+                lines.append(
+                    f"  - {e.get('name','?')} "
+                    f"on {e.get('date','?')} "
+                    f"({e.get('type','?')})"
+                )
+
+        # Resources
+        resources = context.get("recent_resources", [])
+        if resources:
+            lines.append(
+                f"STUDY MATERIALS ({len(resources)} available):"
+            )
+            for r in resources[:4]:
+                lines.append(
+                    f"  - {r.get('title','?')} "
+                    f"[{r.get('subject','?')}] "
+                    f"({r.get('type','?')})"
+                )
+
+        # XP
+        xp = context.get("xp")
+        streak = context.get("streak")
+        if xp is not None:
+            lines.append(
+                f"GAMIFICATION: {xp} XP, "
+                f"{streak} day streak"
+            )
+
+    elif r in ("teacher", "faculty"):
+        lines.append(
+            f"CLASS AVG ATTENDANCE: "
+            f"{context.get('class_avg_attendance', 'N/A')}%"
+        )
+        lines.append(
+            f"TOTAL STUDENTS: "
+            f"{context.get('total_students', 'N/A')}"
+        )
+        lines.append(
+            f"AT-RISK STUDENTS: "
+            f"{context.get('at_risk_count', 'N/A')}"
+        )
+        lines.append(
+            f"STUDENTS BELOW 75% ATTENDANCE: "
+            f"{context.get('low_attendance_count', 'N/A')}"
+        )
+        lines.append(
+            f"PENDING SUBMISSIONS: "
+            f"{context.get('pending_submissions', 'N/A')}"
+        )
+        subjects = context.get("subjects", [])
+        if subjects:
+            lines.append(
+                f"YOUR SUBJECTS: {', '.join(subjects)}"
+            )
+        else:
+            lines.append("YOUR SUBJECTS: Not mapped in system")
+
+    else:  # admin
+        lines.append(
+            f"TOTAL STUDENTS: "
+            f"{context.get('total_students', 'N/A')}"
+        )
+        lines.append(
+            f"TOTAL FACULTY: "
+            f"{context.get('total_teachers', 'N/A')}"
+        )
+        lines.append(
+            f"OVERALL ATTENDANCE: "
+            f"{context.get('overall_attendance_pct', 'N/A')}%"
+        )
+        lines.append(
+            f"AT-RISK STUDENTS: "
+            f"{context.get('at_risk_count', 'N/A')}"
+        )
+        lines.append(
+            f"ACTIVE ALERTS: "
+            f"{context.get('active_alerts_count', 'N/A')}"
+        )
+        lines.append(
+            f"OPEN PLACEMENT DRIVES: "
+            f"{context.get('placement_drives_open', 'N/A')}"
+        )
+        depts = context.get("department_breakdown", [])
+        if depts:
+            lines.append("DEPARTMENT BREAKDOWN:")
+            for d in depts:
+                lines.append(
+                    f"  - {d.get('dept','?')}: "
+                    f"{d.get('attendance','?')}% attendance, "
+                    f"{d.get('at_risk', 0)} at-risk students"
+                )
+
+    return "\n".join(lines) if lines else "No data available."
 
 def build_role_system_prompt(role: str, context: dict) -> str:
     ctx = str(context)
@@ -1432,7 +1786,7 @@ def call_gemini_freeform(role, context, message, history) -> str:
     Used for queries that don't match known intents.
     """
     try:
-        context_str = build_context_summary("summary", context, role)
+        context_str = build_complete_context_string(context, role)
         history_text = "\n".join([
             f"{'User' if h.get('role')=='user' else 'Assistant'}: "
             f"{h.get('content', '')}"
@@ -1478,14 +1832,15 @@ INSTRUCTIONS:
 
 ANSWER:"""
 
-        model = genai.GenerativeModel(
-            "gemini-1.5-flash",
-            generation_config={
-                "temperature": 0.2,
-                "max_output_tokens": 200
-            }
+        from google.genai import types as genai_types
+        response = GEMINI_CLIENT.models.generate_content(
+            model="models/gemini-2.5-flash",
+            contents=prompt,
+            config=genai_types.GenerateContentConfig(
+                temperature=0.2,
+                max_output_tokens=200
+            )
         )
-        response = model.generate_content(prompt)
         if response and response.text and len(response.text.strip()) > 10:
             return response.text.strip()
         return None

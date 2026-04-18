@@ -190,3 +190,55 @@ async def debug_teacher(teacher_id: int,
 async def debug_admin(db: Session = Depends(get_db)):
     from rag.context_builder import build_admin_context
     return build_admin_context(db)
+
+@router.get("/debug/full/{role}/{user_id}")
+async def debug_full_rag(
+    role: str,
+    user_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Shows EXACTLY what data Gemini receives for a given role/user.
+    Use this to verify accuracy before testing the chatbot.
+
+    Examples:
+      GET /agents/debug/full/student/140
+      GET /agents/debug/full/teacher/5
+      GET /agents/debug/full/admin/1
+    """
+    import traceback
+    try:
+        from rag.retriever import (
+            retrieve_student_data,
+            retrieve_teacher_data,
+            retrieve_admin_data
+        )
+        from rag.generator import format_data_for_gemini
+
+        role = role.lower()
+        if role == "student":
+            data = retrieve_student_data(user_id, db)
+        elif role in ("teacher", "faculty"):
+            data = retrieve_teacher_data(user_id, db)
+        else:
+            data = retrieve_admin_data(db)
+
+        formatted = format_data_for_gemini(data, role)
+
+        return {
+            "role":              role,
+            "user_id":          user_id,
+            "raw_data":         data,
+            "formatted_for_gemini": formatted,
+            "summary": {
+                "attendance_pct":  data.get("attendance", {}).get("overall_percentage"),
+                "marks_count":     len(data.get("marks", [])),
+                "pending_assignments": data.get("assignments", {}).get("pending_count"),
+                "resources_count": len(data.get("resources", [])),
+                "events_count":    len(data.get("events", [])),
+                "risk_level":      data.get("risk", {}).get("level"),
+            } if role == "student" else {}
+        }
+    except Exception as e:
+        traceback.print_exc()
+        return {"error": str(e)}

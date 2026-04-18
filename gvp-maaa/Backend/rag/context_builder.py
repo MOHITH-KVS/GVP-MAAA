@@ -360,62 +360,89 @@ def build_admin_context(db: Session) -> dict:
     except Exception:
         pass
     
-    # Department breakdown
+    # At-risk count — single SQL aggregate query (fast)
+    try:
+        from sqlalchemy import Integer as SA_Integer
+        att_subq = db.query(
+            Attendance.student_id,
+            (
+                func.sum(func.cast(Attendance.status, SA_Integer)) * 100.0 /
+                func.count(Attendance.attendance_id)
+            ).label("att_pct")
+        ).group_by(Attendance.student_id).subquery()
+
+        at_risk_total = db.query(func.count()).filter(
+            att_subq.c.att_pct < 75
+        ).scalar() or 0
+        context["at_risk_count"] = int(at_risk_total)
+
+        # Overall attendance via direct aggregate
+        total_rec = db.query(
+            func.count(Attendance.attendance_id)
+        ).scalar() or 0
+        present_rec = db.query(
+            func.count(Attendance.attendance_id)
+        ).filter(Attendance.status == True).scalar() or 0
+        if total_rec > 0:
+            context["overall_attendance_pct"] = round(
+                (present_rec / total_rec) * 100, 1
+            )
+    except Exception:
+        traceback.print_exc()
+
+    # Department breakdown — SQL aggregation per dept
     try:
         departments = db.query(Department).all()
         breakdown = []
         low_att_depts = []
-        
+
         for dept in departments[:10]:
             try:
-                dept_name = getattr(dept, 'name', getattr(dept, 'department_name', 'Unknown'))
-                dept_students = db.query(Student).filter(
+                dept_name = dept.name or "Unknown"
+                # Get student_ids for this dept
+                dept_student_ids = db.query(Student.student_id).filter(
                     Student.department_id == dept.id
                 ).all()
-                dept_student_ids = [s.student_id for s in dept_students] # USING student_id not id
-                
-                if not dept_student_ids:
+                dept_ids = [r[0] for r in dept_student_ids]
+
+                if not dept_ids:
                     continue
-                
-                # At-risk in dept (use attendance threshold)
-                at_risk_dept = 0
-                att_values = []
-                for sid in dept_student_ids:
-                    try:
-                        t = db.query(Attendance).filter(
-                            Attendance.student_id == sid
-                        ).count()
-                        p = db.query(Attendance).filter(
-                            Attendance.student_id == sid,
-                            Attendance.status == True
-                        ).count()
-                        pct = (p / t * 100) if t > 0 else 100
-                        att_values.append(pct)
-                        if pct < 75:
-                            at_risk_dept += 1
-                    except Exception:
-                        continue
-                
-                avg_att = round(sum(att_values) / len(att_values), 1) if att_values else 0
-                
+
+                # Aggregate attendance for these students in one query
+                from sqlalchemy import Integer as SA_Integer
+                dept_att = db.query(
+                    Attendance.student_id,
+                    (
+                        func.sum(func.cast(Attendance.status, SA_Integer)) * 100.0 /
+                        func.count(Attendance.attendance_id)
+                    ).label("att_pct")
+                ).filter(
+                    Attendance.student_id.in_(dept_ids)
+                ).group_by(Attendance.student_id).all()
+
+                if not dept_att:
+                    continue
+
+                att_pcts = [float(row.att_pct or 0) for row in dept_att]
+                avg_att = round(sum(att_pcts) / len(att_pcts), 1)
+                at_risk_dept = sum(1 for p in att_pcts if p < 75)
+
                 breakdown.append({
                     "dept": dept_name,
                     "attendance": avg_att,
-                    "at_risk": at_risk_dept
+                    "at_risk": at_risk_dept,
+                    "total": len(dept_ids)
                 })
-                
                 if avg_att < 75:
                     low_att_depts.append(dept_name)
-                    
+
             except Exception:
+                traceback.print_exc()
                 continue
-        
+
         context["department_breakdown"] = breakdown
         context["low_attendance_departments"] = low_att_depts
-        
-        # Total at-risk count
-        context["at_risk_count"] = count_at_risk_students(db)
-        
+
     except Exception:
         traceback.print_exc()
     
@@ -442,128 +469,219 @@ def get_student_attendance_detail(student_id: int, db: Session) -> dict:
         if total > 0:
             result["attendance_pct"] = round((present / total) * 100, 1)
         
-        # Per-subject attendance
-        # Read models.py for exact subject relationship
+        # Per-subject attendance using GROUP BY (efficient single query)
         try:
-            from sqlalchemy import func
+            from sqlalchemy import func, Integer as SA_Integer
             from models import Subject
-            subject_ids = db.query(Attendance.subject_id).filter(
+
+            subj_records = db.query(
+                Attendance.subject_id,
+                func.count(Attendance.attendance_id).label("total"),
+                func.sum(
+                    func.cast(Attendance.status, SA_Integer)
+                ).label("present")
+            ).filter(
                 Attendance.student_id == student_id
-            ).distinct().all()
-            
-            for (subj_id,) in subject_ids[:10]:
-                if subj_id is None:
-                    continue
-                t = db.query(Attendance).filter(
-                    Attendance.student_id == student_id,
-                    Attendance.subject_id == subj_id
-                ).count()
-                p = db.query(Attendance).filter(
-                    Attendance.student_id == student_id,
-                    Attendance.subject_id == subj_id,
-                    Attendance.status == True
-                ).count()
-                pct = round((p / t) * 100, 1) if t > 0 else 0
-                
+            ).group_by(Attendance.subject_id).all()
+
+            subject_attendance = []
+            for record in subj_records:
+                subj_id = record.subject_id
+                total_cls = int(record.total or 0)
+                present_cls = int(record.present or 0)
+                pct = round((present_cls / total_cls) * 100, 1) \
+                      if total_cls > 0 else 0
+
                 subj_name = str(subj_id)
                 try:
-                    subj = db.query(Subject).filter(Subject.id == subj_id).first()
+                    # Subject PK is subject_id — NOT id
+                    subj = db.query(Subject).filter(
+                        Subject.subject_id == subj_id
+                    ).first()
                     if subj:
-                        subj_name = getattr(subj, "subject_name",
-                                   getattr(subj, "name", str(subj_id)))
+                        subj_name = subj.subject_name or str(subj_id)
                 except Exception:
                     pass
-                
-                result["subject_attendance"].append({
+
+                subject_attendance.append({
                     "subject": subj_name,
                     "pct": pct,
-                    "present": p,
-                    "total": t
+                    "present": present_cls,
+                    "total": total_cls
                 })
+
+            result["subject_attendance"] = subject_attendance
         except Exception:
-            pass
+            traceback.print_exc()
     except Exception:
         traceback.print_exc()
     return result
 
 def get_student_marks_detail(student_id: int, db: Session) -> dict:
-    """Returns detailed marks breakdown for a student."""
     result = {"subject_marks": [], "overall_avg": 0.0}
     try:
+        from models import Mark, Subject
+
         marks_records = db.query(Mark).filter(
             Mark.student_id == student_id
         ).all()
-        
+
         subject_marks = []
-        total_pct = 0
+        total_pct = 0.0
         count = 0
-        
+
         for m in marks_records:
             try:
-                score = float(m.marks) if m.marks is not None else 0
-                out_of = float(m.total) if (
-                    hasattr(m, 'total') and m.total
-                    and float(m.total) > 0
-                ) else 30
-                
-                pct = round((score / out_of) * 100, 1)
-                
+                # Use exact column names from SQL log
                 subj_name = "Unknown"
-                if hasattr(m, 'subject') and m.subject:
-                    subj_name = getattr(m.subject, 'subject_name',
-                               getattr(m.subject, 'name', 'Unknown'))
-                
-                # Get exam type
-                exam_type = getattr(m, 'exam_type',
-                           getattr(m, 'exam_name',
-                           getattr(m, 'type',
-                           getattr(m, 'assessment_type', ''))))
-                
-                # Build label: "MACHINE LEARNING (Mid 1)"
-                label = subj_name
-                if exam_type:
-                    label = f"{subj_name} ({exam_type})"
+                try:
+                    if hasattr(m, 'subject') and m.subject:
+                        subj_name = getattr(
+                            m.subject, 'subject_name',
+                            getattr(m.subject, 'name', 'Unknown')
+                        )
+                    elif m.subject_id:
+                        subj = db.query(Subject).filter(
+                            Subject.subject_id == m.subject_id
+                        ).first()
+                        if subj:
+                            subj_name = subj.subject_name
+                except Exception:
+                    pass
+
+                # Get exam type from marks.exam column
+                exam_type = str(getattr(m, 'exam', '') or '')
+
+                # Get mid1 and mid2 separately if they exist
+                mid1_val = getattr(m, 'mid1', None)
+                mid2_val = getattr(m, 'mid2', None)
+                marks_val = getattr(m, 'marks', None)
+                total_val = getattr(m, 'total', None)
+
+                # Calculate score and total
+                score = 0.0
+                out_of = 30.0  # Default for mid exams
+
+                if marks_val is not None:
+                    try:
+                        score = float(marks_val)
+                    except Exception:
+                        score = 0.0
+
+                if total_val is not None:
+                    try:
+                        t = float(total_val)
+                        if t > 0:
+                            out_of = t
+                    except Exception:
+                        pass
+
+                # Calculate percentage safely
+                pct = round((score / out_of) * 100, 1) if out_of > 0 else 0.0
 
                 subject_marks.append({
-                    "subject": label,
-                    "raw_subject": subj_name,
-                    "exam_type": str(exam_type),
+                    "subject": subj_name,
+                    "exam_type": exam_type,
                     "score": score,
                     "out_of": out_of,
-                    "pct": pct
+                    "pct": pct,
+                    "mid1": float(mid1_val) if mid1_val else None,
+                    "mid2": float(mid2_val) if mid2_val else None,
                 })
+
                 total_pct += pct
                 count += 1
+
             except Exception:
+                traceback.print_exc()
                 continue
-        
+
         result["subject_marks"] = subject_marks
-        result["overall_avg"] = round(total_pct / count, 1) if count > 0 else 0
+        result["overall_avg"] = round(
+            total_pct / count, 1
+        ) if count > 0 else 0.0
+
     except Exception:
         traceback.print_exc()
     return result
 
 def get_student_assignments_detail(student_id: int, db: Session) -> dict:
-    result = {"pending_assignments": 0, "submitted_assignments": 0}
+    result = {
+        "pending_assignments": 0,
+        "submitted_assignments": 0,
+        "total_assignments": 0,
+        "assignment_details": []
+    }
     try:
-        student = db.query(Student).filter(Student.student_id == student_id).first()
-        if student:
-            assignments = db.query(Assignment).filter(
-                Assignment.year == student.year,
-                Assignment.section == student.section,
-                Assignment.is_active == True
-            ).all()
-            
-            submissions = db.query(AssignmentSubmission).filter(
-                AssignmentSubmission.student_id == student_id
-            ).all()
-            
-            submitted_ids = {s.assignment_id for s in submissions}
-            
-            pending_count = sum(1 for a in assignments if a.id not in submitted_ids)
-            
-            result["pending_assignments"] = pending_count
-            result["submitted_assignments"] = len(submissions)
+        from models import Student, Assignment, AssignmentSubmission
+
+        # Get student year and section (matches working query)
+        student = db.query(Student).filter(
+            Student.student_id == student_id
+        ).first()
+
+        if not student:
+            return result
+
+        year = student.year
+        section = student.section
+
+        # Get all active assignments for this class
+        # This matches EXACTLY the query in the SQL log
+        all_assignments = db.query(Assignment).filter(
+            Assignment.year == year,
+            Assignment.section == section,
+            Assignment.is_active == True
+        ).all()
+
+        result["total_assignments"] = len(all_assignments)
+
+        if not all_assignments:
+            return result
+
+        # Get this student's submissions
+        submissions = db.query(AssignmentSubmission).filter(
+            AssignmentSubmission.student_id == student_id
+        ).all()
+
+        # Build submitted assignment IDs
+        submitted_ids = set()
+        for sub in submissions:
+            is_sub = getattr(sub, 'is_submitted', None)
+            status = getattr(sub, 'status', None)
+            # Consider submitted if is_submitted=True OR status='submitted'
+            if (is_sub is True or
+                    str(status).lower() in ['submitted', 'done', '1', 'true']):
+                aid = getattr(sub, 'assignment_id', None)
+                if aid:
+                    submitted_ids.add(aid)
+
+        submitted_count = 0
+        pending_count = 0
+        pending_details = []
+
+        for assignment in all_assignments:
+            if assignment.id in submitted_ids:
+                submitted_count += 1
+            else:
+                pending_count += 1
+                title = getattr(assignment, 'title', 'Assignment')
+                due = getattr(assignment, 'due_date', None)
+                pending_details.append({
+                    "title": str(title),
+                    "due_date": str(due) if due else "No deadline set"
+                })
+
+        result["pending_assignments"] = pending_count
+        result["submitted_assignments"] = submitted_count
+        result["assignment_details"] = pending_details[:5]
+
+        print(f"[ASSIGNMENTS] student={student_id} "
+              f"year={year} section={section} "
+              f"total={len(all_assignments)} "
+              f"submitted={submitted_count} "
+              f"pending={pending_count}")
+
     except Exception:
         traceback.print_exc()
     return result
@@ -654,16 +772,18 @@ def get_teacher_class_detail(teacher_id: int, db: Session) -> dict:
         
         subject_ids = [fs.subject_id for fs in faculty_subjects]
         
-        # Get subject names
+        # Get subject names — PK is subject_id NOT id
         try:
             from models import Subject
-            subjs = db.query(Subject).filter(Subject.id.in_(subject_ids)).all()
+            subjs = db.query(Subject).filter(
+                Subject.subject_id.in_(subject_ids)
+            ).all()
             result["subjects"] = [
-                getattr(s, "subject_name", getattr(s, "name", "Unknown"))
+                s.subject_name or str(s.subject_id)
                 for s in subjs
             ]
         except Exception:
-            pass
+            traceback.print_exc()
         
         # Student IDs in this teacher's subjects
         student_ids_raw = db.query(Attendance.student_id).filter(

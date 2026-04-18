@@ -148,3 +148,12 @@ http://127.0.0.1:8000/docs
 
 CTRL + C
 uvicorn main:app --reload
+
+
+cd "C:\Users\my pc\OneDrive\Desktop\GVP-MAAA\gvp-maaa\Backend"
+.\venv\Scripts\python.exe check_status.py
+
+
+[CHAT] role=student user_id=... msg=what is my machine learning attendance
+[GENERATOR] Calling Gemini for: what is my machine learning attendance
+[GENERATOR] Gemini replied: Your Machine Learning attendance is...

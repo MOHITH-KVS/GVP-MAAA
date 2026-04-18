@@ -24,6 +24,7 @@ export default function TeacherSignIn() {
   const [loginSuccess, setLoginSuccess] = useState(false);
   const emailRef = useRef(null);
   const passwordRef = useRef(null);
+  const formRef = useRef(null);
 
   useEffect(() => {
     emailRef.current?.focus();
@@ -39,12 +40,12 @@ export default function TeacherSignIn() {
 
   const validateField = (field, values) => {
     if (field === "email") {
-      if (!values.email.trim()) return "Please enter your email.";
-      if (!isValidCollegeEmail(values.email)) return "Please use your official college email (@gvpcdpgc.edu.in).";
+      if (!values.email.trim()) return "Enter your college email address.";
+      if (!isValidCollegeEmail(values.email)) return "Enter a valid college email (e.g., name@gvpcdpgc.edu.in).";
       return "";
     }
     if (field === "password") {
-      if (!values.password) return "Please enter your password.";
+      if (!values.password) return "Enter your password.";
       return "";
     }
     return "";
@@ -94,7 +95,7 @@ export default function TeacherSignIn() {
 
   const handleSignIn = async (e) => {
   e.preventDefault();
-  if (loading) return;
+  if (loading || loginSuccess) return;
   setError("");
 
   const clientErrors = {
@@ -148,14 +149,13 @@ export default function TeacherSignIn() {
 
   const handleEnterToNext = (e, nextRef) => {
     if (e.key !== "Enter") return;
-    if (!nextRef?.current) return;
+    if (nextRef?.current) {
+      e.preventDefault();
+      nextRef.current.focus();
+      return;
+    }
     e.preventDefault();
-    nextRef.current.focus();
-  };
-
-  const isFieldValid = (field, value) => {
-    const interacted = touched[field] || typingStarted[field];
-    return interacted && String(value || "").trim() && !fieldErrors[field];
+    if (!loading && !loginSuccess) formRef.current?.requestSubmit();
   };
 
   const handleCapsLock = (e) => {
@@ -227,7 +227,7 @@ export default function TeacherSignIn() {
           </p>
         </div>
 
-        <form className="space-y-5" onSubmit={handleSignIn}>
+        <form ref={formRef} className="space-y-5" onSubmit={handleSignIn}>
 
           <Input
             label="College email"
@@ -251,9 +251,6 @@ export default function TeacherSignIn() {
             onKeyDown={(e) => handleEnterToNext(e, passwordRef)}
           />
           {fieldErrors.email && <p className="text-sm text-red-600">{fieldErrors.email}</p>}
-          {!fieldErrors.email && isFieldValid("email", email) && (
-            <p className="text-sm text-emerald-600" role="status" aria-live="polite">✔ Looks good</p>
-          )}
 
           <div className="relative">
             <Input
@@ -279,6 +276,7 @@ export default function TeacherSignIn() {
               onKeyUp={handleCapsLock}
               onKeyDown={(e) => {
                 handleCapsLock(e);
+                handleEnterToNext(e, null);
               }}
             />
 
@@ -296,9 +294,6 @@ export default function TeacherSignIn() {
           </div>
 
           {fieldErrors.password && <p className="text-sm text-red-600">{fieldErrors.password}</p>}
-          {!fieldErrors.password && isFieldValid("password", password) && (
-            <p className="text-sm text-emerald-600" role="status" aria-live="polite">✔ Looks good</p>
-          )}
           {capsLockOn && (
             <p className="text-xs text-amber-600" role="status" aria-live="polite">
               Caps Lock is on

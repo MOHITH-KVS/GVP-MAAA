@@ -7,7 +7,6 @@ import traceback
 
 from auth import get_current_user
 from database import get_db
-from rag.agent_pipeline import run_chat_pipeline
 router = APIRouter(prefix="/chat", tags=["RAG Chatbot"])
 
 class ChatRequest(BaseModel):
@@ -46,28 +45,61 @@ async def chat_message(
 ):
     import traceback
     try:
+        # ── Resolve user identity ─────────────────────────────────
         if isinstance(current_user, dict):
             user_id = current_user.get("user_id", 1)
-            role = current_user.get("role", "student")
+            role    = current_user.get("role", "student")
         else:
             user_id = getattr(current_user, 'user_id', 1)
-            role = getattr(current_user, 'role', 'student')
+            role    = getattr(current_user, 'role', 'student')
 
         print(f"[CHAT] role={role} user_id={user_id} msg={request.message[:60]}")
 
+        # ── Access control ────────────────────────────────────────
+        try:
+            from rag.query_router import is_query_allowed
+            allowed, denial = is_query_allowed(request.message, role)
+            if not allowed:
+                return {"reply": denial, "role": role, "allowed": False}
+        except Exception:
+            pass   # if query_router is missing, skip check
+
         history = normalize_history(request.history or [])
 
-        reply = run_chat_pipeline(
-            user_id=int(user_id),
-            role=str(role),
-            message=str(request.message),
-            history=history,
-            db=db
-        )
+        # ── STEP 1: RETRIEVE — query the database ─────────────────
+        role_lower = str(role).lower()
+        try:
+            from rag.retriever import (
+                retrieve_student_data,
+                retrieve_teacher_data,
+                retrieve_admin_data
+            )
+            if role_lower == "student":
+                retrieved = retrieve_student_data(int(user_id), db)
+            elif role_lower in ("teacher", "faculty"):
+                retrieved = retrieve_teacher_data(int(user_id), db)
+            else:
+                retrieved = retrieve_admin_data(db)
+        except Exception:
+            traceback.print_exc()
+            retrieved = {}
 
-        if not reply or not str(reply).strip():
-            reply = ("I could not find specific data for that query. "
-                    "Please check your dashboard.")
+        # ── STEP 2: GENERATE — call Gemini with retrieved context ──
+        try:
+            from rag.generator import generate_answer
+            reply = generate_answer(
+                role=role_lower,
+                retrieved_data=retrieved,
+                user_question=request.message,
+                conversation_history=history
+            )
+        except Exception:
+            traceback.print_exc()
+            reply = None
+
+        if not reply or len(str(reply).strip()) < 3:
+            reply = ("I couldn't find specific data for that. "
+                     "Please check your dashboard.")
 
         print(f"[CHAT] reply={str(reply)[:80]}")
         return {"reply": str(reply), "role": str(role), "allowed": True}
@@ -78,8 +110,8 @@ async def chat_message(
         return JSONResponse(
             status_code=200,
             content={
-                "reply": "I'm having trouble accessing your data. Please try again in a moment.",
-                "role": "unknown",
+                "reply": "I'm having trouble accessing your data. Please try again.",
+                "role":    "unknown",
                 "allowed": True
             }
         )

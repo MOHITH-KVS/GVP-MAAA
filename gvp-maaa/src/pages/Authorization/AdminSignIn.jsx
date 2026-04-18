@@ -24,6 +24,7 @@ export default function AdminSignIn() {
   const emailRef = useRef(null);
   const passwordRef = useRef(null);
   const adminKeyRef = useRef(null);
+  const formRef = useRef(null);
 
   useEffect(() => {
     emailRef.current?.focus();
@@ -33,15 +34,15 @@ export default function AdminSignIn() {
 
   const validateField = (field, values) => {
     if (field === "email") {
-      if (!values.email.trim()) return "Admin email is required.";
+      if (!values.email.trim()) return "Enter your administrator email address.";
       return "";
     }
     if (field === "password") {
-      if (!values.password) return "Password is required.";
+      if (!values.password) return "Enter your password.";
       return "";
     }
     if (field === "adminKey") {
-      if (!values.adminKey) return "Admin access key is required.";
+      if (!values.adminKey) return "Enter your administrator access key.";
       return "";
     }
     return "";
@@ -96,7 +97,7 @@ export default function AdminSignIn() {
 
   const handleSignIn = async (e) => {
     e.preventDefault();
-    if (loading) return;
+    if (loading || loginSuccess) return;
     setError("");
 
     const clientErrors = {
@@ -151,14 +152,13 @@ export default function AdminSignIn() {
 
   const handleEnterToNext = (e, nextRef) => {
     if (e.key !== "Enter") return;
-    if (!nextRef?.current) return;
+    if (nextRef?.current) {
+      e.preventDefault();
+      nextRef.current.focus();
+      return;
+    }
     e.preventDefault();
-    nextRef.current.focus();
-  };
-
-  const isFieldValid = (field, value) => {
-    const interacted = touched[field] || typingStarted[field];
-    return interacted && String(value || "").trim() && !fieldErrors[field];
+    if (!loading && !loginSuccess) formRef.current?.requestSubmit();
   };
 
   const handleCapsLock = (e) => {
@@ -235,7 +235,7 @@ export default function AdminSignIn() {
         </div>
 
         {/* FORM */}
-        <form className="space-y-4" onSubmit={handleSignIn}>
+        <form ref={formRef} className="space-y-4" onSubmit={handleSignIn}>
 
           <Input
             label="Admin Email"
@@ -259,9 +259,6 @@ export default function AdminSignIn() {
             onKeyDown={(e) => handleEnterToNext(e, passwordRef)}
           />
           {fieldErrors.email && <p className="text-sm text-red-400">{fieldErrors.email}</p>}
-          {!fieldErrors.email && isFieldValid("email", email) && (
-            <p className="text-sm text-emerald-400" role="status" aria-live="polite">✔ Looks good</p>
-          )}
 
           {/* PASSWORD */}
           <div className="relative">
@@ -305,9 +302,6 @@ export default function AdminSignIn() {
             </button>
           </div>
           {fieldErrors.password && <p className="text-sm text-red-400">{fieldErrors.password}</p>}
-          {!fieldErrors.password && isFieldValid("password", password) && (
-            <p className="text-sm text-emerald-400" role="status" aria-live="polite">✔ Looks good</p>
-          )}
           {capsLockOn && (
             <p className="text-xs text-amber-400" role="status" aria-live="polite">Caps Lock is on</p>
           )}
@@ -331,11 +325,9 @@ export default function AdminSignIn() {
             }}
             onBlur={() => handleBlur("adminKey")}
             inputRef={adminKeyRef}
+            onKeyDown={(e) => handleEnterToNext(e, null)}
           />
           {fieldErrors.adminKey && <p className="text-sm text-red-400">{fieldErrors.adminKey}</p>}
-          {!fieldErrors.adminKey && isFieldValid("adminKey", adminKey) && (
-            <p className="text-sm text-emerald-400" role="status" aria-live="polite">✔ Looks good</p>
-          )}
 
           {error && (
             <p className="text-sm text-red-400 font-medium">

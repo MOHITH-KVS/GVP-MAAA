@@ -1,0 +1,110 @@
+﻿/faculty/overview")
+def get_faculty_overview(
+    year: int = Query(...),
+    section: str = Query(...),
+    subject_id: int = Query(...),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user["role"] != "faculty":
+        raise HTTPException(status_code=403, detail="Faculty only")
+
+    from models import Student, Mark, User, Attendance, Subject, FacultySubject  # type: ignore
+    from sqlalchemy import or_, func  # type: ignore
+    
+    faculty_id = current_user["user_id"]
+    
+    # ===============================
+    # STEP 1: GET ALL SUBJECTS OF FACULTY
+    # ===============================
+    assigned_subjects = db.query(FacultySubject).filter(
+        FacultySubject.faculty_id == faculty_id,
+        FacultySubject.is_active == True
+    ).all()
+    
+    total_subjects = len({s.subject_id for s in assigned_subjects})
+    
+    # ===============================
+    # STEP 2: TOTAL STUDENTS (ALL CLASSES)
+    # ===============================
+    # Count DISTINCT students across all faculty-assigned subjects
+    total_students = 0
+    if assigned_subjects:
+        subject_ids = [s.subject_id for s in assigned_subjects]
+        total_students = db.query(func.count(func.distinct(Mark.student_id))).filter(
+            Mark.subject_id.in_(subject_ids),
+            Mark.faculty_id == faculty_id
+        ).scalar() or 0
+    
+    faculty_scope = {
+        "total_students": total_students,
+        "total_subjects": total_subjects
+    }
+
+    # ===============================
+    # STEP 3: GET SUBJECT NAME
+    # ===============================
+    subject_obj = db.query(Subject).filter(Subject.subject_id == subject_id).first()
+    subject_name = subject_obj.subject_name if subject_obj else "Subject"
+
+    # ===============================
+    # STEP 4: CURRENT CLASS STUDENTS (SELECTED SUBJECT)
+    # ===============================
+    students_query = db.query(Student.student_id, User.name).join(
+        User, Student.student_id == User.user_id
+    ).filter(
+        Student.year == year,
+        Student.section == section
+    ).all()
+    
+    total_class_students = len(students_query)
+    class_stats = {
+        "current_class_students": total_class_students,
+        "subject_name": subject_name
+    }
+    
+    if not students_query:
+        return {
+            "class_stats": class_stats,
+            "faculty_scope": faculty_scope,
+            "kpis": {
+                "class_avg": 0,
+                "pass_rate": 0,
+                "topper": None,
+                "at_risk_count": 0
+            },
+            "metrics": { "mid1": [], "mid2": [], "total": [], "assignment": [] },
+            "attendance": [],
+            "marks_risk_students": [],
+            "attendance_risk_students": []
+        }
+    
+    student_ids = [s.student_id for s in students_query]
+    student_names = {s.student_id: s.name for s in students_query}
+    
+    # ===============================
+    # STEP 5: FETCH MARKS FOR SELECTED SUBJECT
+    # ===============================
+    marks_query = db.query(Mark.student_id, Mark.exam, Mark.marks).filter(
+        Mark.student_id.in_(student_ids),
+        Mark.subject_id == subject_id
+    ).all()
+
+    metrics = { "mid1": [], "mid2": [], "total": [], "assignment": [] }
+    student_metrics = { sid: {"mid1": 0.0, "mid2": 0.0, "assignment": 0.0, "total": 0.0} for sid in student_ids}
+    
+    # Store individual exam marks for risk analysis
+    exam_marks = { sid: {"mid1": None, "mid2": None, "semester": None} for sid in student_ids}
+    
+    for m in marks_query:
+        if m.marks is None: continue
+        val = float(m.marks)
+        exam = str(m.exam).strip().lower()
+        sid = m.student_id
+        
+        student_metrics[sid]["total"] += val
+        
+        if "mid-1" in exam or "mid 1" in exam or "mid1" in exam:
+            student_metrics[sid]["mid1"] += val
+            exam_marks[sid]["mid1"] = val
+        elif "mid-2" in exam or "mid 2" in exam or "mid2" in ex

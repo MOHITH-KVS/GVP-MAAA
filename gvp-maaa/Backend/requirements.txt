@@ -16,3 +16,4 @@ bcrypt>=4.1.0
 langgraph
 langchain-core
 langchain-community
+google-genai

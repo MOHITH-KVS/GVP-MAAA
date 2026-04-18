@@ -3,18 +3,22 @@ from sqlalchemy.orm import Session
 import traceback
 import os
 
-# Safe Gemini import
+# Gemini import — new google.genai SDK
 try:
-    import google.generativeai as genai
-    GEMINI_KEY = os.getenv("GEMINI_API_KEY", "")
-    if GEMINI_KEY:
-        genai.configure(api_key=GEMINI_KEY)
+    from google import genai as _google_genai
+    from pathlib import Path
+    from dotenv import load_dotenv
+    load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env", override=True)
+    GEMINI_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+    if GEMINI_KEY and GEMINI_KEY.startswith("AIzaSy"):
+        _gemini_client = _google_genai.Client(api_key=GEMINI_KEY)
         GEMINI_AVAILABLE = True
     else:
+        _gemini_client = None
         GEMINI_AVAILABLE = False
 except Exception:
     GEMINI_AVAILABLE = False
-    genai = None
+    _gemini_client = None
 
 from rag.context_builder import (
     build_student_context,
@@ -535,14 +539,19 @@ def build_admin_fallback(context):
 
 def call_gemini(system_prompt: str, message: str, history: list) -> str:
     """Calls Gemini only as an enhancement when available."""
+    if not GEMINI_AVAILABLE or not _gemini_client:
+        return None
     try:
-        model = genai.GenerativeModel("gemini-1.5-flash")
         parts = [system_prompt, "\n\nConversation:\n"]
         for h in history[-4:]:
             label = "User" if h.get("role") == "user" else "Assistant"
             parts.append(f"{label}: {h.get('content', '')}")
         parts.append(f"\nUser: {message}\nAssistant:")
-        response = model.generate_content("\n".join(parts))
+        prompt = "\n".join(parts)
+        response = _gemini_client.models.generate_content(
+            model="models/gemini-2.5-flash",
+            contents=prompt
+        )
         if response and response.text and len(response.text.strip()) > 10:
             return response.text.strip()
     except Exception:

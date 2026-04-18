@@ -1,7 +1,7 @@
 import os
 import time
 try:
-    import google.generativeai as genai
+    from google import genai
 except ImportError:
     genai = None
 

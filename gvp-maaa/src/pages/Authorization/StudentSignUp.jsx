@@ -43,6 +43,7 @@ export default function StudentSignUp() {
   const rollRef = useRef(null);
   const passwordRef = useRef(null);
   const confirmPasswordRef = useRef(null);
+  const formRef = useRef(null);
 
   useEffect(() => {
     nameRef.current?.focus();
@@ -112,21 +113,21 @@ export default function StudentSignUp() {
 
   const validateField = (field, values) => {
     if (field === "name") {
-      if (!values.name.trim()) return "Name cannot be empty";
+      if (!values.name.trim()) return "Enter your full name.";
       return "";
     }
     if (field === "roll") {
-      if (!values.roll) return "Roll number is required";
-      if (!/^\d{10}$/.test(values.roll)) return "Roll number must be exactly 10 digits";
+      if (!values.roll) return "Enter your roll number.";
+      if (!/^\d{10}$/.test(values.roll)) return "Roll number must contain exactly 10 digits.";
       return "";
     }
     if (field === "password") {
-      if (!values.password) return "Password is required";
+      if (!values.password) return "Enter a password.";
       return "";
     }
     if (field === "confirmPassword") {
-      if (!values.confirmPassword) return "Please confirm your password";
-      if (values.password !== values.confirmPassword) return "Passwords do not match";
+      if (!values.confirmPassword) return "Confirm your password.";
+      if (values.password !== values.confirmPassword) return "Passwords do not match.";
       return "";
     }
     return "";
@@ -174,11 +175,6 @@ export default function StudentSignUp() {
     }
   };
 
-  const isFieldValid = (field, value) => {
-    const interacted = touched[field] || typingStarted[field];
-    return interacted && String(value || "").trim() && !validationErrors[field] && !fieldErrors[field];
-  };
-
   const handleCapsLock = (e, setter) => {
     setter(Boolean(e.getModifierState && e.getModifierState("CapsLock")));
   };
@@ -204,7 +200,7 @@ export default function StudentSignUp() {
   /* ===== SUBMIT ===== */
   const handleSubmit = async (e) => {
   e.preventDefault();
-  if (loading) return;   // 🚫 BLOCK double click
+  if (loading || success) return;   // 🚫 BLOCK duplicate submit
 
   setLoading(true);
   setError("");
@@ -232,14 +228,14 @@ export default function StudentSignUp() {
 
   // 🔹 ROLL NUMBER VALIDATION
   if (!isRollValid) {
-  setError("Roll number must be exactly 10 digits");
+  setError("Roll number must contain exactly 10 digits.");
   setLoading(false);
   return;
 }
 
   // 🔹 Password match validation (FINAL SAFETY)
   if (form.password !== form.confirmPassword) {
-    setError("Passwords do not match");
+    setError("Passwords do not match.");
     setLoading(false);
     return;
   }
@@ -301,9 +297,13 @@ export default function StudentSignUp() {
 
   const handleEnterToNext = (e, nextRef) => {
     if (e.key !== "Enter") return;
-    if (!nextRef?.current) return;
+    if (nextRef?.current) {
+      e.preventDefault();
+      nextRef.current.focus();
+      return;
+    }
     e.preventDefault();
-    nextRef.current.focus();
+    if (!loading && !success) formRef.current?.requestSubmit();
   };
 
   return (
@@ -331,7 +331,7 @@ export default function StudentSignUp() {
         </div>
 
         {/* FORM */}
-        <form className="space-y-3" onSubmit={handleSubmit}>
+        <form ref={formRef} className="space-y-3" onSubmit={handleSubmit}>
 
           <Input
             label="Full Name"
@@ -357,9 +357,6 @@ export default function StudentSignUp() {
             <p className="text-sm text-red-600">
               {validationErrors.name}
             </p>
-          )}
-          {!validationErrors.name && isFieldValid("name", form.name) && (
-            <p className="text-sm text-emerald-600" role="status" aria-live="polite">✔ Looks good</p>
           )}
 
           <Input
@@ -388,19 +385,16 @@ export default function StudentSignUp() {
             )}
 
             {/* 🔴 LIVE ROLL VALIDATION MESSAGE */}
-            {(validationErrors.roll || (touched.roll && form.roll)) && (
-              isRollValid ? (
-                <p className="text-sm text-emerald-600">
-                  ✔ Valid roll number
-                </p>
-              ) : (
-                <p className="text-sm text-red-600">
-                  {validationErrors.roll || "Roll number must be exactly 10 digits"}
-                </p>
-              )
+            {(validationErrors.roll || (touched.roll && form.roll && !isRollValid)) && (
+              <p className="text-sm text-red-600">
+                {validationErrors.roll || "Roll number must contain exactly 10 digits."}
+              </p>
           )}
-          {!validationErrors.roll && isFieldValid("roll", form.roll) && (
-            <p className="text-sm text-emerald-600" role="status" aria-live="polite">✔ Looks good</p>
+
+          {validationErrors.password && (
+            <p className="text-sm text-red-600">
+              {validationErrors.password}
+            </p>
           )}
 
           <Input
@@ -448,9 +442,6 @@ export default function StudentSignUp() {
               {showPassword ? <VisibilityOffIcon fontSize="small" /> : <VisibilityIcon fontSize="small" />}
             </button>
           </div>
-          {!validationErrors.password && isFieldValid("password", form.password) && (
-            <p className="text-sm text-emerald-600" role="status" aria-live="polite">✔ Looks good</p>
-          )}
           {capsLockOnPassword && (
             <p className="text-xs text-amber-600" role="status" aria-live="polite">Caps Lock is on</p>
           )}
@@ -507,6 +498,7 @@ export default function StudentSignUp() {
               onKeyUp={(e) => handleCapsLock(e, setCapsLockOnConfirm)}
               onKeyDown={(e) => {
                 handleCapsLock(e, setCapsLockOnConfirm);
+                handleEnterToNext(e, null);
               }}
             />
             <button
@@ -518,16 +510,10 @@ export default function StudentSignUp() {
             </button>
           </div>
           {/* PASSWORD MATCH STATUS */}
-          {form.confirmPassword && (
-            form.password === form.confirmPassword ? (
-              <p className="text-sm text-emerald-600">
-                ✔ Passwords match
-              </p>
-            ) : (
-              <p className="text-sm text-red-600">
-                  {validationErrors.confirmPassword || "Passwords do not match"}
-              </p>
-            )
+          {form.confirmPassword && form.password !== form.confirmPassword && (
+            <p className="text-sm text-red-600">
+              {validationErrors.confirmPassword || "Passwords do not match."}
+            </p>
           )}
           {capsLockOnConfirm && (
             <p className="text-xs text-amber-600" role="status" aria-live="polite">Caps Lock is on</p>

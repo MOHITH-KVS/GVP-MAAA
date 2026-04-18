@@ -61,6 +61,7 @@ export default function TeacherSignUp() {
   const emailRef = useRef(null);
   const passwordRef = useRef(null);
   const confirmPasswordRef = useRef(null);
+  const formRef = useRef(null);
 
   useEffect(() => {
     nameRef.current?.focus();
@@ -96,9 +97,13 @@ export default function TeacherSignUp() {
 
   const handleEnterToNext = (e, nextRef) => {
     if (e.key !== "Enter") return;
-    if (!nextRef?.current) return;
+    if (nextRef?.current) {
+      e.preventDefault();
+      nextRef.current.focus();
+      return;
+    }
     e.preventDefault();
-    nextRef.current.focus();
+    if (!loading && !success) formRef.current?.requestSubmit();
   };
 
 
@@ -122,29 +127,29 @@ export default function TeacherSignUp() {
 
   const validateField = (field, values) => {
     if (field === "name") {
-      if (!values.name.trim()) return "Name cannot be empty";
+      if (!values.name.trim()) return "Enter your full name.";
       return "";
     }
     if (field === "employeeId") {
-      if (!values.employeeId.trim()) return "Employee ID is required";
+      if (!values.employeeId.trim()) return "Enter your employee ID.";
       return "";
     }
     if (field === "departmentId") {
-      if (!values.departmentId) return "Please select your department";
+      if (!values.departmentId) return "Select your department.";
       return "";
     }
     if (field === "email") {
-      if (!values.email.trim()) return "Please enter your email";
-      if (!isValidCollegeEmail(values.email)) return "Please use your college email (@gvpcdpgc.edu.in)";
+      if (!values.email.trim()) return "Enter your college email address.";
+      if (!isValidCollegeEmail(values.email)) return "Enter a valid college email (e.g., name@gvpcdpgc.edu.in).";
       return "";
     }
     if (field === "password") {
-      if (!values.password) return "Password is required";
+      if (!values.password) return "Enter a password.";
       return "";
     }
     if (field === "confirmPassword") {
-      if (!values.confirmPassword) return "Please confirm your password";
-      if (values.password !== values.confirmPassword) return "Passwords do not match";
+      if (!values.confirmPassword) return "Confirm your password.";
+      if (values.password !== values.confirmPassword) return "Passwords do not match.";
       return "";
     }
     return "";
@@ -192,11 +197,6 @@ export default function TeacherSignUp() {
     }
   };
 
-  const isFieldValid = (field, value) => {
-    const interacted = touched[field] || typingStarted[field];
-    return interacted && String(value || "").trim() && !validationErrors[field] && !fieldErrors[field];
-  };
-
   const handleCapsLock = (e, setter) => {
     setter(Boolean(e.getModifierState && e.getModifierState("CapsLock")));
   };
@@ -240,7 +240,7 @@ export default function TeacherSignUp() {
 
   const handleSubmit = async (e) => {
   e.preventDefault();
-  if (loading) return;   // prevent double click
+  if (loading || success) return;   // prevent duplicate submit
   setLoading(true);
   setError("");
   setSuccess("");
@@ -274,28 +274,28 @@ export default function TeacherSignUp() {
 
 
   if (!form.name || !form.email || !form.password || !form.confirmPassword) {
-  setError("Please fill in all fields");
+  setError("Complete all required fields.");
   setLoading(false);
   return;
  }
 
 
   if (!form.departmentId) {
-  setError("Please select your department");
+  setError("Select your department.");
   setLoading(false);   // ✅ ADD
   return;
  }
 
 
   if (form.password !== form.confirmPassword) {
-  setError("Passwords do not match");
+  setError("Passwords do not match.");
   setLoading(false);
   return;
  }
 
 
   if (!isValidCollegeEmail(form.email)) {
-  setError("Please use your official college email (@gvpcdpgc.edu.in)");
+  setError("Enter a valid college email (e.g., name@gvpcdpgc.edu.in).");
   setLoading(false);
   return;
  }
@@ -365,7 +365,7 @@ export default function TeacherSignUp() {
           </p>
         </div>
 
-        <form className="space-y-3" onSubmit={handleSubmit}>
+        <form ref={formRef} className="space-y-3" onSubmit={handleSubmit}>
           <Input
             label="Full Name"
             name="name"
@@ -384,9 +384,6 @@ export default function TeacherSignUp() {
             <p className="text-sm text-red-600">
               {validationErrors.name}
             </p>
-          )}
-          {!validationErrors.name && isFieldValid("name", form.name) && (
-            <p className="text-sm text-emerald-600" role="status" aria-live="polite">✔ Looks good</p>
           )}
 
           <Input
@@ -407,9 +404,6 @@ export default function TeacherSignUp() {
             <p className="text-sm text-red-600">
               {validationErrors.employeeId}
             </p>
-          )}
-          {!validationErrors.employeeId && isFieldValid("employeeId", form.employeeId) && (
-            <p className="text-sm text-emerald-600" role="status" aria-live="polite">✔ Looks good</p>
           )}
 
           {/* DEPARTMENT DROPDOWN */}
@@ -441,9 +435,6 @@ export default function TeacherSignUp() {
             {validationErrors.departmentId && (
               <p className="text-sm text-red-600 mt-1">{validationErrors.departmentId}</p>
             )}
-            {!validationErrors.departmentId && isFieldValid("departmentId", form.departmentId) && (
-              <p className="text-sm text-emerald-600 mt-1" role="status" aria-live="polite">✔ Looks good</p>
-            )}
           </div>
           <Input
             label="Email"
@@ -464,9 +455,6 @@ export default function TeacherSignUp() {
             <p className="text-sm text-red-600">
               {validationErrors.email}
             </p>
-          )}
-          {!validationErrors.email && isFieldValid("email", form.email) && (
-            <p className="text-sm text-emerald-600" role="status" aria-live="polite">✔ Looks good</p>
           )}
 
 
@@ -503,8 +491,8 @@ export default function TeacherSignUp() {
               {showPassword ? <VisibilityOffIcon fontSize="small" /> : <VisibilityIcon fontSize="small" />}
             </button>
           </div>
-          {!validationErrors.password && isFieldValid("password", form.password) && (
-            <p className="text-sm text-emerald-600" role="status" aria-live="polite">✔ Looks good</p>
+          {validationErrors.password && (
+            <p className="text-sm text-red-600">{validationErrors.password}</p>
           )}
           {capsLockOnPassword && (
             <p className="text-xs text-amber-600" role="status" aria-live="polite">Caps Lock is on</p>
@@ -558,16 +546,13 @@ export default function TeacherSignUp() {
               onKeyUp={(e) => handleCapsLock(e, setCapsLockOnConfirm)}
               onKeyDown={(e) => {
                 handleCapsLock(e, setCapsLockOnConfirm);
+                handleEnterToNext(e, null);
               }}
             />
             {(validationErrors.confirmPassword || form.confirmPassword) && (
-              isPasswordMatch ? (
-                <p className="text-sm text-emerald-600">
-                  ✔ Passwords match
-                </p>
-              ) : (
+              !isPasswordMatch && (
                 <p className="text-sm text-red-600">
-                  {validationErrors.confirmPassword || "Passwords do not match"}
+                  {validationErrors.confirmPassword || "Passwords do not match."}
                 </p>
               )
             )}
