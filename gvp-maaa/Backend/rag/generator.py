@@ -273,6 +273,21 @@ def format_data_for_gemini(data: dict, role: str) -> str:
                 f"({risk.get('percentage')}%) are at risk"
             )
 
+        marks = data.get("class_marks", {})
+        if marks:
+            lines.append(
+                f"\nCLASS MARKS:\n"
+                f"Average: {marks.get('average_percentage')}%"
+            )
+            subject_marks = marks.get("subject_marks", [])
+            if subject_marks:
+                lines.append("Subject-wise breakdown:")
+                for subject in subject_marks[:8]:
+                    lines.append(
+                        f"  - {subject.get('subject')}: {subject.get('average_percentage')}% "
+                        f"across {subject.get('records')} records"
+                    )
+
         assg = data.get("assignments", {})
         pending_total = assg.get("pending_submissions", 0)
         details = assg.get("assignment_details", [])

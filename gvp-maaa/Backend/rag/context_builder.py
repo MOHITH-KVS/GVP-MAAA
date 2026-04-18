@@ -189,7 +189,7 @@ def build_teacher_context(teacher_id: int, db: Session) -> dict:
 
                 if subject_ids:
                     subjects = db.query(Subject).filter(
-                        Subject.id.in_(subject_ids)
+                        Subject.subject_id.in_(subject_ids)
                     ).all()
                     context["subjects"] = [
                         getattr(s, 'subject_name',
@@ -259,6 +259,57 @@ def build_teacher_context(teacher_id: int, db: Session) -> dict:
                     except Exception:
                         continue
                 context["at_risk_count"] = at_risk
+        except Exception:
+            traceback.print_exc()
+
+        # Marks for the teacher's subjects.
+        try:
+            from models import Mark, Subject
+
+            mark_rows = db.query(Mark).filter(
+                Mark.subject_id.in_(subject_ids)
+            ).all()
+
+            subject_marks_map = {}
+            for mark in mark_rows:
+                subject_id = getattr(mark, 'subject_id', None)
+                if subject_id is None:
+                    continue
+
+                score = float(mark.marks) if mark.marks is not None else 0.0
+                total = float(mark.total) if mark.total and float(mark.total) > 0 else 30.0
+                percentage = round((score / total) * 100, 1) if total > 0 else 0.0
+
+                bucket = subject_marks_map.setdefault(subject_id, {
+                    "subject": f"Subject_{subject_id}",
+                    "scores": []
+                })
+                bucket["scores"].append(percentage)
+
+            if subject_marks_map:
+                subject_lookup = db.query(Subject).filter(
+                    Subject.subject_id.in_(list(subject_marks_map.keys()))
+                ).all()
+                for subj in subject_lookup:
+                    subject_id = getattr(subj, 'subject_id', None)
+                    if subject_id in subject_marks_map:
+                        subject_marks_map[subject_id]["subject"] = (
+                            subj.subject_name or f"Subject_{subject_id}"
+                        )
+
+                subject_marks = []
+                averages = []
+                for subject_id, entry in subject_marks_map.items():
+                    avg = round(sum(entry["scores"]) / len(entry["scores"]), 1)
+                    averages.append(avg)
+                    subject_marks.append({
+                        "subject": entry["subject"],
+                        "average_percentage": avg,
+                        "records": len(entry["scores"])
+                    })
+
+                context["subject_marks"] = subject_marks
+                context["class_avg_marks"] = round(sum(averages) / len(averages), 1)
         except Exception:
             traceback.print_exc()
         
@@ -392,18 +443,32 @@ def build_admin_context(db: Session) -> dict:
 
     # Department breakdown — SQL aggregation per dept
     try:
+        from models import User
+
         departments = db.query(Department).all()
         breakdown = []
         low_att_depts = []
 
         for dept in departments[:10]:
             try:
-                dept_name = dept.name or "Unknown"
-                # Get student_ids for this dept
-                dept_student_ids = db.query(Student.student_id).filter(
-                    Student.department_id == dept.id
-                ).all()
-                dept_ids = [r[0] for r in dept_student_ids]
+                dept_id = (
+                    getattr(dept, "department_id", None) or
+                    getattr(dept, "dept_id", None) or
+                    getattr(dept, "id", None)
+                )
+                dept_name = (
+                    getattr(dept, "name", None) or
+                    getattr(dept, "department_name", None) or
+                    "Unknown"
+                )
+
+                dept_ids = [r[0] for r in db.query(Student.student_id).join(
+                    User, User.user_id == Student.student_id
+                ).filter(
+                    User.department_id == dept_id,
+                    Student.is_deleted == False,
+                    User.is_deleted == False
+                ).all()]
 
                 if not dept_ids:
                     continue
@@ -825,6 +890,57 @@ def get_teacher_class_detail(teacher_id: int, db: Session) -> dict:
             )
         result["at_risk_count"] = at_risk
         result["low_attendance_count"] = low_att
+
+        # Marks for the teacher's subjects.
+        try:
+            from models import Mark, Subject
+
+            mark_rows = db.query(Mark).filter(
+                Mark.subject_id.in_(subject_ids)
+            ).all()
+
+            subject_marks_map = {}
+            for mark in mark_rows:
+                subject_id = getattr(mark, 'subject_id', None)
+                if subject_id is None:
+                    continue
+
+                score = float(mark.marks) if mark.marks is not None else 0.0
+                total = float(mark.total) if mark.total and float(mark.total) > 0 else 30.0
+                percentage = round((score / total) * 100, 1) if total > 0 else 0.0
+
+                bucket = subject_marks_map.setdefault(subject_id, {
+                    "subject": f"Subject_{subject_id}",
+                    "scores": []
+                })
+                bucket["scores"].append(percentage)
+
+            if subject_marks_map:
+                subject_lookup = db.query(Subject).filter(
+                    Subject.subject_id.in_(list(subject_marks_map.keys()))
+                ).all()
+                for subj in subject_lookup:
+                    subject_id = getattr(subj, 'subject_id', None)
+                    if subject_id in subject_marks_map:
+                        subject_marks_map[subject_id]["subject"] = (
+                            subj.subject_name or f"Subject_{subject_id}"
+                        )
+
+                subject_marks = []
+                averages = []
+                for subject_id, entry in subject_marks_map.items():
+                    avg = round(sum(entry["scores"]) / len(entry["scores"]), 1)
+                    averages.append(avg)
+                    subject_marks.append({
+                        "subject": entry["subject"],
+                        "average_percentage": avg,
+                        "records": len(entry["scores"])
+                    })
+
+                result["subject_marks"] = subject_marks
+                result["class_avg_marks"] = round(sum(averages) / len(averages), 1)
+        except Exception:
+            traceback.print_exc()
         
         # Pending submissions
         try:
@@ -843,19 +959,31 @@ def get_admin_department_detail(db: Session) -> dict:
     """Returns per-department breakdown for admin."""
     result = {"department_breakdown": [], "low_attendance_departments": []}
     try:
+        from models import User
+
         departments = db.query(Department).all()
         breakdown = []
         low_depts = []
         
         for dept in departments:
             try:
-                dept_name = getattr(dept, "name",
-                           getattr(dept, "department_name", "Unknown"))
-                
-                dept_students = db.query(Student).filter(
-                    Student.department_id == dept.id
-                ).all()
-                student_ids = [s.student_id for s in dept_students]
+                dept_id = (
+                    getattr(dept, "department_id", None) or
+                    getattr(dept, "dept_id", None) or
+                    getattr(dept, "id", None)
+                )
+                dept_name = getattr(
+                    dept, "name",
+                    getattr(dept, "department_name", "Unknown")
+                )
+
+                student_ids = [r[0] for r in db.query(Student.student_id).join(
+                    User, User.user_id == Student.student_id
+                ).filter(
+                    User.department_id == dept_id,
+                    Student.is_deleted == False,
+                    User.is_deleted == False
+                ).all()]
                 
                 if not student_ids:
                     continue

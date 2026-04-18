@@ -419,6 +419,61 @@ def retrieve_teacher_data(teacher_id: int, db: Session) -> dict:
         except Exception:
             traceback.print_exc()
 
+        # ── CLASS MARKS ─────────────────────────────────────────
+        try:
+            subject_marks_map = {}
+            mark_rows = db.query(Mark).filter(
+                Mark.subject_id.in_(subject_ids)
+            ).all()
+
+            for mark in mark_rows:
+                subject_id = getattr(mark, 'subject_id', None)
+                if subject_id is None:
+                    continue
+
+                score = float(mark.marks) if mark.marks is not None else 0.0
+                total = float(mark.total) if mark.total and float(mark.total) > 0 else 30.0
+                percentage = round((score / total) * 100, 1) if total > 0 else 0.0
+
+                bucket = subject_marks_map.setdefault(subject_id, {
+                    "subject": f"Subject_{subject_id}",
+                    "scores": []
+                })
+                bucket["scores"].append(percentage)
+
+            if subject_marks_map:
+                subject_names = {}
+                try:
+                    subject_lookup = db.query(Subject).filter(
+                        Subject.subject_id.in_(list(subject_marks_map.keys()))
+                    ).all()
+                    subject_names = {
+                        subj.subject_id: (subj.subject_name or f"Subject_{subj.subject_id}")
+                        for subj in subject_lookup
+                    }
+                except Exception:
+                    pass
+
+                subject_marks = []
+                averages = []
+                for subject_id, entry in subject_marks_map.items():
+                    if subject_id in subject_names:
+                        entry["subject"] = subject_names[subject_id]
+                    avg = round(sum(entry["scores"]) / len(entry["scores"]), 1)
+                    averages.append(avg)
+                    subject_marks.append({
+                        "subject": entry["subject"],
+                        "average_percentage": avg,
+                        "records": len(entry["scores"]),
+                    })
+
+                data["class_marks"] = {
+                    "average_percentage": round(sum(averages) / len(averages), 1),
+                    "subject_marks": subject_marks
+                }
+        except Exception:
+            traceback.print_exc()
+
         # ── PENDING SUBMISSIONS (per assignment) ──────────────────
         try:
             from models import Assignment, AssignmentSubmission, FacultySubject, Student as St
