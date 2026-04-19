@@ -5,6 +5,7 @@ import CircularProgress from "@mui/material/CircularProgress";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
 import axios from "axios";
+import { sendAnalyticsEvent, startNewAnalyticsSession } from "../../utils/analyticsSession";
 
 /* ===== ALLOWED COLLEGE DOMAINS ===== */
 const ALLOWED_DOMAINS = ["@gvpcdpgc.edu.in"];
@@ -127,6 +128,23 @@ export default function TeacherSignIn() {
     localStorage.setItem("access_token", data.access_token);
     localStorage.setItem("role", "faculty");
     localStorage.setItem("user", JSON.stringify(data));
+    startNewAnalyticsSession({
+      user_id: data.user_id,
+      role: "faculty",
+      department: data.department ?? data.department_id ?? null,
+      year: data.year ?? null,
+      section: data.section ?? null,
+    });
+    await sendAnalyticsEvent({
+      page: "/login",
+      action: "login",
+      role: "teacher",
+      metadata: {
+        department: data.department ?? data.department_id ?? null,
+        year: data.year ?? null,
+        section: data.section ?? null,
+      },
+    });
 
     // role check
     if (data.role !== "faculty") {

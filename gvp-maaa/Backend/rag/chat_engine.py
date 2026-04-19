@@ -95,6 +95,9 @@ TEACHER_INTENTS = {
         "assignment", "submission", "pending", "submitted",
         "not submitted", "late", "deadline"
     ],
+    "alerts": [
+        "alert", "alerts", "warning", "warnings", "notification", "notifications"
+    ],
     "summary": [
         "summary", "overview", "this week", "focus", "what should",
         "help", "hello", "hi", "hey", "report", "status"
@@ -188,7 +191,7 @@ def fetch_precise_context(user_id: int, role: str, intent: str, db: Session) -> 
                 return build_student_context(user_id, db)
         
         elif role in ("teacher", "faculty"):
-            if intent in ("attendance", "risk", "marks"):
+            if intent in ("attendance", "risk", "marks", "assignments", "alerts", "summary"):
                 return get_teacher_class_detail(user_id, db)
             else:
                 return build_teacher_context(user_id, db)
@@ -390,10 +393,46 @@ def build_student_answer(intent: str, context: dict, message: str) -> str:
 
 def build_teacher_answer(intent: str, context: dict, message: str) -> str:
     try:
+        msg = (message or "").lower()
+        wants_names = any(
+            k in msg for k in [
+                "name", "names", "roll", "roll no", "roll number",
+                "who", "which student", "student list", "list students"
+            ]
+        )
+
+        def _format_students(students, limit=25):
+            if not students:
+                return "No matching student details available."
+            lines = []
+            for s in students[:limit]:
+                att = s.get("attendance_pct")
+                att_text = f" | Att: {att}%" if att is not None else ""
+                lines.append(
+                    f"- {s.get('name', 'Unknown')} (Roll: {s.get('roll_no', 'N/A')}){att_text}"
+                )
+            return "\n".join(lines)
+
         if intent == "attendance":
             avg = context.get("class_avg_attendance", 0)
             total = context.get("total_students", 0)
             low_count = context.get("low_attendance_count", 0)
+            class_students = context.get("class_students", [])
+            low_att_students = [
+                s for s in class_students
+                if float(s.get("attendance_pct", 100) or 100) < 75
+            ]
+
+            if wants_names and low_att_students:
+                return (
+                    f"Students below 75% attendance ({len(low_att_students)}):\n"
+                    f"{_format_students(low_att_students, limit=40)}"
+                )
+            if wants_names and class_students:
+                return (
+                    f"Class student details ({len(class_students)}):\n"
+                    f"{_format_students(class_students, limit=40)}"
+                )
             
             status = "good" if avg >= 75 else "needs attention"
             answer = f"Class average attendance: {avg}% ({status}).\n"
@@ -406,6 +445,22 @@ def build_teacher_answer(intent: str, context: dict, message: str) -> str:
             count = context.get("at_risk_count", 0)
             total = context.get("total_students", 0)
             pct = round((count / total * 100), 1) if total > 0 else 0
+            at_risk_students = context.get("at_risk_students_detail", [])
+            alert_students = context.get("active_alerts", [])
+
+            if wants_names and at_risk_students:
+                return (
+                    f"At-risk students ({len(at_risk_students)}):\n"
+                    f"{_format_students(at_risk_students, limit=40)}"
+                )
+
+            if wants_names and alert_students:
+                lines = []
+                for a in alert_students[:40]:
+                    lines.append(
+                        f"- {a.get('name', 'Unknown')} (Roll: {a.get('roll_no', 'N/A')})"
+                    )
+                return "Students with alerts:\n" + "\n".join(lines)
             
             if count == 0:
                 return f"No at-risk students in your class right now. All {total} students are on track."
@@ -427,10 +482,51 @@ def build_teacher_answer(intent: str, context: dict, message: str) -> str:
 
         elif intent == "assignments":
             pending = context.get("pending_submissions", 0)
+            pending_flat = context.get("pending_students_flat", [])
+            assignment_details = context.get("assignment_details", [])
+
+            if wants_names and assignment_details:
+                lines = []
+                for d in assignment_details[:8]:
+                    lines.append(
+                        f"{d.get('title', 'Assignment')} (Year {d.get('year', '?')} Sec {d.get('section', '?')}):"
+                    )
+                    pending_students = d.get("pending_students", [])
+                    if pending_students:
+                        for s in pending_students[:20]:
+                            lines.append(
+                                f"- {s.get('name', 'Unknown')} (Roll: {s.get('roll_no', 'N/A')})"
+                            )
+                    else:
+                        lines.append("- No pending students")
+                return "Pending assignment student details:\n" + "\n".join(lines)
+
+            if wants_names and pending_flat:
+                return (
+                    f"Students with pending assignments ({len(pending_flat)}):\n"
+                    f"{_format_students(pending_flat, limit=40)}"
+                )
+
             if pending == 0:
                 return "All assignments have been submitted. No pending submissions."
             return (f"📝 {pending} assignment submission(s) are still pending.\n"
                    f"Consider sending a reminder to students who haven't submitted yet.")
+
+        elif intent == "alerts":
+            alert_students = context.get("active_alerts", [])
+            if not alert_students:
+                return "No active student alerts found for your class right now."
+
+            if wants_names:
+                lines = []
+                for a in alert_students[:40]:
+                    lines.append(
+                        f"- {a.get('name', 'Unknown')} (Roll: {a.get('roll_no', 'N/A')}) | "
+                        f"{a.get('title', 'Alert')}"
+                    )
+                return f"Students with active alerts ({len(alert_students)}):\n" + "\n".join(lines)
+
+            return f"There are {len(alert_students)} active student alert(s) in your class."
 
         else:  # summary / greeting
             avg_att = context.get("class_avg_attendance", "N/A")
@@ -452,6 +548,22 @@ def build_teacher_answer(intent: str, context: dict, message: str) -> str:
 
 def build_admin_answer(intent: str, context: dict, message: str) -> str:
     try:
+        msg = (message or "").lower()
+        wants_names = any(
+            k in msg for k in [
+                "name", "names", "list", "who", "faculty", "teacher",
+                "department faculty", "department names", "roll", "student"
+            ]
+        )
+
+        def _format_faculty(faculty_rows, limit=20):
+            if not faculty_rows:
+                return "No faculty details available."
+            return "\n".join([
+                f"- {f.get('name', 'Unknown')} (Emp ID: {f.get('employee_id', 'N/A')}) | Dept: {f.get('department', 'Unknown')}"
+                for f in faculty_rows[:limit]
+            ])
+
         if intent == "risk":
             at_risk = context.get("at_risk_count", 0)
             total = context.get("total_students", 0)
@@ -489,6 +601,26 @@ def build_admin_answer(intent: str, context: dict, message: str) -> str:
 
         elif intent == "teachers":
             total = context.get("total_teachers", 0)
+            faculty_list = context.get("faculty_list", [])
+            faculty_by_department = context.get("faculty_by_department", {})
+
+            if wants_names and faculty_list:
+                return (
+                    f"Total faculty members: {total}.\n"
+                    f"Faculty details:\n{_format_faculty(faculty_list, limit=30)}"
+                )
+
+            if faculty_by_department:
+                dept_lines = []
+                for dept_name, dept_faculty in faculty_by_department.items():
+                    dept_lines.append(
+                        f"- {dept_name}: {', '.join([f.get('name', 'Unknown') for f in dept_faculty[:8]])}"
+                    )
+                return (
+                    f"Total faculty members: {total}.\n"
+                    f"Faculty by department:\n" + "\n".join(dept_lines[:12])
+                )
+
             return f"Total faculty members: {total}."
 
         elif intent == "alerts":
@@ -500,8 +632,16 @@ def build_admin_answer(intent: str, context: dict, message: str) -> str:
             depts = context.get("department_breakdown", [])
             if not depts:
                 return "No department data available."
-            lines = [f"• {d['dept']}: {d['attendance']}% attendance, {d['at_risk']} at-risk" 
-                    for d in depts]
+            lines = []
+            for d in depts:
+                faculty_names = d.get("faculty_names", [])
+                faculty_text = (
+                    f" | Faculty: {', '.join(faculty_names[:6])}"
+                    if faculty_names else ""
+                )
+                lines.append(
+                    f"• {d['dept']}: {d['attendance']}% attendance, {d['at_risk']} at-risk{faculty_text}"
+                )
             return "Department breakdown:\n" + "\n".join(lines)
 
         else:  # summary / greeting

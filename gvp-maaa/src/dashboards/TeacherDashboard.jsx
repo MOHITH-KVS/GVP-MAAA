@@ -21,6 +21,7 @@ import TeacherChat from "../pages/Teacher/TeacherChat";
 import Avatar from "../components/Avatar";
 import { recordRouteVisit } from "../utils/navigationHistory";
 import { useAlertSound } from "../hooks/useAlertSound";
+import useAnalytics from "../hooks/useAnalytics";
 
 /* ICONS */
 import DashboardIcon from "@mui/icons-material/Dashboard";
@@ -86,6 +87,20 @@ export default function TeacherDashboard() {
   };
 
   const isValidPage = availableTeacherPages.includes(resolvePageFromPath(location.pathname));
+  const analyticsPage = isValidPage
+    ? (resolvePageFromPath(location.pathname) === "overview"
+      ? "/teacher"
+      : `/teacher/${resolvePageFromPath(location.pathname)}`)
+    : null;
+
+  useAnalytics({
+    page: analyticsPage,
+    role: "teacher",
+    metadata: {
+      department: profile?.department || profile?.department_id,
+    },
+    enabled: Boolean(analyticsPage),
+  });
 
   const goToPage = (page) => {
     const targetPath = page === "overview" ? "/teacher" : `/teacher/${page}`;

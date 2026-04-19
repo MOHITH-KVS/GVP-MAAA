@@ -5,6 +5,7 @@ import CircularProgress from "@mui/material/CircularProgress";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
 import api from "../../utils/axios";
+import { sendAnalyticsEvent, startNewAnalyticsSession } from "../../utils/analyticsSession";
 
 /* ===== ALLOWED COLLEGE DOMAINS ===== */
 const ALLOWED_DOMAINS = ["@gvpcdpgc.edu.in"];
@@ -128,6 +129,23 @@ export default function StudentSignIn() {
     localStorage.setItem("access_token", data.access_token);
     localStorage.setItem("role", "student");
     localStorage.setItem("user", JSON.stringify(data));
+    startNewAnalyticsSession({
+      user_id: data.user_id,
+      role: "student",
+      department: data.department ?? data.department_id ?? null,
+      year: data.year ?? null,
+      section: data.section ?? null,
+    });
+    await sendAnalyticsEvent({
+      page: "/login",
+      action: "login",
+      role: "student",
+      metadata: {
+        department: data.department ?? data.department_id ?? null,
+        year: data.year ?? null,
+        section: data.section ?? null,
+      },
+    });
 
     // role check
     if (data.role !== "student") {

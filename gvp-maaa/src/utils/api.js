@@ -26,6 +26,14 @@ api.interceptors.response.use(
   (error) => {
     if (error.response && error.response.status === 401) {
       localStorage.removeItem('access_token');
+      localStorage.removeItem('role');
+      localStorage.removeItem('session_id');
+      localStorage.removeItem('analytics_session_started_at');
+      localStorage.removeItem('analytics_session_last_activity');
+      localStorage.removeItem('user_id');
+      localStorage.removeItem('department');
+      localStorage.removeItem('year');
+      localStorage.removeItem('section');
       window.dispatchEvent(new CustomEvent('placement-auth-error', { detail: 'Session expired. Please login again.' }));
       window.location.href = '/login';
     }
@@ -35,3 +43,4 @@ api.interceptors.response.use(
 
 export default api;
 export const getToken = () => localStorage.getItem('access_token');
+export { baseURL };

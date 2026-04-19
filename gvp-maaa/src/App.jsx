@@ -44,6 +44,7 @@ import Academics from "./pages/Admin/Academics";
 import Timetable from "./pages/Admin/Timetable";
 import Alerts from "./pages/Admin/Alerts";
 import Insights from "./pages/Admin/Insights";
+import Analytics from "./pages/Admin/Analytics";
 import Settings from "./pages/Admin/Settings";
 import AdminPlacement from "./pages/Admin/Placement";
 import PlacementDriveDetails from "./pages/Admin/PlacementDriveDetails";
@@ -106,6 +107,7 @@ export default function App() {
           <Route path="timetable" element={<Timetable />} />
           <Route path="alerts" element={<Alerts />} />
           <Route path="insights" element={<Insights />} />
+          <Route path="analytics" element={<Analytics />} />
           <Route path="placement" element={<AdminPlacement />} />
           <Route path="placement/drives/:id" element={<PlacementDriveDetails />} />
           <Route path="ai-assistant" element={<AdminChat />} />

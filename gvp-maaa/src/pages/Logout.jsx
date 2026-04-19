@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import LogoutIcon from "@mui/icons-material/Logout";
+import { clearAnalyticsSession } from "../utils/analyticsSession";
 
 export default function Logout({ onBack, role = "student" }) {
   const [visible, setVisible] = useState(false);
@@ -38,6 +39,7 @@ export default function Logout({ onBack, role = "student" }) {
     localStorage.removeItem("role");
     localStorage.removeItem("user_role");
     localStorage.removeItem("user");
+    clearAnalyticsSession();
 
     setVisible(false);
     setTimeout(() => {

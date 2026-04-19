@@ -139,6 +139,25 @@ def node_answer_generator(state: RAGState) -> RAGState:
         data       = state["retrieved_data"]
         history    = state["history"]
         query_type = state["query_type"]
+        user_id    = state["user_id"]
+
+        from rag.generator import (
+            build_response_cache_key,
+            get_response_cache,
+            set_response_cache,
+            should_skip_response_cache,
+        )
+
+        cache_key = build_response_cache_key(user_id, question)
+        skip_cache = should_skip_response_cache(question)
+        if cache_key and not skip_cache:
+            cached = get_response_cache(cache_key)
+            if cached:
+                print("[CACHE] Hit -> instant response")
+                state["answer"] = cached
+                state["source"] = "cache"
+                return state
+            print("[CACHE] Miss -> calling Gemini")
 
         answer = None
 
@@ -149,6 +168,8 @@ def node_answer_generator(state: RAGState) -> RAGState:
                 answer = run_analytical_chain(role, data, question)
                 if answer and len(answer) > 10:
                     state["source"] = "langchain"
+                    if cache_key and not skip_cache:
+                        set_response_cache(cache_key, answer)
                 else:
                     answer = None  # fall through
             except Exception:
@@ -175,7 +196,11 @@ def node_answer_generator(state: RAGState) -> RAGState:
                     }
                     access = {
                         "student": "Only discuss this student's own data.",
-                        "teacher": "Class-level data only, no individual names.",
+                        "teacher": (
+                            "You have access to your class students' names and attendance. "
+                            "When asked for student lists or at-risk students, list them from "
+                            "CLASS STUDENTS section above. Do NOT provide marks or personal info beyond attendance."
+                        ),
                         "faculty": "Class-level data only.",
                         "admin":   "Full institutional access.",
                     }
@@ -216,6 +241,8 @@ ANSWER:"""
                     answer = call_gemini(prompt)
                     if answer and len(answer.strip()) > 5:
                         state["source"] = "gemini"
+                        if cache_key and not skip_cache:
+                            set_response_cache(cache_key, answer)
                     else:
                         answer = None
 
@@ -228,6 +255,8 @@ ANSWER:"""
                 from rag.generator import build_fallback
                 answer = build_fallback(role, data, question)
                 state["source"] = "fallback"
+                if cache_key and not skip_cache:
+                    set_response_cache(cache_key, answer)
             except Exception:
                 answer = "Please check your dashboard for the latest information."
                 state["source"] = "error"
@@ -235,7 +264,7 @@ ANSWER:"""
         state["answer"] = answer or "Please check your dashboard."
         print(
             f"[GRAPH] Answer source={state.get('source', '?')}: "
-            f"{state['answer'][:80]}"
+            f"{state['answer']}"
         )
         return state
 
@@ -375,7 +404,7 @@ def run_rag_pipeline(
                 data = retrieve_teacher_data(user_id, db)
             else:
                 data = retrieve_admin_data(db)
-            return generate_answer(r, data, question, history)
+            return generate_answer(r, data, question, history, user_id=user_id)
 
         initial_state: RAGState = {
             "user_id":        user_id,

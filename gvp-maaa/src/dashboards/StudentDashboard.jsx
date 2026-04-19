@@ -44,6 +44,7 @@ import LogoutIcon from "@mui/icons-material/Logout";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import SkeletonBox from "../components/skeletons/SkeletonBox";
 import { useAlertSound } from "../hooks/useAlertSound";
+import useAnalytics from "../hooks/useAnalytics";
 
 export default function StudentDashboard() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -82,6 +83,21 @@ export default function StudentDashboard() {
   };
 
   const isValidPage = availableStudentPages.includes(resolvePageFromPath(location.pathname));
+  const analyticsPage = isValidPage
+    ? (resolvePageFromPath(location.pathname) === "overview"
+      ? "/student"
+      : `/student/${resolvePageFromPath(location.pathname)}`)
+    : null;
+
+  useAnalytics({
+    page: analyticsPage,
+    role: "student",
+    metadata: {
+      year: profile?.year,
+      section: profile?.section,
+    },
+    enabled: Boolean(analyticsPage),
+  });
 
   const goToPage = (page) => {
     const targetPath = page === "overview" ? "/student" : `/student/${page}`;

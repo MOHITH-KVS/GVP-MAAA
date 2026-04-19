@@ -1290,6 +1290,8 @@ def startup_event():
     ensure_student_insights_columns()
     ensure_placement_schema()
     ensure_faculty_profile_relationships()
+    from analytics_router import ensure_user_analytics_table
+    ensure_user_analytics_table()
     
     # Run automatic migrations for scaling_logs
     try:
@@ -15183,3 +15185,6 @@ app.include_router(stream_router)
 
 from chat_router import router as chat_router
 app.include_router(chat_router)
+
+from analytics_router import router as analytics_router
+app.include_router(analytics_router)

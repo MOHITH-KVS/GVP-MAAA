@@ -800,3 +800,32 @@ class TaskLog(Base):
         UniqueConstraint("student_id", "task_id", "date", name="uq_task_log_student_task_date"),
     )
 
+
+class UserAnalytics(Base):
+    __tablename__ = "user_analytics"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, nullable=True, index=True)
+    role = Column(String(20), nullable=False, index=True)
+    department = Column(String(50), nullable=True, index=True)
+    year = Column(Integer, nullable=True, index=True)
+    section = Column(String(20), nullable=True, index=True)
+    page = Column(String(100), nullable=False, index=True)
+    duration = Column(Integer, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+
+
+class UserActivityLog(Base):
+    __tablename__ = "user_activity_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, nullable=True, index=True)
+    role = Column(String(20), nullable=False, index=True)
+    department = Column(String(50), nullable=True, index=True)
+    year = Column(Integer, nullable=True, index=True)
+    section = Column(String(20), nullable=True, index=True)
+    page = Column(String(200), nullable=False, index=True)
+    action = Column(String(20), nullable=False, index=True)
+    session_id = Column(String(120), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+

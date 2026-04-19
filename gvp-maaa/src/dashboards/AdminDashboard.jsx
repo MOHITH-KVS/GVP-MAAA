@@ -16,6 +16,7 @@ import ErrorBoundary from "../components/ErrorBoundary";
 import Logout from "../pages/Logout";
 import Smart404 from "../components/Smart404";
 import { recordRouteVisit } from "../utils/navigationHistory";
+import useAnalytics from "../hooks/useAnalytics";
 
 /* ===== ICONS ===== */
 import DashboardIcon from "@mui/icons-material/Dashboard";
@@ -25,6 +26,7 @@ import MenuBookIcon from "@mui/icons-material/MenuBook";
 import EventAvailableIcon from "@mui/icons-material/EventAvailable";
 import NotificationsIcon from "@mui/icons-material/Notifications";
 import BarChartIcon from "@mui/icons-material/BarChart";
+import AnalyticsIcon from "@mui/icons-material/Analytics";
 import WorkIcon from "@mui/icons-material/Work";
 import SettingsIcon from "@mui/icons-material/Settings";
 import LogoutIcon from "@mui/icons-material/Logout";
@@ -40,6 +42,13 @@ export default function AdminDashboard() {
   const navigate = useNavigate();
   const location = useLocation();
 
+  useAnalytics({
+    page: location.pathname,
+    role: "admin",
+    metadata: {},
+    enabled: location.pathname.startsWith("/admin"),
+  });
+
   useAlertSound(alerts);
 
   const availableAdminPages = [
@@ -50,6 +59,7 @@ export default function AdminDashboard() {
     "timetable",
     "alerts",
     "insights",
+    "analytics",
     "placement",
     "ai-assistant",
     "settings",
@@ -67,6 +77,7 @@ export default function AdminDashboard() {
       overview: "Dashboard",
       students: "Manage Users",
       insights: "View Reports",
+      analytics: "Analytics",
     };
 
     recordRouteVisit({ label: labelMap[activePage] || "Dashboard", path, role: "admin" });
@@ -188,6 +199,7 @@ export default function AdminDashboard() {
                   open={sidebarOpen}
                   active={activePage === "alerts"}
                   onClick={() => navigate("/admin/alerts")}
+                  tooltip="System notifications and action items"
                 />
 
                 <MenuItem
@@ -196,14 +208,16 @@ export default function AdminDashboard() {
                   open={sidebarOpen}
                   active={activePage === "insights"}
                   onClick={() => navigate("/admin/insights")}
+                  tooltip="Academic performance and risk insights"
                 />
 
                 <MenuItem
-                  icon={WorkIcon}
-                  label="Placement"
+                  icon={AnalyticsIcon}
+                  label="Usage Analytics"
                   open={sidebarOpen}
-                  active={activePage === "placement"}
-                  onClick={() => navigate("/admin/placement")}
+                  active={activePage === "analytics"}
+                  onClick={() => navigate("/admin/analytics")}
+                  tooltip="System usage, engagement, and feature activity"
                 />
 
                 <MenuItem
@@ -213,6 +227,16 @@ export default function AdminDashboard() {
                   active={activePage === "ai-assistant"}
                   onClick={() => navigate("/admin/ai-assistant")}
                   isAI
+                  tooltip="Ask the admin assistant about campus data"
+                />
+
+                <MenuItem
+                  icon={WorkIcon}
+                  label="Placement"
+                  open={sidebarOpen}
+                  active={activePage === "placement"}
+                  onClick={() => navigate("/admin/placement")}
+                  tooltip="Placement drives and coordinator tools"
                 />
               </SidebarSection>
 
@@ -265,11 +289,12 @@ function SidebarSection({ title, open, children }) {
   );
 }
 
-function MenuItem({ icon: Icon, label, open, active, onClick, danger, isAI }) {
+function MenuItem({ icon: Icon, label, open, active, onClick, danger, isAI, tooltip }) {
   if (isAI) {
     return (
       <div
         onClick={onClick}
+        title={tooltip || label}
         className={`flex items-center gap-3 px-3 py-2.5 rounded-xl cursor-pointer transition-all duration-300 relative
           ${active 
             ? "border-l-4 border-indigo-600 bg-gradient-to-r from-indigo-50 to-white text-indigo-700 shadow-sm" 
@@ -291,6 +316,7 @@ function MenuItem({ icon: Icon, label, open, active, onClick, danger, isAI }) {
   return (
     <div
       onClick={onClick}
+      title={tooltip || label}
       className={`flex items-center gap-3 px-3 py-2 rounded-xl cursor-pointer transition
       ${!open && "justify-center"}
       ${danger

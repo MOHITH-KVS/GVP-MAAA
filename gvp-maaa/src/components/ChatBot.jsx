@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
-import api from "../utils/api";
+import { baseURL, getToken } from "../utils/api";
+import { trackAnalyticsAction } from "../hooks/useAnalytics";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import SendRoundedIcon from "@mui/icons-material/SendRounded";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
@@ -8,9 +9,11 @@ export default function ChatBot({ role }) {
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState("");
   const [loading, setLoading] = useState(false);
+  const [streaming, setStreaming] = useState(false);
   const [suggested, setSuggested] = useState([]);
   const [copiedIndex, setCopiedIndex] = useState(null);
   const messagesEndRef = useRef(null);
+  const activeReplyIdRef = useRef(null);
 
   // Fetch suggested questions on mount
   useEffect(() => {
@@ -42,36 +45,110 @@ export default function ChatBot({ role }) {
     const textToSend = overrideText || inputText.trim();
     if (!textToSend) return;
 
+    const normalizedRole = role === "faculty" ? "teacher" : role;
+    const analyticsPage = `/${normalizedRole}/ai-assistant`;
+    const actionType = overrideText ? "click" : "submit";
+    trackAnalyticsAction({ page: analyticsPage, role: normalizedRole, action: actionType });
+
     if (!overrideText) {
       setInputText("");
     }
 
     const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const newMessages = [...messages, { from: "user", text: textToSend, timestamp }];
+    const replyId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    activeReplyIdRef.current = replyId;
+    const newMessages = [
+      ...messages,
+      { from: "user", text: textToSend, timestamp, id: `${replyId}-user` },
+      {
+        from: "ai",
+        text: "Fetching latest data...",
+        timestamp,
+        id: replyId,
+        status: "fetching"
+      }
+    ];
     
     setMessages(newMessages);
     setLoading(true);
+    setStreaming(false);
 
     try {
-      const response = await api.post('/chat/message', {
-        message: textToSend,
-        history: messages.slice(-6).map(m => ({
-          role: m.from === 'user' ? 'user' : 'assistant',
-          content: m.text
-        }))
+      const response = await fetch(`${baseURL}/chat/message`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}),
+        },
+        body: JSON.stringify({
+          message: textToSend,
+          history: messages.slice(-6).map(m => ({
+            role: m.from === 'user' ? 'user' : 'assistant',
+            content: m.text
+          }))
+        })
       });
 
-      const data = response.data;
-      const reply = data.reply || data.message ||
-                    "I received your message but could not generate a response.";
+      const contentType = response.headers.get('content-type') || '';
+      if (!response.ok) {
+        const fallbackText = await response.text();
+        throw new Error(fallbackText || `Request failed with status ${response.status}`);
+      }
 
-      setMessages(prev => [...prev, {
-        from: 'ai',
-        text: reply,
-        timestamp: new Date().toLocaleTimeString([], {
-          hour: '2-digit', minute: '2-digit'
-        })
-      }]);
+      if (contentType.includes('application/json')) {
+        const data = await response.json();
+        const reply = data.reply || data.message ||
+                      "I received your message but could not generate a response.";
+        setMessages(prev => prev.map(m => (
+          m.id === replyId
+            ? { ...m, text: reply, status: 'done' }
+            : m
+        )));
+      } else if (response.body && response.body.getReader) {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let fullText = '';
+        let hasFirstChunk = false;
+
+        setMessages(prev => prev.map(m => (
+          m.id === replyId ? { ...m, text: 'Typing...', status: 'typing' } : m
+        )));
+        setStreaming(true);
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          const chunk = decoder.decode(value, { stream: true });
+          if (!chunk) continue;
+
+          if (!hasFirstChunk) {
+            hasFirstChunk = true;
+            setStreaming(false);
+          }
+
+          fullText += chunk;
+          setMessages(prev => prev.map(m => (
+            m.id === replyId
+              ? { ...m, text: fullText, status: 'streaming' }
+              : m
+          )));
+        }
+
+        const finalText = fullText.trim();
+        setMessages(prev => prev.map(m => (
+          m.id === replyId
+            ? { ...m, text: finalText || m.text, status: 'done' }
+            : m
+        )));
+      } else {
+        const reply = await response.text();
+        setMessages(prev => prev.map(m => (
+          m.id === replyId
+            ? { ...m, text: reply || m.text, status: 'done' }
+            : m
+        )));
+      }
 
     } catch (error) {
       console.error('[CHAT ERROR]', error);
@@ -82,16 +159,20 @@ export default function ChatBot({ role }) {
                      error?.message ||
                      "Connection error. Please try again.";
 
-      setMessages(prev => [...prev, {
-        from: 'ai',
-        text: `I had trouble with that request. ${errMsg}`,
-        timestamp: new Date().toLocaleTimeString([], {
-          hour: '2-digit', minute: '2-digit'
-        }),
-        isError: false  // Don't show red — show as normal AI message
-      }]);
+      setMessages(prev => prev.map(m => (
+        m.id === replyId
+          ? {
+              ...m,
+              text: `I had trouble with that request. ${errMsg}`,
+              status: 'done',
+              isError: false
+            }
+          : m
+      )));
     } finally {
       setLoading(false);
+      setStreaming(false);
+      activeReplyIdRef.current = null;
     }
   };
 
@@ -169,7 +250,7 @@ export default function ChatBot({ role }) {
 
           <div className="space-y-6">
             {messages.map((m, idx) => (
-              <div key={idx} className={`flex w-full fade-in ${m.from === "user" ? "justify-end" : "justify-start"}`}>
+              <div key={m.id || idx} className={`flex w-full fade-in ${m.from === "user" ? "justify-end" : "justify-start"}`}>
                 
                 {/* AI Avatar */}
                 {m.from !== "user" && (
@@ -188,7 +269,18 @@ export default function ChatBot({ role }) {
                           : "bg-gray-100 text-gray-800 border border-gray-200 rounded-2xl rounded-tl-sm"
                     }`}
                   >
-                    {m.text}
+                    {m.status === 'typing' ? (
+                      <div className="flex items-center gap-2 min-w-[90px]">
+                        <span className="text-sm text-gray-500">Typing...</span>
+                        <span className="inline-flex items-center gap-1.5">
+                          <span className="w-2 h-2 bg-indigo-400 rounded-full animate-[bounce_1.4s_infinite_ease-in-out_both] [animation-delay:-0.32s]"></span>
+                          <span className="w-2 h-2 bg-indigo-400 rounded-full animate-[bounce_1.4s_infinite_ease-in-out_both] [animation-delay:-0.16s]"></span>
+                          <span className="w-2 h-2 bg-indigo-400 rounded-full animate-[bounce_1.4s_infinite_ease-in-out_both]"></span>
+                        </span>
+                      </div>
+                    ) : (
+                      m.text
+                    )}
                     
                     {/* Copy Button (only for AI responses) */}
                     {m.from === "ai" && !m.isError && (
@@ -210,7 +302,7 @@ export default function ChatBot({ role }) {
               </div>
             ))}
 
-            {loading && (
+            {loading && !streaming && (
               <div className="flex justify-start w-full fade-in">
                  <div className="w-8 h-8 rounded-full bg-indigo-50 border border-indigo-100 flex-shrink-0 flex items-center justify-center text-indigo-500 mr-3 mt-1 shadow-sm">
                     <AutoAwesomeIcon style={{ fontSize: 14 }} />

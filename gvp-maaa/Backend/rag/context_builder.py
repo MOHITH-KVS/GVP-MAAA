@@ -370,7 +370,9 @@ def build_admin_context(db: Session) -> dict:
         "department_breakdown": [],
         "active_alerts_count": 0,
         "placement_drives_open": 0,
-        "low_attendance_departments": []
+        "low_attendance_departments": [],
+        "faculty_list": [],
+        "faculty_by_department": {}
     }
     
     if not MODELS_AVAILABLE:
@@ -402,6 +404,62 @@ def build_admin_context(db: Session) -> dict:
         context["active_alerts_count"] = db.query(Alert).count()
     except Exception:
         pass
+
+    # Faculty roster with department names
+    try:
+        from models import User
+        faculty_rows = db.query(Faculty).all()
+        departments = db.query(Department).all()
+        dept_name_map = {}
+        for dept in departments:
+            dept_id = (
+                getattr(dept, "department_id", None) or
+                getattr(dept, "dept_id", None) or
+                getattr(dept, "id", None)
+            )
+            if dept_id is not None:
+                dept_name_map[dept_id] = getattr(
+                    dept, "name",
+                    getattr(dept, "department_name", "Unknown")
+                )
+
+        faculty_list = []
+        faculty_by_department = {}
+        for fac in faculty_rows:
+            try:
+                uid = getattr(fac, "faculty_id", None)
+                user = db.query(User).filter(User.user_id == uid).first() if uid is not None else None
+                name = "Unknown"
+                dept_name = "Unknown"
+                dept_id = None
+                if user:
+                    name = (
+                        getattr(user, "name", None) or
+                        getattr(user, "full_name", None) or
+                        getattr(user, "username", None) or
+                        "Unknown"
+                    )
+                    dept_id = getattr(user, "department_id", None)
+                    if dept_id in dept_name_map:
+                        dept_name = dept_name_map[dept_id]
+
+                entry = {
+                    "faculty_id": uid,
+                    "name": str(name),
+                    "employee_id": str(getattr(fac, "employee_id", "N/A") or "N/A"),
+                    "designation": str(getattr(fac, "designation", "N/A") or "N/A"),
+                    "department": dept_name,
+                    "department_id": dept_id
+                }
+                faculty_list.append(entry)
+                faculty_by_department.setdefault(dept_name, []).append(entry)
+            except Exception:
+                continue
+
+        context["faculty_list"] = faculty_list
+        context["faculty_by_department"] = faculty_by_department
+    except Exception:
+        traceback.print_exc()
     
     try:
         drives = db.query(PlacementDrive).filter(
@@ -824,7 +882,12 @@ def get_teacher_class_detail(teacher_id: int, db: Session) -> dict:
         "low_attendance_count": 0,
         "total_students": 0,
         "pending_submissions": 0,
-        "subjects": []
+        "subjects": [],
+        "class_students": [],
+        "at_risk_students_detail": [],
+        "assignment_details": [],
+        "pending_students_flat": [],
+        "active_alerts": []
     }
     try:
         # Get teacher's subject IDs — read models.py for exact name
@@ -864,6 +927,7 @@ def get_teacher_class_detail(teacher_id: int, db: Session) -> dict:
         att_values = []
         at_risk = 0
         low_att = 0
+        attendance_by_student = {}
         
         for sid in student_ids[:100]:
             try:
@@ -878,6 +942,7 @@ def get_teacher_class_detail(teacher_id: int, db: Session) -> dict:
                 ).count()
                 pct = (p / t * 100) if t > 0 else 100
                 att_values.append(pct)
+                attendance_by_student[sid] = round(pct, 1)
                 if pct < 75:
                     at_risk += 1
                     low_att += 1
@@ -890,6 +955,47 @@ def get_teacher_class_detail(teacher_id: int, db: Session) -> dict:
             )
         result["at_risk_count"] = at_risk
         result["low_attendance_count"] = low_att
+
+        # Build class student identity list (name + roll) with attendance
+        try:
+            from models import Student as St, User
+
+            class_students = []
+            for sid in student_ids[:250]:
+                try:
+                    st = db.query(St).filter(St.student_id == sid).first()
+                    if not st:
+                        continue
+
+                    user = db.query(User).filter(User.user_id == sid).first()
+                    name = "Unknown"
+                    if user:
+                        name = (
+                            getattr(user, "name", None)
+                            or getattr(user, "full_name", None)
+                            or getattr(user, "username", None)
+                            or "Unknown"
+                        )
+
+                    att_pct = float(attendance_by_student.get(sid, 0.0))
+                    class_students.append({
+                        "student_id": sid,
+                        "name": str(name),
+                        "roll_no": str(getattr(st, "roll_no", None) or "N/A"),
+                        "year": getattr(st, "year", None),
+                        "section": str(getattr(st, "section", None) or "N/A"),
+                        "attendance_pct": round(att_pct, 1),
+                        "at_risk": att_pct < 75
+                    })
+                except Exception:
+                    continue
+
+            result["class_students"] = class_students
+            result["at_risk_students_detail"] = [
+                s for s in class_students if s.get("at_risk")
+            ]
+        except Exception:
+            traceback.print_exc()
 
         # Marks for the teacher's subjects.
         try:
@@ -942,14 +1048,150 @@ def get_teacher_class_detail(teacher_id: int, db: Session) -> dict:
         except Exception:
             traceback.print_exc()
         
-        # Pending submissions
+        # Pending submissions with assignment-wise pending student identities
         try:
-            pending = db.query(AssignmentSubmission).filter(
-                AssignmentSubmission.status == "pending"
-            ).count()
-            result["pending_submissions"] = pending
+            from models import Assignment, AssignmentSubmission, Student as St, User
+
+            active_assignments = db.query(Assignment).filter(
+                Assignment.subject_id.in_(subject_ids),
+                Assignment.is_active == True
+            ).all()
+
+            total_pending = 0
+            assignment_details = []
+            pending_students_flat = []
+            seen = set()
+
+            for assg in active_assignments:
+                try:
+                    class_students = db.query(St).filter(
+                        St.year == assg.year,
+                        St.section == assg.section,
+                        St.is_deleted == False
+                    ).all()
+
+                    meta = {}
+                    for st in class_students:
+                        sid = getattr(st, "student_id", None)
+                        if sid is None:
+                            continue
+                        user = db.query(User).filter(User.user_id == sid).first()
+                        name = "Unknown"
+                        if user:
+                            name = (
+                                getattr(user, "name", None)
+                                or getattr(user, "full_name", None)
+                                or getattr(user, "username", None)
+                                or "Unknown"
+                            )
+                        meta[sid] = {
+                            "student_id": sid,
+                            "name": str(name),
+                            "roll_no": str(getattr(st, "roll_no", None) or "N/A"),
+                            "year": getattr(st, "year", None),
+                            "section": str(getattr(st, "section", None) or "N/A"),
+                        }
+
+                    rows = db.query(AssignmentSubmission).filter(
+                        AssignmentSubmission.assignment_id == assg.id
+                    ).all()
+
+                    submitted_ids = set()
+                    for sub in rows:
+                        sid = getattr(sub, "student_id", None)
+                        if sid is None:
+                            continue
+                        is_sub = getattr(sub, "is_submitted", None)
+                        status = str(getattr(sub, "status", "")).lower()
+                        if is_sub is True or status in ["submitted", "1", "true", "done", "completed"]:
+                            submitted_ids.add(sid)
+
+                    if not submitted_ids and rows:
+                        submitted_ids = {
+                            getattr(sub, "student_id", None)
+                            for sub in rows
+                            if getattr(sub, "student_id", None) is not None
+                        }
+
+                    pending_students = [
+                        sdata for sid, sdata in meta.items()
+                        if sid not in submitted_ids
+                    ]
+                    pending_count = len(pending_students)
+                    if pending_count <= 0:
+                        continue
+
+                    total_pending += pending_count
+                    for ps in pending_students:
+                        sid = ps.get("student_id")
+                        if sid not in seen:
+                            seen.add(sid)
+                            pending_students_flat.append(ps)
+
+                    assignment_details.append({
+                        "title": str(getattr(assg, "title", "Assignment")),
+                        "year": getattr(assg, "year", None),
+                        "section": getattr(assg, "section", None),
+                        "pending": pending_count,
+                        "submitted": min(len(meta), len(submitted_ids)),
+                        "total_students": len(meta),
+                        "due_date": str(getattr(assg, "due_date", None) or "No deadline"),
+                        "pending_students": pending_students[:25],
+                    })
+                except Exception:
+                    continue
+
+            result["pending_submissions"] = total_pending
+            result["assignment_details"] = assignment_details[:10]
+            result["pending_students_flat"] = pending_students_flat[:120]
         except Exception:
-            pass
+            traceback.print_exc()
+
+        # Alerts related to this teacher's students
+        try:
+            from models import Alert, User
+
+            if student_ids:
+                alert_rows = db.query(Alert).filter(
+                    Alert.student_id.in_(student_ids)
+                ).order_by(Alert.created_at.desc()).limit(50).all()
+
+                student_meta = {
+                    s.get("student_id"): s
+                    for s in result.get("class_students", [])
+                    if s.get("student_id") is not None
+                }
+
+                alert_items = []
+                for a in alert_rows:
+                    sid = getattr(a, "student_id", None)
+                    sm = student_meta.get(sid, {})
+                    name = sm.get("name")
+                    roll_no = sm.get("roll_no")
+
+                    if not name and sid is not None:
+                        user = db.query(User).filter(User.user_id == sid).first()
+                        if user:
+                            name = (
+                                getattr(user, "name", None)
+                                or getattr(user, "full_name", None)
+                                or getattr(user, "username", None)
+                                or "Unknown"
+                            )
+
+                    alert_items.append({
+                        "student_id": sid,
+                        "name": str(name or "Unknown"),
+                        "roll_no": str(roll_no or "N/A"),
+                        "title": str(getattr(a, "title", "Alert") or "Alert"),
+                        "message": str(getattr(a, "message", "") or ""),
+                        "type": str(getattr(a, "type", "general") or "general"),
+                        "created_at": str(getattr(a, "created_at", "") or "")
+                    })
+
+                result["active_alerts"] = alert_items
+        except Exception:
+            traceback.print_exc()
             
     except Exception:
         traceback.print_exc()
@@ -957,7 +1199,7 @@ def get_teacher_class_detail(teacher_id: int, db: Session) -> dict:
 
 def get_admin_department_detail(db: Session) -> dict:
     """Returns per-department breakdown for admin."""
-    result = {"department_breakdown": [], "low_attendance_departments": []}
+    result = {"department_breakdown": [], "low_attendance_departments": [], "faculty_by_department": {}}
     try:
         from models import User
 
@@ -1014,7 +1256,8 @@ def get_admin_department_detail(db: Session) -> dict:
                     "dept": dept_name,
                     "attendance": avg_att,
                     "at_risk": at_risk,
-                    "total": len(student_ids)
+                    "total": len(student_ids),
+                    "faculty_names": []
                 })
                 
                 if avg_att < 75:
@@ -1027,6 +1270,46 @@ def get_admin_department_detail(db: Session) -> dict:
             breakdown, key=lambda x: x["attendance"]
         )
         result["low_attendance_departments"] = low_depts
+
+        try:
+            faculty_rows = db.query(Faculty).all()
+            faculty_by_department = {}
+            for fac in faculty_rows:
+                try:
+                    uid = getattr(fac, "faculty_id", None)
+                    user = db.query(User).filter(User.user_id == uid).first() if uid is not None else None
+                    name = "Unknown"
+                    dept_name = "Unknown"
+                    if user:
+                        name = (
+                            getattr(user, "name", None) or
+                            getattr(user, "full_name", None) or
+                            getattr(user, "username", None) or
+                            "Unknown"
+                        )
+                        dept_id = getattr(user, "department_id", None)
+                        if dept_id is not None:
+                            dept_row = db.query(Department).filter(
+                                (getattr(Department, 'department_id', Department.id) == dept_id)
+                            ).first()
+                            if dept_row:
+                                dept_name = getattr(dept_row, "name", getattr(dept_row, "department_name", "Unknown"))
+                    faculty_by_department.setdefault(dept_name, []).append({
+                        "faculty_id": uid,
+                        "name": str(name),
+                        "employee_id": str(getattr(fac, "employee_id", "N/A") or "N/A")
+                    })
+                except Exception:
+                    continue
+
+            result["faculty_by_department"] = faculty_by_department
+
+            for dept in result["department_breakdown"]:
+                dept["faculty_names"] = [
+                    f["name"] for f in faculty_by_department.get(dept["dept"], [])
+                ]
+        except Exception:
+            traceback.print_exc()
         
     except Exception:
         traceback.print_exc()

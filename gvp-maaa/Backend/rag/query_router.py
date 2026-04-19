@@ -28,6 +28,8 @@ def is_query_allowed(message: str, role: str) -> tuple:
     
     for pattern in patterns:
         if pattern in msg_lower:
+            if role == "student":
+                return (False, "You can only view your own data.")
             return (
                 False,
                 f"You don't have access to that information. "
@@ -54,11 +56,13 @@ Rules:
 
     elif role in ("teacher", "faculty"):
         return f"""You are an academic assistant for a faculty member at GVP college.
-You have access ONLY to your class-level aggregated data: {context_str}
+You have access ONLY to your class-level data for your own students: {context_str}
 
 Rules:
-- Answer ONLY about your class attendance averages, marks averages, at-risk student counts
-- Never reveal individual student personal information or names
+- Answer ONLY about your class attendance, marks, at-risk students, alerts, and assignments
+- If asked for student details related to attendance/alerts/assignments/risk,
+  provide student names and roll numbers from the available class data
+- Do not reveal sensitive personal data (phone, address, private contact details)
 - If asked about admin data or other teachers, say: "You don't have access to that information."
 - If data is not available, say: "No data available for that."
 - Keep answers under 4 sentences

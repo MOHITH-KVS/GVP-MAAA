@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import List, Optional, Any
 import traceback
+import time
 
 from auth import get_current_user
 from database import get_db
@@ -37,6 +38,11 @@ def normalize_history(raw_history):
             continue
     return normalized[-6:]
 
+
+def chunk_text(text: str, chunk_size: int = 40):
+    for index in range(0, len(text), chunk_size):
+        yield text[index:index + chunk_size]
+
 @router.post("/message")
 async def chat_message(
     request: ChatRequest,
@@ -44,6 +50,7 @@ async def chat_message(
     db: Session = Depends(get_db)
 ):
     import traceback
+    request_start = time.time()
     try:
         # ── Resolve user identity ─────────────────────────────────
         if isinstance(current_user, dict):
@@ -53,6 +60,8 @@ async def chat_message(
             user_id = getattr(current_user, 'user_id', 1)
             role    = getattr(current_user, 'role', 'student')
 
+        query = str(request.message or "")
+        print(f"[REQUEST] user={user_id} query='{query}'")
         print(f"[CHAT] role={role} user_id={user_id} msg={request.message[:60]}")
 
         # ── Access control ────────────────────────────────────────
@@ -85,12 +94,24 @@ async def chat_message(
             reply = ("I couldn't find specific data for that. "
                      "Please check your dashboard.")
 
-        print(f"[CHAT] reply={str(reply)[:80]}")
-        return {"reply": str(reply), "role": str(role), "allowed": True}
+        print(f"[CHAT] reply={str(reply)}")
+        print(f"[TOTAL TIME] {time.time() - request_start:.2f}s")
+
+        def stream_response():
+            full_text = str(reply)
+            for chunk in chunk_text(full_text):
+                yield chunk
+
+        return StreamingResponse(
+            stream_response(),
+            media_type="text/plain; charset=utf-8"
+        )
 
     except Exception as e:
         traceback.print_exc()
+        print(f"[ERROR] {str(e)}")
         print(f"[CHAT ERROR] {e}")
+        print(f"[TOTAL TIME] {time.time() - request_start:.2f}s")
         return JSONResponse(
             status_code=200,
             content={

@@ -6,6 +6,8 @@ SDK: google.genai (new SDK)
 Fallback: 3 API keys × 4 models — cycles until one works.
 """
 import os
+import time
+import concurrent.futures
 import traceback
 from pathlib import Path
 from dotenv import load_dotenv
@@ -37,6 +39,61 @@ GEMINI_CLIENT    = None
 GEMINI_MODEL     = None
 ACTIVE_KEY_INDEX = 0
 KEY_MODEL_CACHE  = {}
+
+_RESPONSE_CACHE = {}
+RESPONSE_TTL = 120  # 2 minutes (short to ensure freshness)
+SAFE_FALLBACK_RESPONSE = "I'm unable to fetch the latest data right now. Please try again in a few seconds."
+
+
+def get_response_cache(key):
+    if key in _RESPONSE_CACHE:
+        data, ts = _RESPONSE_CACHE[key]
+        if time.time() - ts < RESPONSE_TTL:
+            print(f"[RESPONSE CACHE HIT] {key}")
+            return data
+    return None
+
+
+def set_response_cache(key, data):
+    _RESPONSE_CACHE[key] = (data, time.time())
+
+
+def build_response_cache_key(user_id, query: str):
+    user_key = str(user_id) if user_id is not None else None
+    if not user_key:
+        return None
+    normalized_query = query.strip().lower()
+    return f"{user_key}:{normalized_query}"
+
+
+def should_skip_response_cache(query: str) -> bool:
+    lowered = query.lower()
+    return any(word in lowered for word in ["marks", "attendance", "today", "latest"])
+
+
+def safe_gemini_call(call_fn):
+    for attempt in range(2):
+        try:
+            return call_fn()
+        except Exception as e:
+            print(f"[RETRY] Gemini attempt {attempt+1} failed: {e}")
+            print(f"[ERROR] {str(e)}")
+    return None
+
+
+def call_with_timeout(call_fn, timeout=10):
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(safe_gemini_call, call_fn)
+    try:
+        return future.result(timeout=timeout)
+    except concurrent.futures.TimeoutError:
+        print("[TIMEOUT] Gemini call exceeded limit")
+        return None
+    except Exception as e:
+        print(f"[ERROR] {str(e)}")
+        return None
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
 def try_connect():
     global GEMINI_CLIENT, GEMINI_MODEL, GEMINI_AVAILABLE, ACTIVE_KEY_INDEX, KEY_MODEL_CACHE
@@ -112,19 +169,24 @@ def call_gemini(prompt: str) -> str:
             try:
                 print(f"[GEMINI_CALL] Trying key {key_idx+1} model {model}")
                 client = _genai.Client(api_key=key)
-                response = client.models.generate_content(
-                    model=model,
-                    contents=prompt,
-                    config={
-                        "temperature": 0.1,
-                        "max_output_tokens": 800
-                    }
+                print("[LLM] Calling Gemini...")
+                response = call_with_timeout(
+                    lambda: client.models.generate_content(
+                        model=model,
+                        contents=prompt,
+                        config={
+                            "temperature": 0.1,
+                            "max_output_tokens": 600
+                        }
+                    ),
+                    timeout=10,
                 )
                 print(f"[GEMINI_CALL] Response: {str(response)[:100]}")
 
                 if response and response.text:
                     text = response.text.strip()
                     print(f"[GEMINI_CALL] SUCCESS: {text[:80]}")
+                    print("[LLM] Success")
 
                     # Update global pointer if we switched
                     if key_idx != ACTIVE_KEY_INDEX or model != GEMINI_MODEL:
@@ -187,18 +249,23 @@ Write complete paragraphs. Maximum 6 sentences."""
         for model in FALLBACK_MODELS:
             try:
                 client = _genai.Client(api_key=key)
-                response = client.models.generate_content(
-                    model=model,
-                    contents=full_prompt,
-                    config={
-                        "temperature": 0.1,
-                        "max_output_tokens": 800,
-                        "top_p": 0.8
-                    }
+                print("[LLM] Calling Gemini...")
+                response = call_with_timeout(
+                    lambda: client.models.generate_content(
+                        model=model,
+                        contents=full_prompt,
+                        config={
+                            "temperature": 0.1,
+                            "max_output_tokens": 600,
+                            "top_p": 0.8
+                        }
+                    ),
+                    timeout=10,
                 )
                 if response and response.text:
                     text = response.text.strip()
                     if len(text) > 10:
+                        print("[LLM] Success")
                         if key_idx != ACTIVE_KEY_INDEX or model != GEMINI_MODEL:
                             print(f"[GENERATOR] Failover to key {key_idx+1}, model {model}")
                         return text
@@ -253,11 +320,21 @@ def format_data_for_gemini(data: dict, role: str) -> str:
         if marks:
             lines.append("\nMARKS / EXAM SCORES:")
             for m in marks:
-                exam  = m.get("exam_type", "")
-                label = m["subject"] + (f" [{exam}]" if exam else "")
-                lines.append(
-                    f"  {label}: {m['score']}/{m['total']} ({m['percentage']}%)"
-                )
+                subj = m.get("subject", "Unknown")
+                exam = m.get("exam_type", "")
+                faculty = m.get("faculty_name", "")
+                score = m.get("score", 0)
+                out_of = m.get("out_of", m.get("total", 0))
+                pct = m.get("pct", m.get("percentage", 0))
+
+                label = f"{subj}"
+                if exam:
+                    label += f" [{exam}]"
+
+                line = f"  {label}: {score}/{out_of} ({pct}%)"
+                if faculty and faculty != "Unknown":
+                    line += f" - Faculty: {faculty}"
+                lines.append(line)
                 if m.get("mid1") is not None:
                     lines.append(f"    Mid-1: {m['mid1']}")
                 if m.get("mid2") is not None:
@@ -329,6 +406,9 @@ def format_data_for_gemini(data: dict, role: str) -> str:
             lines.append("\nPLACEMENT: No open drives currently")
 
     elif role in ("teacher", "faculty"):
+        faculty_name = data.get("faculty_name", "Unknown")
+        lines.append(f"Faculty Name: {faculty_name}")
+
         subjects = data.get("subjects", [])
         names    = [s["name"] for s in subjects] if subjects else []
         lines.append(
@@ -371,6 +451,7 @@ def format_data_for_gemini(data: dict, role: str) -> str:
         assg = data.get("assignments", {})
         pending_total = assg.get("pending_submissions", 0)
         details = assg.get("assignment_details", [])
+        pending_flat = assg.get("pending_students_flat", [])
 
         lines.append(f"\nASSIGNMENTS:")
         lines.append(f"Total pending submissions: {pending_total}")
@@ -385,6 +466,25 @@ def format_data_for_gemini(data: dict, role: str) -> str:
                     f"{d['submitted']} submitted"
                 )
 
+                pending_students = d.get("pending_students", [])
+                if pending_students:
+                    lines.append("    Pending students:")
+                    for ps in pending_students[:12]:
+                        lines.append(
+                            f"      - {ps.get('name', 'Unknown')} "
+                            f"(Roll: {ps.get('roll_no', 'N/A')})"
+                        )
+
+        if pending_flat:
+            lines.append(
+                f"\nALL STUDENTS WITH PENDING ASSIGNMENTS ({len(pending_flat)}):"
+            )
+            for ps in pending_flat[:30]:
+                lines.append(
+                    f"  - {ps.get('name', 'Unknown')} "
+                    f"(Roll: {ps.get('roll_no', 'N/A')})"
+                )
+
         resources = data.get("resources", [])
         if resources:
             lines.append(f"\nRESOURCES YOU UPLOADED ({len(resources)}):")
@@ -394,6 +494,28 @@ def format_data_for_gemini(data: dict, role: str) -> str:
                 )
         else:
             lines.append("\nRESOURCES: None uploaded yet")
+
+        class_students = data.get("class_students", [])
+        at_risk_detail = data.get("at_risk_students_detail", [])
+
+        if class_students:
+            lines.append(
+                f"\nYOUR CLASS STUDENTS ({len(class_students)}):"
+            )
+            for s in class_students[:21]:
+                risk = " [AT RISK]" if s.get("at_risk") else ""
+                lines.append(
+                    f"  - {s['name']} | Roll: {s['roll_no']} | "
+                    f"Att: {s['attendance_pct']}%{risk}"
+                )
+
+        if at_risk_detail:
+            lines.append(f"\nAT-RISK IN YOUR CLASS ({len(at_risk_detail)}):")
+            for s in at_risk_detail[:10]:
+                lines.append(
+                    f"  - {s['name']} (Roll: {s['roll_no']}): "
+                    f"{s['attendance_pct']}% attendance"
+                )
 
     else:  # admin
         inst = data.get("institution", {})
@@ -409,17 +531,89 @@ def format_data_for_gemini(data: dict, role: str) -> str:
         if depts:
             lines.append("\nDEPARTMENT BREAKDOWN (sorted by attendance):")
             for d in depts:
+                faculty_names = d.get("faculty_names", [])
+                faculty_text = (
+                    f" | Faculty: {', '.join(faculty_names[:6])}"
+                    if faculty_names else ""
+                )
                 lines.append(
                     f"  {d['department']}: "
                     f"{d['attendance_percentage']}% attendance, "
                     f"{d['at_risk_count']} at-risk / {d['total_students']} students "
                     f"[{d['status']}]"
+                    f"{faculty_text}"
                 )
 
         alerts    = data.get("alerts",    {})
         placement = data.get("placement", {})
         lines.append(f"\nActive System Alerts: {alerts.get('total_active', 0)}")
         lines.append(f"Open Placement Drives: {placement.get('open_drives', 0)}")
+
+        students_list = data.get("students_list", [])
+        at_risk_list = data.get("at_risk_students_list", [])
+        by_dept = data.get("students_by_department", {})
+        faculty_list = data.get("faculty_list", [])
+        faculty_by_department = data.get("faculty_by_department", {})
+
+        if students_list:
+            lines.append(
+                f"\nSTUDENT ROSTER (Total: {len(students_list)}):"
+            )
+            for s in students_list[:30]:
+                risk = " [AT RISK]" if s.get("at_risk") else ""
+                lines.append(
+                    f"  - {s['name']} | Roll: {s['roll_no']} | "
+                    f"Dept: {s.get('department', 'Unknown')} | "
+                    f"Year {s['year']}-{s['section']} | "
+                    f"Att: {s['attendance_pct']}%{risk}"
+                )
+
+        if by_dept:
+            lines.append("\nSTUDENTS BY DEPARTMENT:")
+            for dept_name, dept_students in by_dept.items():
+                lines.append(
+                    f"  {dept_name} ({len(dept_students)} students):"
+                )
+                for s in dept_students[:10]:
+                    risk = " [AT RISK]" if s.get("at_risk") else ""
+                    lines.append(
+                        f"    - {s['name']} (Roll: {s['roll_no']}) "
+                        f"Year {s['year']}-{s['section']} "
+                        f"Att: {s['attendance_pct']}%{risk}"
+                    )
+
+        if at_risk_list:
+            lines.append(
+                f"\nAT-RISK STUDENTS ({len(at_risk_list)} total):"
+            )
+            for s in at_risk_list[:20]:
+                lines.append(
+                    f"  - {s['name']} | Dept: {s.get('department', 'Unknown')} | "
+                    f"Roll: {s['roll_no']} | "
+                    f"Att: {s['attendance_pct']}%"
+                )
+
+        if faculty_list:
+            lines.append(
+                f"\nFACULTY ROSTER (Total: {len(faculty_list)}):"
+            )
+            for f in faculty_list[:30]:
+                lines.append(
+                    f"  - {f['name']} | Emp ID: {f.get('employee_id', 'N/A')} | "
+                    f"Dept: {f.get('department', 'Unknown')} | "
+                    f"Designation: {f.get('designation', 'N/A')}"
+                )
+
+        if faculty_by_department:
+            lines.append("\nFACULTY BY DEPARTMENT:")
+            for dept_name, dept_faculty in faculty_by_department.items():
+                lines.append(
+                    f"  {dept_name} ({len(dept_faculty)} faculty):"
+                )
+                for f in dept_faculty[:10]:
+                    lines.append(
+                        f"    - {f['name']} (Emp ID: {f.get('employee_id', 'N/A')})"
+                    )
 
     return "\n".join(lines)
 
@@ -430,14 +624,29 @@ def generate_answer(
     role: str,
     retrieved_data: dict,
     user_question: str,
-    conversation_history: list
+    conversation_history: list,
+    user_id: int | None = None
 ) -> str:
     """
     Core RAG generation: formats context → builds prompt → calls Gemini.
     Analytical / complex queries are first routed to the LangChain chain;
     simple queries go directly to Gemini; rule-based fallback if all fail.
     """
+    total_start = time.time()
+    cache_key = None
+    skip_cache = False
     try:
+        print(f"[REQUEST] user={user_id} query='{user_question}'")
+        cache_key = build_response_cache_key(user_id, user_question)
+        skip_cache = should_skip_response_cache(user_question)
+        if cache_key and not skip_cache:
+            cached = get_response_cache(cache_key)
+            if cached:
+                print("[CACHE] Response cache hit")
+                print("[CACHE] Hit -> instant response")
+                return cached
+            print("[CACHE] Miss -> calling Gemini")
+
         # ── 1. Try LangChain for analytical/complex queries ────────────
         try:
             from rag.analytical_chain import (
@@ -451,6 +660,8 @@ def generate_answer(
                     role, retrieved_data, user_question
                 )
                 if chain_answer and len(chain_answer) > 10:
+                    if cache_key and not skip_cache:
+                        set_response_cache(cache_key, chain_answer)
                     return chain_answer
                 print("[GENERATOR] Chain returned nothing — falling through to Gemini")
         except Exception as _ce:
@@ -469,15 +680,42 @@ def generate_answer(
 
         access_rules = {
             "student": (
+                "You are an AI assistant for a student. "
+                "The MARKS section includes faculty names for each subject. "
+                "When asked about faculty/teacher name for a subject, "
+                "provide it from the marks data. "
                 "Only discuss this student's own data. "
-                "If asked about other students, say: 'I can only show your own data.'"
+                "If asked about other students, say: 'You can only view your own data.'"
             ),
             "teacher": (
-                "Discuss class-level data only. Do not name individual students. "
+                "You are an AI assistant for a faculty member. "
+                "You have access to YOUR CLASS STUDENTS list with names. "
+                "You also have pending assignment student details with names and roll numbers. "
+                "When asked for student names or at-risk students, "
+                "list them from YOUR CLASS STUDENTS section. "
+                "When asked for pending assignment students, use the assignment pending student lists. "
+                "When asked about alerts or attendance-related students, "
+                "provide names and roll numbers from class/alert data when available. "
+                "You can share student names, roll numbers, and attendance "
+                "for students in YOUR class only. "
+                "Do NOT provide sensitive personal info like phone numbers or addresses. "
                 "If asked for admin data, say: 'That is outside my access.'"
             ),
             "faculty": "Discuss class-level data only.",
-            "admin":   "You have full institutional data access."
+            "admin": (
+                "You are an institutional AI assistant for admin. "
+                "You have FULL ACCESS to all data including: "
+                "individual student names, roll numbers, departments, "
+                "department-wise student lists, at-risk student names, faculty lists, "
+                "and faculty names grouped by department. "
+                "When asked for students from a specific department, "
+                "look at STUDENTS BY DEPARTMENT section and list them. "
+                "When asked for faculty in a department, use FACULTY BY DEPARTMENT or FACULTY ROSTER. "
+                "When asked for at-risk students, list from "
+                "AT-RISK STUDENTS section with their names. "
+                "Use exact names from the data and never say "
+                "'individual names not available'."
+            )
         }
         access = access_rules.get(role.lower(), "")
 
@@ -517,9 +755,11 @@ ANSWER:"""
 
         if not GEMINI_AVAILABLE or not GEMINI_CLIENT:
             print("[GENERATOR] Gemini not available, using fallback")
-            return build_fallback(role, retrieved_data, user_question)
+            fallback_answer = build_fallback(role, retrieved_data, user_question)
+            return fallback_answer or SAFE_FALLBACK_RESPONSE
 
         print(f"[GENERATOR] Calling Gemini for: {user_question[:60]}")
+        print("[LLM] Calling Gemini...")
         answer = call_gemini_with_memory(
             system_context=prompt,
             user_question=user_question,
@@ -528,16 +768,37 @@ ANSWER:"""
         )
 
         if answer:
-            print(f"[GENERATOR] Gemini LIVE — replied: {answer[:80]}")
+            print(f"[GENERATOR] Gemini LIVE — replied: {answer}")
+            print("[LLM] Success")
+            if cache_key and not skip_cache:
+                set_response_cache(cache_key, answer)
             return answer
 
         print("[GENERATOR] No Gemini response, using fallback")
-        return build_fallback(role, retrieved_data, user_question)
+        if cache_key and not skip_cache:
+            cached = get_response_cache(cache_key)
+            if cached:
+                print("[CACHE] Response cache hit")
+                return cached
+        fallback_answer = build_fallback(role, retrieved_data, user_question)
+        if not fallback_answer:
+            fallback_answer = SAFE_FALLBACK_RESPONSE
+        if cache_key and not skip_cache:
+            set_response_cache(cache_key, fallback_answer)
+        return fallback_answer
 
     except Exception as e:
-        print(f"[GENERATOR] Error: {e}")
+        print(f"[ERROR] {str(e)}")
+        print(f"[CRITICAL ERROR] {e}")
         traceback.print_exc()
-        return build_fallback(role, retrieved_data, user_question)
+        fallback_answer = build_fallback(role, retrieved_data, user_question)
+        if not fallback_answer:
+            fallback_answer = SAFE_FALLBACK_RESPONSE
+        if cache_key and not skip_cache:
+            set_response_cache(cache_key, fallback_answer)
+        return fallback_answer
+    finally:
+        print(f"[TOTAL TIME] {time.time() - total_start:.2f}s")
 
 
 # ── Fallback (Gemini unavailable) ────────────────────────────────

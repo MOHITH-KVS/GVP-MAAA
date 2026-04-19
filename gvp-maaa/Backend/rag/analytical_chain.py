@@ -32,7 +32,7 @@ try:
             model="gemini-1.5-flash",
             google_api_key=_api_key,
             temperature=0.1,
-            max_output_tokens=800,
+            max_output_tokens=600,
         )
         CHAIN_AVAILABLE = True
         print("[CHAIN] LangChain + Gemini ready")
@@ -146,12 +146,13 @@ def analytical_teacher_chain(data: dict, question: str) -> str:
         class_att = data.get("class_attendance", {})
         at_risk   = data.get("at_risk_students", {})
         assg      = data.get("assignments", {})
+        pending_flat = assg.get("pending_students_flat", [])
 
         subject_names = [s["name"] for s in subjects]
 
         prompt = ChatPromptTemplate.from_messages([
             ("system", """You are an AI assistant for a faculty member at GVP college.
-Answer analytically. Use ONLY the data provided. Never invent student names.
+Answer analytically. Use ONLY the data provided.
 
 FACULTY DATA:
 Subjects Taught: {subjects}
@@ -168,9 +169,15 @@ Percentage: {at_risk_pct}%
 
 ASSIGNMENTS:
 Pending Submissions: {pending_subs}
+Pending Student Details: {pending_students}
 
-Note: Individual student names are not available for privacy.
-Provide class-level analysis only."""),
+You have access to your class students' names and attendance.
+When asked for pending assignment students, provide names and roll numbers
+from Pending Student Details.
+For attendance, risk, and alert-related student queries, provide names and roll numbers
+from class student data.
+When asked for student lists or at-risk students, list them from class data.
+Do NOT provide sensitive personal info like phone numbers or addresses."""),
             ("human", "{question}"),
         ])
 
@@ -185,6 +192,10 @@ Provide class-level analysis only."""),
             "at_risk_count":   at_risk.get("count", 0),
             "at_risk_pct":     at_risk.get("percentage", 0),
             "pending_subs":    assg.get("pending_submissions", 0),
+            "pending_students": ", ".join([
+                f"{s.get('name', 'Unknown')} (Roll: {s.get('roll_no', 'N/A')})"
+                for s in pending_flat[:40]
+            ]) if pending_flat else "No pending student details",
             "question":        question,
         })
 
@@ -275,7 +286,7 @@ Answer:"""
                         contents=prompt,
                         config={
                             "temperature": 0.1,
-                            "max_output_tokens": 800
+                            "max_output_tokens": 600
                         }
                     )
                     if response and response.text:

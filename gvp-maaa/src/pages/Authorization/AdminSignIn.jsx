@@ -5,6 +5,7 @@ import VisibilityIcon from "@mui/icons-material/Visibility";
 import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
 import CircularProgress from "@mui/material/CircularProgress";
 import axios from "axios";
+import { sendAnalyticsEvent, startNewAnalyticsSession } from "../../utils/analyticsSession";
 
 
 export default function AdminSignIn() {
@@ -131,6 +132,21 @@ export default function AdminSignIn() {
       localStorage.setItem("access_token", data.access_token);
       localStorage.setItem("role", "admin");
       localStorage.setItem("user", JSON.stringify(data));
+      startNewAnalyticsSession({
+        user_id: data.user_id,
+        role: "admin",
+        department: data.department ?? data.department_id ?? null,
+        year: data.year ?? null,
+        section: data.section ?? null,
+      });
+      await sendAnalyticsEvent({
+        page: "/login",
+        action: "login",
+        role: "admin",
+        metadata: {
+          department: data.department ?? data.department_id ?? null,
+        },
+      });
 
       // role check
       if (data.role !== "admin") {
