@@ -850,9 +850,9 @@ ANSWER:"""
 def build_fallback(role: str, data: dict, question: str) -> str:
     """Honest, data-driven fallback when Gemini is unavailable."""
     notice = (
-        "Live AI response is temporarily unavailable. "
+        "AI-generated wording is temporarily unavailable. "
         "Showing verified dashboard data now. "
-        "If you want AI-only wording, please retry after about 1 minute."
+        "Use Retry AI in about 1 minute to try again."
     )
 
     def with_notice(body: str) -> str:

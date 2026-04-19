@@ -25,6 +25,7 @@ class RAGState(TypedDict):
     question: str
     history:  List[Dict]
     db:       Any
+    force_live_ai: bool
     # Node outputs
     access_granted:  bool
     denial_message:  str
@@ -140,6 +141,7 @@ def node_answer_generator(state: RAGState) -> RAGState:
         history    = state["history"]
         query_type = state["query_type"]
         user_id    = state["user_id"]
+        force_live_ai = bool(state.get("force_live_ai", False))
 
         from rag.generator import (
             build_response_cache_key,
@@ -148,10 +150,28 @@ def node_answer_generator(state: RAGState) -> RAGState:
             should_skip_response_cache,
             is_response_incomplete,
             should_force_structured_fallback,
+            build_fallback,
         )
 
         cache_key = build_response_cache_key(user_id, question)
         skip_cache = should_skip_response_cache(question)
+
+        # Deterministic path for list-style queries to avoid partial AI responses.
+        force_verified_data = (
+            role in ("admin", "teacher", "faculty")
+            and should_force_structured_fallback(question)
+            and not force_live_ai
+        )
+
+        if force_verified_data:
+            answer = build_fallback(role, data, question)
+            state["answer"] = answer or "Please check your dashboard for the latest information."
+            state["source"] = "verified_data"
+            if cache_key and not skip_cache and state["answer"] and not is_response_incomplete(state["answer"]):
+                set_response_cache(cache_key, state["answer"])
+            print("[GRAPH] Forced verified-data route for list-style query")
+            return state
+
         if cache_key and not skip_cache:
             cached = get_response_cache(cache_key)
             if cached:
@@ -160,7 +180,11 @@ def node_answer_generator(state: RAGState) -> RAGState:
                 else:
                     print("[CACHE] Hit -> instant response")
                     state["answer"] = cached
-                    state["source"] = "cache"
+                    cached_lower = str(cached).lower()
+                    if "verified dashboard data" in cached_lower or "ai-generated wording is temporarily unavailable" in cached_lower:
+                        state["source"] = "verified_data"
+                    else:
+                        state["source"] = "cache"
                     return state
             print("[CACHE] Miss -> calling Gemini")
 
@@ -259,9 +283,8 @@ ANSWER:"""
         # ── Strategy 3: Rule-based fallback ───────────────────────
         if not answer:
             try:
-                from rag.generator import build_fallback
                 answer = build_fallback(role, data, question)
-                state["source"] = "fallback"
+                state["source"] = "verified_data"
                 if cache_key and not skip_cache:
                     set_response_cache(cache_key, answer)
             except Exception:
@@ -389,7 +412,9 @@ def run_rag_pipeline(
     question: str,
     history:  list,
     db,
-) -> str:
+    include_meta: bool = False,
+    force_live_ai: bool = False,
+):
     """
     Main entry point called by chat_router.
     Falls back to the old generate_answer path if the graph failed to compile.
@@ -411,7 +436,10 @@ def run_rag_pipeline(
                 data = retrieve_teacher_data(user_id, db)
             else:
                 data = retrieve_admin_data(db)
-            return generate_answer(r, data, question, history, user_id=user_id)
+            answer = generate_answer(r, data, question, history, user_id=user_id)
+            if include_meta:
+                return {"answer": answer, "source": "legacy"}
+            return answer
 
         initial_state: RAGState = {
             "user_id":        user_id,
@@ -419,6 +447,7 @@ def run_rag_pipeline(
             "question":       question,
             "history":        history,
             "db":             db,
+            "force_live_ai":  force_live_ai,
             "access_granted": True,
             "denial_message": "",
             "query_type":     "simple",
@@ -428,8 +457,15 @@ def run_rag_pipeline(
         }
 
         result = RAG_GRAPH.invoke(initial_state)
-        return result.get("answer", "Please check your dashboard.")
+        answer = result.get("answer", "Please check your dashboard.")
+        source = result.get("source", "unknown")
+        if include_meta:
+            return {"answer": answer, "source": source}
+        return answer
 
     except Exception:
         traceback.print_exc()
-        return "I had trouble processing that. Please try again."
+        fallback = "I had trouble processing that. Please try again."
+        if include_meta:
+            return {"answer": fallback, "source": "error"}
+        return fallback

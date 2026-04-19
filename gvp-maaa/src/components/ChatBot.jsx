@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef } from "react";
-import { baseURL, getToken } from "../utils/api";
+import api, { baseURL, getToken } from "../utils/api";
 import { trackAnalyticsAction } from "../hooks/useAnalytics";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import SendRoundedIcon from "@mui/icons-material/SendRounded";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
+
+const RETRY_RECOMMENDED_WAIT_MS = 90 * 1000;
 
 export default function ChatBot({ role }) {
   const [messages, setMessages] = useState([]);
@@ -12,8 +14,31 @@ export default function ChatBot({ role }) {
   const [streaming, setStreaming] = useState(false);
   const [suggested, setSuggested] = useState([]);
   const [copiedIndex, setCopiedIndex] = useState(null);
+  const [showRetryDecision, setShowRetryDecision] = useState(false);
+  const [pendingRetryMessage, setPendingRetryMessage] = useState(null);
+  const [nowTs, setNowTs] = useState(Date.now());
+  const [showRetryReadyToast, setShowRetryReadyToast] = useState(false);
   const messagesEndRef = useRef(null);
   const activeReplyIdRef = useRef(null);
+
+  useEffect(() => {
+    const timer = setInterval(() => setNowTs(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!showRetryDecision || !pendingRetryMessage?.retryRecommendedUntil) return;
+
+    const remaining = pendingRetryMessage.retryRecommendedUntil - nowTs;
+    if (remaining > 0) return;
+
+    setShowRetryDecision(false);
+    setPendingRetryMessage(null);
+    setShowRetryReadyToast(true);
+
+    const hideTimer = setTimeout(() => setShowRetryReadyToast(false), 2500);
+    return () => clearTimeout(hideTimer);
+  }, [nowTs, showRetryDecision, pendingRetryMessage]);
 
   // Fetch suggested questions on mount
   useEffect(() => {
@@ -41,13 +66,15 @@ export default function ChatBot({ role }) {
     }
   }, [messages, loading]);
 
-  const handleSend = async (overrideText) => {
+  const handleSend = async (overrideText, options = {}) => {
+    const forceLiveAI = Boolean(options.forceLiveAI);
+    const isRetry = Boolean(options.isRetry);
     const textToSend = overrideText || inputText.trim();
     if (!textToSend) return;
 
     const normalizedRole = role === "faculty" ? "teacher" : role;
     const analyticsPage = `/${normalizedRole}/ai-assistant`;
-    const actionType = overrideText ? "click" : "submit";
+    const actionType = isRetry ? "retry" : (overrideText ? "click" : "submit");
     trackAnalyticsAction({ page: analyticsPage, role: normalizedRole, action: actionType });
 
     if (!overrideText) {
@@ -65,7 +92,8 @@ export default function ChatBot({ role }) {
         text: "Fetching latest data...",
         timestamp,
         id: replyId,
-        status: "fetching"
+        status: "fetching",
+        userPrompt: textToSend,
       }
     ];
     
@@ -82,6 +110,7 @@ export default function ChatBot({ role }) {
         },
         body: JSON.stringify({
           message: textToSend,
+          force_live_ai: forceLiveAI,
           history: messages.slice(-6).map(m => ({
             role: m.from === 'user' ? 'user' : 'assistant',
             content: m.text
@@ -90,6 +119,8 @@ export default function ChatBot({ role }) {
       });
 
       const contentType = response.headers.get('content-type') || '';
+      const responseMode = (response.headers.get('x-response-mode') || 'live_ai').toLowerCase();
+      const responseSource = response.headers.get('x-response-source') || 'unknown';
       if (!response.ok) {
         const fallbackText = await response.text();
         throw new Error(fallbackText || `Request failed with status ${response.status}`);
@@ -99,9 +130,23 @@ export default function ChatBot({ role }) {
         const data = await response.json();
         const reply = data.reply || data.message ||
                       "I received your message but could not generate a response.";
+        const detectedMode = (
+          data.mode ||
+          responseMode ||
+          inferModeFromText(reply) ||
+          'live_ai'
+        ).toLowerCase();
         setMessages(prev => prev.map(m => (
           m.id === replyId
-            ? { ...m, text: reply, status: 'done' }
+            ? {
+                ...m,
+                text: reply,
+                status: 'done',
+                mode: detectedMode,
+                source: data.source || responseSource,
+                retryRecommendedUntil: detectedMode === 'verified_data' ? Date.now() + RETRY_RECOMMENDED_WAIT_MS : null,
+                userPrompt: m.userPrompt,
+              }
             : m
         )));
       } else if (response.body && response.body.getReader) {
@@ -111,7 +156,16 @@ export default function ChatBot({ role }) {
         let hasFirstChunk = false;
 
         setMessages(prev => prev.map(m => (
-          m.id === replyId ? { ...m, text: 'Typing...', status: 'typing' } : m
+          m.id === replyId
+            ? {
+                ...m,
+                text: 'Typing...',
+                status: 'typing',
+                mode: responseMode,
+                source: responseSource,
+                userPrompt: m.userPrompt,
+              }
+            : m
         )));
         setStreaming(true);
 
@@ -130,22 +184,55 @@ export default function ChatBot({ role }) {
           fullText += chunk;
           setMessages(prev => prev.map(m => (
             m.id === replyId
-              ? { ...m, text: fullText, status: 'streaming' }
+              ? {
+                  ...m,
+                  text: fullText,
+                  status: 'streaming',
+                  mode: responseMode,
+                  source: responseSource,
+                  userPrompt: m.userPrompt,
+                }
               : m
           )));
         }
 
         const finalText = fullText.trim();
+        const detectedMode = (
+          responseMode ||
+          inferModeFromText(finalText) ||
+          'live_ai'
+        ).toLowerCase();
         setMessages(prev => prev.map(m => (
           m.id === replyId
-            ? { ...m, text: finalText || m.text, status: 'done' }
+            ? {
+                ...m,
+                text: finalText || m.text,
+                status: 'done',
+                mode: detectedMode,
+                source: responseSource,
+                retryRecommendedUntil: detectedMode === 'verified_data' ? Date.now() + RETRY_RECOMMENDED_WAIT_MS : null,
+                userPrompt: m.userPrompt,
+              }
             : m
         )));
       } else {
         const reply = await response.text();
+        const detectedMode = (
+          responseMode ||
+          inferModeFromText(reply) ||
+          'live_ai'
+        ).toLowerCase();
         setMessages(prev => prev.map(m => (
           m.id === replyId
-            ? { ...m, text: reply || m.text, status: 'done' }
+            ? {
+                ...m,
+                text: reply || m.text,
+                status: 'done',
+                mode: detectedMode,
+                source: responseSource,
+                retryRecommendedUntil: detectedMode === 'verified_data' ? Date.now() + RETRY_RECOMMENDED_WAIT_MS : null,
+                userPrompt: m.userPrompt,
+              }
             : m
         )));
       }
@@ -165,7 +252,11 @@ export default function ChatBot({ role }) {
               ...m,
               text: `I had trouble with that request. ${errMsg}`,
               status: 'done',
-              isError: false
+              isError: false,
+              mode: 'verified_data',
+              source: 'error',
+              retryRecommendedUntil: Date.now() + RETRY_RECOMMENDED_WAIT_MS,
+              userPrompt: m.userPrompt,
             }
           : m
       )));
@@ -187,6 +278,64 @@ export default function ChatBot({ role }) {
     navigator.clipboard.writeText(text);
     setCopiedIndex(idx);
     setTimeout(() => setCopiedIndex(null), 2000);
+  };
+
+  const inferModeFromText = (text) => {
+    const lower = String(text || "").toLowerCase();
+    if (
+      lower.includes("verified dashboard data") ||
+      lower.includes("ai-generated wording is temporarily unavailable")
+    ) {
+      return "verified_data";
+    }
+    return "live_ai";
+  };
+
+  const getModeBadge = (mode) => {
+    const normalized = String(mode || "").toLowerCase();
+    if (normalized === "verified_data") {
+      return {
+        label: "Verified Data",
+        className: "bg-emerald-50 text-emerald-700 border border-emerald-200"
+      };
+    }
+    return {
+      label: "Live AI",
+      className: "bg-indigo-50 text-indigo-700 border border-indigo-200"
+    };
+  };
+
+  const formatRetryCountdown = (remainingMs) => {
+    const totalSeconds = Math.max(0, Math.ceil(remainingMs / 1000));
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${String(seconds).padStart(2, "0")}`;
+  };
+
+  const handleRetryAI = (message) => {
+    if (loading) return;
+    const prompt = message?.userPrompt || "";
+    if (!prompt) return;
+    setPendingRetryMessage({
+      ...message,
+      retryRecommendedUntil: message?.retryRecommendedUntil || null,
+    });
+    setShowRetryDecision(true);
+  };
+
+  const closeRetryDecision = () => {
+    setShowRetryDecision(false);
+    setPendingRetryMessage(null);
+  };
+
+  const proceedRetryNow = () => {
+    const prompt = pendingRetryMessage?.userPrompt || "";
+    if (!prompt) {
+      closeRetryDecision();
+      return;
+    }
+    closeRetryDecision();
+    handleSend(prompt, { forceLiveAI: true, isRetry: true });
   };
 
   return (
@@ -260,6 +409,15 @@ export default function ChatBot({ role }) {
                 )}
                 
                 <div className="flex flex-col group max-w-[85%]">
+                  {m.from === "ai" && m.status !== "typing" && (
+                    <div className="mb-1.5 flex items-center gap-2">
+                      <span
+                        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${getModeBadge(m.mode).className}`}
+                      >
+                        {getModeBadge(m.mode).label}
+                      </span>
+                    </div>
+                  )}
                   <div
                     className={`p-4 text-[15px] leading-relaxed shadow-sm relative ${
                       m.from === "user"
@@ -297,6 +455,27 @@ export default function ChatBot({ role }) {
                     <span className={`text-[11px] text-gray-400 mt-1.5 px-1 font-medium ${m.from === "user" ? "text-right" : "text-left"}`}>
                       {m.timestamp}
                     </span>
+                  )}
+                  {m.from === "ai" && String(m.mode || "").toLowerCase() === "verified_data" && !!m.userPrompt && (
+                    <div className="mt-2 flex items-center justify-end gap-2">
+                      {Math.max(0, (m.retryRecommendedUntil || 0) - nowTs) > 0 ? (
+                        <span className="text-[11px] text-amber-600">
+                          Recommended wait: {formatRetryCountdown(Math.max(0, (m.retryRecommendedUntil || 0) - nowTs))}
+                        </span>
+                      ) : (
+                        <span className="text-[11px] text-gray-500">Want AI wording?</span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => handleRetryAI(m)}
+                        disabled={loading}
+                        className="text-[11px] font-semibold px-3 py-1 rounded-md border border-indigo-200 text-indigo-700 bg-white hover:bg-indigo-50 transition disabled:opacity-50"
+                      >
+                        {Math.max(0, (m.retryRecommendedUntil || 0) - nowTs) > 0
+                          ? `Retry in ${formatRetryCountdown(Math.max(0, (m.retryRecommendedUntil || 0) - nowTs))}`
+                          : "Retry AI"}
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>
@@ -358,6 +537,41 @@ export default function ChatBot({ role }) {
           to { opacity: 1; transform: translateY(0); }
         }
       `}} />
+
+      {showRetryDecision && (
+        <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/35 px-4">
+          <div className="w-full max-w-md rounded-xl bg-white shadow-xl border border-gray-200 p-5">
+            <h3 className="text-base font-semibold text-gray-900">Retry AI Now?</h3>
+            <p className="mt-2 text-sm leading-6 text-gray-600">
+              {Math.max(0, ((pendingRetryMessage?.retryRecommendedUntil || 0) - nowTs)) > 0
+                ? `Recommended wait: ${formatRetryCountdown(Math.max(0, ((pendingRetryMessage?.retryRecommendedUntil || 0) - nowTs)))} for better AI wording. If you proceed immediately, there is a high chance you may get the same answer.`
+                : "If you proceed immediately, there is a high chance you may get the same answer. Waiting for 1 to 2 minutes usually gives better AI wording."}
+            </p>
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={closeRetryDecision}
+                className="px-3 py-1.5 text-sm font-medium rounded-md border border-gray-300 text-gray-700 hover:bg-gray-50 transition"
+              >
+                Wait 1 to 2 min
+              </button>
+              <button
+                type="button"
+                onClick={proceedRetryNow}
+                className="px-3 py-1.5 text-sm font-semibold rounded-md bg-indigo-600 text-white hover:bg-indigo-700 transition"
+              >
+                Proceed now
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showRetryReadyToast && (
+        <div className="fixed bottom-6 right-6 z-[1001] rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-medium text-emerald-700 shadow-lg">
+          Thanks for waiting. Retry AI is ready.
+        </div>
+      )}
     </div>
   );
 }

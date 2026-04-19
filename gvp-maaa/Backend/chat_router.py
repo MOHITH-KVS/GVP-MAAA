@@ -10,6 +10,22 @@ from auth import get_current_user
 from database import get_db
 router = APIRouter(prefix="/chat", tags=["RAG Chatbot"])
 
+
+def map_response_mode(source: str) -> str:
+    src = (source or "").lower()
+    if src in {"verified_data", "fallback"}:
+        return "verified_data"
+    if src in {"gemini", "langchain", "cache", "legacy"}:
+        return "live_ai"
+    return "live_ai"
+
+
+def infer_mode_from_text(reply_text: str) -> Optional[str]:
+    lower = str(reply_text or "").lower()
+    if "verified dashboard data" in lower or "ai-generated wording is temporarily unavailable" in lower:
+        return "verified_data"
+    return None
+
 class ChatRequest(BaseModel):
     message: str
     history: Optional[List[Any]] = []
@@ -61,6 +77,8 @@ async def chat_message(
             role    = getattr(current_user, 'role', 'student')
 
         query = str(request.message or "")
+        request_payload = request.dict()
+        force_live_ai = bool(request_payload.get("force_live_ai", False))
         print(f"[REQUEST] user={user_id} query='{query}'")
         print(f"[CHAT] role={role} user_id={user_id} msg={request.message[:60]}")
 
@@ -77,24 +95,40 @@ async def chat_message(
 
         # ── Run LangGraph RAG pipeline ──────────────────────────
         role_lower = str(role).lower()
+        reply_source = "unknown"
         try:
             from rag.graph_pipeline import run_rag_pipeline
-            reply = run_rag_pipeline(
+            pipeline_result = run_rag_pipeline(
                 user_id=int(user_id),
                 role=role_lower,
                 question=request.message,
                 history=history[-6:],
                 db=db,
+                include_meta=True,
+                force_live_ai=force_live_ai,
             )
+            if isinstance(pipeline_result, dict):
+                reply = pipeline_result.get("answer")
+                reply_source = str(pipeline_result.get("source") or "unknown")
+            else:
+                reply = pipeline_result
         except Exception:
             traceback.print_exc()
             reply = None
+            reply_source = "error"
 
         if not reply or len(str(reply).strip()) < 3:
             reply = ("I couldn't find specific data for that. "
                      "Please check your dashboard.")
+            reply_source = "error"
+
+        response_mode = map_response_mode(reply_source)
+        inferred_mode = infer_mode_from_text(str(reply))
+        if inferred_mode:
+            response_mode = inferred_mode
 
         print(f"[CHAT] reply={str(reply)}")
+        print(f"[CHAT] source={reply_source} mode={response_mode}")
         print(f"[TOTAL TIME] {time.time() - request_start:.2f}s")
 
         def stream_response():
@@ -104,7 +138,11 @@ async def chat_message(
 
         return StreamingResponse(
             stream_response(),
-            media_type="text/plain; charset=utf-8"
+            media_type="text/plain; charset=utf-8",
+            headers={
+                "X-Response-Mode": response_mode,
+                "X-Response-Source": reply_source,
+            }
         )
 
     except Exception as e:
@@ -117,7 +155,9 @@ async def chat_message(
             content={
                 "reply": "I'm having trouble accessing your data. Please try again.",
                 "role":    "unknown",
-                "allowed": True
+                "allowed": True,
+                "mode": "verified_data",
+                "source": "error",
             }
         )
 
