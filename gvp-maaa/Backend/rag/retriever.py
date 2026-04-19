@@ -22,7 +22,7 @@ def _safe_rollback(db: Session) -> None:
 
 
 _CACHE = {}
-CACHE_TTL = 300  # 5 minutes
+CACHE_TTL = 60  # 1 minute instead of 5 minutes
 
 
 def get_cached(key):
@@ -36,6 +36,12 @@ def get_cached(key):
 
 def set_cached(key, data):
     _CACHE[key] = (data, time.time())
+
+
+def clear_cache():
+    global _CACHE
+    _CACHE = {}
+    print("[CACHE] Cleared")
 
 
 def retrieve_student_data(student_id: int, db: Session) -> dict:

@@ -25,13 +25,17 @@ ALL_KEYS = [
 
 print(f"[GENERATOR] Found {len(ALL_KEYS)} API key(s)")
 
+SKIP_FALLBACK_MODELS = {
+    # These models frequently hit free-tier quota exhaustion and add long retries.
+    "gemini-2.0-flash-lite",
+    "gemini-2.0-flash",
+}
+
 FALLBACK_MODELS = [
     # Prioritize models confirmed working by check_gemini_keys.py.
     "gemini-flash-latest",
     "gemini-2.5-flash",
     "gemini-flash-lite-latest",
-    "gemini-2.0-flash-lite",
-    "gemini-2.0-flash",
 ]
 
 GEMINI_AVAILABLE = False
@@ -71,6 +75,42 @@ def should_skip_response_cache(query: str) -> bool:
     return any(word in lowered for word in ["marks", "attendance", "today", "latest"])
 
 
+def should_force_structured_fallback(question: str) -> bool:
+    lowered = question.lower()
+    return any(
+        key in lowered for key in [
+            "list",
+            "all students",
+            "student list",
+            "at risk",
+            "which students",
+            "from csm",
+            "from cse",
+            "from ece",
+            "from civil",
+            "from mech",
+            "from it",
+            "department",
+        ]
+    )
+
+
+def is_response_incomplete(text: str) -> bool:
+    if not text:
+        return True
+    stripped = text.strip()
+    if len(stripped) < 20:
+        return True
+    if stripped.endswith(("...", "…", ",", ";", ":", "-", "—")):
+        return True
+    lower = stripped.lower()
+    if lower.endswith(("includes", "include", "and", "or", "with", "from", "such as", "like")):
+        return True
+    if not stripped.endswith((".", "!", "?")) and "\n" not in stripped:
+        return True
+    return False
+
+
 def safe_gemini_call(call_fn):
     for attempt in range(2):
         try:
@@ -81,7 +121,7 @@ def safe_gemini_call(call_fn):
     return None
 
 
-def call_with_timeout(call_fn, timeout=10):
+def call_with_timeout(call_fn, timeout=14):
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     future = executor.submit(safe_gemini_call, call_fn)
     try:
@@ -176,10 +216,10 @@ def call_gemini(prompt: str) -> str:
                         contents=prompt,
                         config={
                             "temperature": 0.1,
-                            "max_output_tokens": 600
+                            "max_output_tokens": 500
                         }
                     ),
-                    timeout=10,
+                    timeout=14,
                 )
                 print(f"[GEMINI_CALL] Response: {str(response)[:100]}")
 
@@ -256,15 +296,15 @@ Write complete paragraphs. Maximum 6 sentences."""
                         contents=full_prompt,
                         config={
                             "temperature": 0.1,
-                            "max_output_tokens": 600,
+                            "max_output_tokens": 500,
                             "top_p": 0.8
                         }
                     ),
-                    timeout=10,
+                    timeout=14,
                 )
                 if response and response.text:
                     text = response.text.strip()
-                    if len(text) > 10:
+                    if len(text) > 10 and not is_response_incomplete(text):
                         print("[LLM] Success")
                         if key_idx != ACTIVE_KEY_INDEX or model != GEMINI_MODEL:
                             print(f"[GENERATOR] Failover to key {key_idx+1}, model {model}")
@@ -559,7 +599,7 @@ def format_data_for_gemini(data: dict, role: str) -> str:
             lines.append(
                 f"\nSTUDENT ROSTER (Total: {len(students_list)}):"
             )
-            for s in students_list[:30]:
+            for s in students_list[:15]:
                 risk = " [AT RISK]" if s.get("at_risk") else ""
                 lines.append(
                     f"  - {s['name']} | Roll: {s['roll_no']} | "
@@ -574,7 +614,7 @@ def format_data_for_gemini(data: dict, role: str) -> str:
                 lines.append(
                     f"  {dept_name} ({len(dept_students)} students):"
                 )
-                for s in dept_students[:10]:
+                for s in dept_students[:8]:
                     risk = " [AT RISK]" if s.get("at_risk") else ""
                     lines.append(
                         f"    - {s['name']} (Roll: {s['roll_no']}) "
@@ -586,7 +626,7 @@ def format_data_for_gemini(data: dict, role: str) -> str:
             lines.append(
                 f"\nAT-RISK STUDENTS ({len(at_risk_list)} total):"
             )
-            for s in at_risk_list[:20]:
+            for s in at_risk_list[:10]:
                 lines.append(
                     f"  - {s['name']} | Dept: {s.get('department', 'Unknown')} | "
                     f"Roll: {s['roll_no']} | "
@@ -660,7 +700,7 @@ def generate_answer(
                     role, retrieved_data, user_question
                 )
                 if chain_answer and len(chain_answer) > 10:
-                    if cache_key and not skip_cache:
+                    if cache_key and not skip_cache and not is_response_incomplete(chain_answer):
                         set_response_cache(cache_key, chain_answer)
                     return chain_answer
                 print("[GENERATOR] Chain returned nothing — falling through to Gemini")
@@ -770,9 +810,13 @@ ANSWER:"""
         if answer:
             print(f"[GENERATOR] Gemini LIVE — replied: {answer}")
             print("[LLM] Success")
-            if cache_key and not skip_cache:
+            if is_response_incomplete(answer):
+                print("[GENERATOR] Incomplete Gemini response detected — using fallback")
+                answer = None
+            elif cache_key and not skip_cache:
                 set_response_cache(cache_key, answer)
-            return answer
+            if answer:
+                return answer
 
         print("[GENERATOR] No Gemini response, using fallback")
         if cache_key and not skip_cache:
@@ -805,7 +849,11 @@ ANSWER:"""
 
 def build_fallback(role: str, data: dict, question: str) -> str:
     """Honest, data-driven fallback when Gemini is unavailable."""
-    notice = "Live AI response is temporarily unavailable. Showing verified dashboard data."
+    notice = (
+        "Live AI response is temporarily unavailable. "
+        "Showing verified dashboard data now. "
+        "If you want AI-only wording, please retry after about 1 minute."
+    )
 
     def with_notice(body: str) -> str:
         return f"{notice}\n{body}"
@@ -901,12 +949,65 @@ def build_fallback(role: str, data: dict, question: str) -> str:
             )
 
         else:  # admin
+            dept_keywords = {
+                "csm": "CSM", "cse": "CSE",
+                "ece": "ECE", "civil": "CIVIL",
+                "mech": "MECH", "it": "IT"
+            }
+            asked_dept = None
+            for kw, dept in dept_keywords.items():
+                if kw in q:
+                    asked_dept = dept
+                    break
+
+            if asked_dept:
+                by_dept = data.get("students_by_department", {})
+                dept_students = by_dept.get(asked_dept, [])
+                if dept_students:
+                    names = [
+                        f"{s['name']} (Roll: {s['roll_no']}, "
+                        f"Att: {s['attendance_pct']}%)"
+                        for s in dept_students[:10]
+                    ]
+                    return with_notice(
+                        f"{asked_dept} Department has "
+                        f"{len(dept_students)} students:\n" +
+                        "\n".join(names)
+                    )
+                return with_notice(f"No students found for {asked_dept} department.")
+
+            if any(w in q for w in ["at risk", "risk", "below 75"]):
+                at_risk = data.get("at_risk_students_list", [])
+                if at_risk:
+                    names = [
+                        f"{s['name']} ({s['department']}, "
+                        f"Att: {s['attendance_pct']}%)"
+                        for s in at_risk[:10]
+                    ]
+                    return with_notice(
+                        f"{len(at_risk)} students at risk:\n" +
+                        "\n".join(names)
+                    )
+                return with_notice("No students currently at risk.")
+
+            if any(w in q for w in ["list", "students", "all students"]):
+                students = data.get("students_list", [])
+                if students:
+                    names = [
+                        f"{s['name']} ({s['department']}, "
+                        f"Year {s['year']}-{s['section']})"
+                        for s in students[:10]
+                    ]
+                    return with_notice(
+                        f"Total {len(students)} students:\n" +
+                        "\n".join(names)
+                    )
+
             inst = data.get("institution", {})
             return with_notice(
-                f"Institution: {inst.get('total_students', 'N/A')} students, "
-                f"{inst.get('total_faculty', 'N/A')} faculty, "
-                f"{inst.get('overall_attendance', 'N/A')}% overall attendance, "
-                f"{inst.get('at_risk_count', 'N/A')} at-risk students."
+                f"Institution: {inst.get('total_students')} students, "
+                f"{inst.get('total_faculty')} faculty, "
+                f"{inst.get('overall_attendance')}% attendance."
             )
 
     except Exception:

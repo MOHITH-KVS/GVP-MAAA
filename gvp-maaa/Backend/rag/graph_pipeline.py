@@ -146,6 +146,8 @@ def node_answer_generator(state: RAGState) -> RAGState:
             get_response_cache,
             set_response_cache,
             should_skip_response_cache,
+            is_response_incomplete,
+            should_force_structured_fallback,
         )
 
         cache_key = build_response_cache_key(user_id, question)
@@ -153,10 +155,13 @@ def node_answer_generator(state: RAGState) -> RAGState:
         if cache_key and not skip_cache:
             cached = get_response_cache(cache_key)
             if cached:
-                print("[CACHE] Hit -> instant response")
-                state["answer"] = cached
-                state["source"] = "cache"
-                return state
+                if is_response_incomplete(cached):
+                    print("[CACHE] Ignored incomplete cached response")
+                else:
+                    print("[CACHE] Hit -> instant response")
+                    state["answer"] = cached
+                    state["source"] = "cache"
+                    return state
             print("[CACHE] Miss -> calling Gemini")
 
         answer = None
@@ -168,7 +173,7 @@ def node_answer_generator(state: RAGState) -> RAGState:
                 answer = run_analytical_chain(role, data, question)
                 if answer and len(answer) > 10:
                     state["source"] = "langchain"
-                    if cache_key and not skip_cache:
+                    if cache_key and not skip_cache and not is_response_incomplete(answer):
                         set_response_cache(cache_key, answer)
                 else:
                     answer = None  # fall through
@@ -239,11 +244,13 @@ INSTRUCTIONS:
 ANSWER:"""
 
                     answer = call_gemini(prompt)
-                    if answer and len(answer.strip()) > 5:
+                    if answer and len(answer.strip()) > 5 and not is_response_incomplete(answer):
                         state["source"] = "gemini"
                         if cache_key and not skip_cache:
                             set_response_cache(cache_key, answer)
                     else:
+                        if answer and should_force_structured_fallback(question):
+                            print("[GRAPH] Incomplete Gemini list response — forcing fallback")
                         answer = None
 
             except Exception:

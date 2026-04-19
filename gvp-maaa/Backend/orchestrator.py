@@ -89,6 +89,14 @@ def get_status():
         "graph": "ok" if graph else "error",
     }
 
+
+@router.post("/cache/clear")
+@router.post("/agents/cache/clear")
+async def clear_cache_endpoint():
+    from rag.retriever import clear_cache
+    clear_cache()
+    return {"status": "cache cleared"}
+
 @router.get("/debug/student/{student_id}")
 async def debug_student_data(
     student_id: int,

@@ -32,7 +32,7 @@ try:
             model="gemini-1.5-flash",
             google_api_key=_api_key,
             temperature=0.1,
-            max_output_tokens=600,
+            max_output_tokens=500,
         )
         CHAIN_AVAILABLE = True
         print("[CHAIN] LangChain + Gemini ready")
@@ -286,7 +286,7 @@ Answer:"""
                         contents=prompt,
                         config={
                             "temperature": 0.1,
-                            "max_output_tokens": 600
+                            "max_output_tokens": 500
                         }
                     )
                     if response and response.text:
