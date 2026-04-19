@@ -117,7 +117,7 @@ def call_gemini(prompt: str) -> str:
                     contents=prompt,
                     config={
                         "temperature": 0.1,
-                        "max_output_tokens": 300
+                        "max_output_tokens": 800
                     }
                 )
                 print(f"[GEMINI_CALL] Response: {str(response)[:100]}")
@@ -147,6 +147,67 @@ def call_gemini(prompt: str) -> str:
 
     print("[GEMINI_CALL] All attempts failed")
     GEMINI_AVAILABLE = False
+    return None
+
+
+def call_gemini_with_memory(
+    system_context: str,
+    user_question: str,
+    history: list,
+    role: str
+) -> str:
+    """Calls Gemini with full conversation memory."""
+    if not ALL_KEYS:
+        return None
+
+    from google import genai as _genai
+
+    history_text = ""
+    if history:
+        history_text = "\n\nPREVIOUS CONVERSATION:\n"
+        for h in history[-6:]:
+            r = "User" if h.get("role") == "user" else "Assistant"
+            content = h.get("content", "")
+            if content:
+                history_text += f"{r}: {content}\n"
+
+    full_prompt = f"""{system_context}
+{history_text}
+Current question: {user_question}
+
+Answer the current question. If the user refers to
+something from the conversation history (like "yes",
+"tell me more", "what about that"), use the history
+to understand what they mean.
+
+Provide a COMPLETE answer. Do not cut off mid-sentence.
+Write complete paragraphs. Maximum 6 sentences."""
+
+    for key_idx, key in enumerate(ALL_KEYS):
+        for model in FALLBACK_MODELS:
+            try:
+                client = _genai.Client(api_key=key)
+                response = client.models.generate_content(
+                    model=model,
+                    contents=full_prompt,
+                    config={
+                        "temperature": 0.1,
+                        "max_output_tokens": 800,
+                        "top_p": 0.8
+                    }
+                )
+                if response and response.text:
+                    text = response.text.strip()
+                    if len(text) > 10:
+                        if key_idx != ACTIVE_KEY_INDEX or model != GEMINI_MODEL:
+                            print(f"[GENERATOR] Failover to key {key_idx+1}, model {model}")
+                        return text
+            except Exception as e:
+                err = str(e)
+                if "429" in err or "quota" in err.lower():
+                    continue
+                continue
+
     return None
 
 
@@ -247,6 +308,25 @@ def format_data_for_gemini(data: dict, role: str) -> str:
             lines.append(f"\nSTUDY MATERIALS ({len(resources)} available):")
             for r in resources[:5]:
                 lines.append(f"  - {r['title']} [{r['subject']}] ({r['type']})")
+
+        # Placement
+        placement = data.get("placement", {})
+        drives = placement.get("drives", [])
+        if drives:
+            lines.append(f"\nPLACEMENT DRIVES ({len(drives)} open):")
+            for d in drives:
+                eligible_text = (
+                    "You are eligible"
+                    if d.get("eligible")
+                    else "Not eligible (CGPA too low)"
+                )
+                lines.append(
+                    f"  - {d['company']} | {d['role']} | "
+                    f"{d['package']} LPA | CGPA req: {d['min_cgpa']} | "
+                    f"{eligible_text} | Deadline: {d['deadline']}"
+                )
+        else:
+            lines.append("\nPLACEMENT: No open drives currently")
 
     elif role in ("teacher", "faculty"):
         subjects = data.get("subjects", [])
@@ -379,11 +459,6 @@ def generate_answer(
         # ── 2. Direct Gemini for simple queries ────────────────────────
         context = format_data_for_gemini(retrieved_data, role)
 
-        history_text = ""
-        for h in conversation_history[-4:]:
-            label = "User" if h.get("role") == "user" else "Assistant"
-            history_text += f"{label}: {h.get('content', '')}\n"
-
         personas = {
             "student": "helpful AI academic assistant for a student",
             "teacher": "helpful AI assistant for a faculty member",
@@ -417,8 +492,6 @@ def generate_answer(
 REAL DATA RETRIEVED FROM DATABASE:
 {context}
 
-CONVERSATION HISTORY:
-{history_text}
 USER QUESTION: "{user_question}"
 
 INSTRUCTIONS FOR YOUR ANSWER:
@@ -447,7 +520,12 @@ ANSWER:"""
             return build_fallback(role, retrieved_data, user_question)
 
         print(f"[GENERATOR] Calling Gemini for: {user_question[:60]}")
-        answer = call_gemini(prompt)
+        answer = call_gemini_with_memory(
+            system_context=prompt,
+            user_question=user_question,
+            history=conversation_history,
+            role=role,
+        )
 
         if answer:
             print(f"[GENERATOR] Gemini LIVE — replied: {answer[:80]}")

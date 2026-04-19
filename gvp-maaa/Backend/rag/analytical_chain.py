@@ -32,7 +32,7 @@ try:
             model="gemini-1.5-flash",
             google_api_key=_api_key,
             temperature=0.1,
-            max_output_tokens=400,
+            max_output_tokens=800,
         )
         CHAIN_AVAILABLE = True
         print("[CHAIN] LangChain + Gemini ready")
@@ -204,57 +204,94 @@ def analytical_admin_chain(data: dict, question: str) -> str:
     if not CHAIN_AVAILABLE:
         return None
     try:
-        inst      = data.get("institution", {})
-        depts     = data.get("departments", [])
+        inst = data.get("institution", {})
+        depts = data.get("departments", [])
         placement = data.get("placement", {})
 
-        dept_summary = "\n".join([
-            f"- {d['department']}: {d['attendance_percentage']}% att, "
-            f"{d['at_risk_count']} at-risk, "
-            f"{d['total_students']} students [{d['status']}]"
-            for d in depts
-        ]) if depts else "No department data"
+        dept_summary = "No department data available."
+        if depts:
+            dept_lines = []
+            for d in depts:
+                dept_lines.append(
+                    f"- {d['department']}: "
+                    f"{d['attendance_percentage']}% attendance, "
+                    f"{d['at_risk_count']} at-risk students "
+                    f"out of {d['total_students']} total "
+                    f"[{d['status']}]"
+                )
+            dept_summary = "\n".join(dept_lines)
 
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are an institutional AI assistant for the admin of GVP college.
-Answer analytically using the data provided.
-You CAN answer about specific departments when asked.
+        prompt = f"""You are an institutional AI assistant
+for the admin of GVP college.
 
-INSTITUTION DATA:
-Total Students: {total_students}
-Total Faculty: {total_faculty}
-Overall Attendance: {overall_att}%
-At-Risk Students: {at_risk}
-Active Alerts: {alerts}
-Open Placement Drives: {drives}
+COMPLETE INSTITUTION DATA:
+Total Students: {inst.get('total_students', 0)}
+Total Faculty: {inst.get('total_faculty', 0)}
+Overall Attendance: {inst.get('overall_attendance', 0)}%
+At-Risk Students: {inst.get('at_risk_count', 0)}
+Active Alerts: {data.get('alerts', {}).get('total_active', 0)}
+Open Placement Drives: {placement.get('open_drives', 0)}
 
 DEPARTMENT BREAKDOWN:
-{dept_data}
+{dept_summary}
 
-For department-specific questions, use the department data above.
-Be specific and actionable."""),
-            ("human", "{question}"),
-        ])
+QUESTION: {question}
 
-        chain = prompt | llm | StrOutputParser()
+INSTRUCTIONS:
+1. Answer using ONLY the data above
+2. For department-specific questions, use the department data
+3. For "which department needs attention" — find lowest attendance
+4. For comparisons — compare actual percentages from data
+5. Write complete sentences — minimum 2, maximum 5
+6. Never cut off mid-sentence
+7. If department data is empty, say departments data is
+   not loaded and suggest checking the Insights page
 
-        result = chain.invoke({
-            "total_students": inst.get("total_students", 0),
-            "total_faculty":  inst.get("total_faculty", 0),
-            "overall_att":    inst.get("overall_attendance", 0),
-            "at_risk":        inst.get("at_risk_count", 0),
-            "alerts":         data.get("alerts", {}).get("total_active", 0),
-            "drives":         placement.get("open_drives", 0),
-            "dept_data":      dept_summary,
-            "question":       question,
-        })
+Answer:"""
 
-        print(f"[CHAIN] Admin analytical: {result[:80]}")
-        return result
+        from google import genai as _genai
+        load_dotenv()
+
+        keys = [
+            k for k in [
+                os.environ.get("GEMINI_API_KEY", ""),
+                os.environ.get("GEMINI_API_KEY_2", ""),
+                os.environ.get("GEMINI_API_KEY_3", ""),
+            ] if k and len(k) > 20
+        ]
+
+        models = [
+            "gemini-2.0-flash-lite",
+            "gemini-1.5-flash-8b",
+            "gemini-2.0-flash",
+        ]
+
+        for key in keys:
+            for model in models:
+                try:
+                    client = _genai.Client(api_key=key)
+                    response = client.models.generate_content(
+                        model=model,
+                        contents=prompt,
+                        config={
+                            "temperature": 0.1,
+                            "max_output_tokens": 800
+                        }
+                    )
+                    if response and response.text:
+                        text = response.text.strip()
+                        if len(text) > 20:
+                            print(f"[CHAIN] Admin answer: {text[:80]}")
+                            return text
+                except Exception as e:
+                    if "429" in str(e):
+                        continue
+                    continue
+
+        return None
 
     except Exception as e:
-        print(f"[CHAIN] Admin error: {e}")
-        traceback.print_exc()
+        print(f"[CHAIN] Admin analytical error: {e}")
         return None
 
 

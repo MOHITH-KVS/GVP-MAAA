@@ -27,7 +27,8 @@ def retrieve_student_data(student_id: int, db: Session) -> dict:
         "events": [],
         "resources": [],
         "risk": {},
-        "profile": {}
+        "profile": {},
+        "placement": {}
     }
 
     try:
@@ -293,6 +294,48 @@ def retrieve_student_data(student_id: int, db: Session) -> dict:
             data["resources"] = resource_list
         except Exception:
             pass
+
+        # ── PLACEMENT ────────────────────────────────────────────
+        try:
+            from models import PlacementDrive, StudentDrive
+            from sqlalchemy import text
+
+            # Get student's eligibility info
+            student = data.get("profile", {})
+            cgpa = student.get("cgpa", 0) or 0
+
+            # Get open placement drives
+            open_drives = db.query(PlacementDrive).filter(
+                PlacementDrive.status == "open"
+            ).limit(5).all()
+
+            drive_list = []
+            for drive in open_drives:
+                min_cgpa = getattr(drive, 'min_cgpa', 0) or 0
+                eligible = float(cgpa) >= float(min_cgpa) if min_cgpa else True
+
+                drive_list.append({
+                    "company": getattr(drive, 'company_name',
+                               getattr(drive, 'title', 'Company')),
+                    "role": getattr(drive, 'role', 'N/A'),
+                    "package": getattr(drive, 'package_lpa', 'N/A'),
+                    "min_cgpa": min_cgpa,
+                    "eligible": eligible,
+                    "deadline": str(getattr(drive, 'registration_deadline',
+                                   getattr(drive, 'drive_date', 'TBD')))
+                })
+
+            data["placement"] = {
+                "open_drives_count": len(drive_list),
+                "drives": drive_list,
+                "student_cgpa": cgpa
+            }
+            print(f"[RETRIEVER] Student placement: "
+                  f"{len(drive_list)} open drives")
+
+        except Exception as e:
+            print(f"[RETRIEVER] Placement error: {e}")
+            data["placement"] = {"open_drives_count": 0, "drives": []}
 
     except Exception:
         traceback.print_exc()
@@ -627,139 +670,127 @@ def retrieve_admin_data(db: Session) -> dict:
 
         # ── DEPARTMENT BREAKDOWN ────────────────────────────────
         try:
-            departments = []
-            try:
-                departments = db.query(Department).all()
-            except Exception:
-                # Some DB variants have departments table columns that do not
-                # match ORM (e.g., no "id"). Fallback to users.department_id.
-                _safe_rollback(db)
-                dept_ids = [
-                    r[0] for r in db.query(User.department_id).distinct().all()
-                    if r[0] is not None
-                ]
-                departments = [
-                    {"_fallback_id": did, "_fallback_name": f"Department_{did}"}
-                    for did in dept_ids
-                ]
+            from sqlalchemy import text
 
-            print(f"[RETRIEVER] Departments found: {len(departments)}")
+            dept_result = db.execute(text(
+                "SELECT * FROM departments LIMIT 1"
+            )).fetchone()
+
+            if dept_result:
+                print(f"[RETRIEVER] Department columns: "
+                      f"{list(dept_result._fields)}")
+
+            dept_rows = db.execute(
+                text("SELECT * FROM departments")
+            ).fetchall()
+
+            print(f"[RETRIEVER] Raw departments: {len(dept_rows)}")
 
             dept_list = []
-            for dept in departments[:20]:
+            for row in dept_rows:
+                row_dict = dict(row._mapping)
+                print(f"[RETRIEVER] Dept row: {row_dict}")
+
+                dept_id = (
+                    row_dict.get('department_id') or
+                    row_dict.get('dept_id') or
+                    row_dict.get('id')
+                )
+                dept_name = (
+                    row_dict.get('name') or
+                    row_dict.get('department_name') or
+                    row_dict.get('dept_name') or
+                    'Unknown'
+                )
+
+                if not dept_id:
+                    continue
+
+                student_has_department_col = False
                 try:
-                    # Get primary key — try multiple common names
-                    if isinstance(dept, dict):
-                        dept_id = dept.get("_fallback_id")
-                        dept_name = dept.get("_fallback_name", "Unknown")
-                    else:
-                        dept_id = (
-                            getattr(dept, 'department_id', None) or
-                            getattr(dept, 'dept_id', None) or
-                            getattr(dept, 'id', None)
-                        )
-                        dept_name = (
-                            getattr(dept, 'name', None) or
-                            getattr(dept, 'department_name', None) or
-                            getattr(dept, 'dept_name', None) or
-                            'Unknown'
-                        )
+                    student_has_department_col = bool(db.execute(text(
+                        "SELECT 1 FROM information_schema.columns "
+                        "WHERE table_name='students' AND column_name='department_id'"
+                    )).fetchone())
+                except Exception:
+                    _safe_rollback(db)
 
-                    print(f"[RETRIEVER] Dept: id={dept_id} name={dept_name}")
+                if student_has_department_col:
+                    total_students = db.execute(text(
+                        "SELECT COUNT(*) FROM students "
+                        "WHERE department_id = :did "
+                        "AND COALESCE(is_deleted, false) = false"
+                    ), {"did": dept_id}).scalar() or 0
 
-                    if not dept_id:
-                        continue
+                    student_ids_raw = db.execute(text(
+                        "SELECT student_id FROM students "
+                        "WHERE department_id = :did "
+                        "AND COALESCE(is_deleted, false) = false LIMIT 100"
+                    ), {"did": dept_id}).fetchall()
+                else:
+                    total_students = db.execute(text(
+                        "SELECT COUNT(*) FROM students s "
+                        "JOIN users u ON u.user_id = s.student_id "
+                        "WHERE u.department_id = :did "
+                        "AND COALESCE(s.is_deleted, false) = false "
+                        "AND COALESCE(u.is_deleted, false) = false"
+                    ), {"did": dept_id}).scalar() or 0
 
-                    student_dept_col = getattr(Student, 'department_id', None)
+                    student_ids_raw = db.execute(text(
+                        "SELECT s.student_id FROM students s "
+                        "JOIN users u ON u.user_id = s.student_id "
+                        "WHERE u.department_id = :did "
+                        "AND COALESCE(s.is_deleted, false) = false "
+                        "AND COALESCE(u.is_deleted, false) = false LIMIT 100"
+                    ), {"did": dept_id}).fetchall()
 
-                    if student_dept_col is not None:
-                        total_students = db.query(Student).filter(
-                            student_dept_col == dept_id,
-                            Student.is_deleted == False
-                        ).count()
+                if total_students == 0:
+                    continue
 
-                        dept_student_ids = [
-                            s.student_id for s in db.query(Student).filter(
-                                student_dept_col == dept_id,
-                                Student.is_deleted == False
-                            ).limit(100).all()
-                        ]
-                    else:
-                        # Fallback for schemas where department is on users table.
-                        total_students = db.query(func.count(Student.student_id)).join(
-                            User, User.user_id == Student.student_id
-                        ).filter(
-                            User.department_id == dept_id,
-                            Student.is_deleted == False,
-                            User.is_deleted == False
-                        ).scalar() or 0
+                student_ids = [r[0] for r in student_ids_raw]
 
-                        dept_student_ids = [
-                            r[0] for r in db.query(Student.student_id).join(
-                                User, User.user_id == Student.student_id
-                            ).filter(
-                                User.department_id == dept_id,
-                                Student.is_deleted == False,
-                                User.is_deleted == False
-                            ).limit(100).all()
-                        ]
+                if student_ids:
+                    id_list = ",".join(str(i) for i in student_ids)
+                    att_row = db.execute(text(
+                        f"SELECT COUNT(*) as total, "
+                        f"SUM(CASE WHEN status = true THEN 1 ELSE 0 END) as present "
+                        f"FROM attendance "
+                        f"WHERE student_id IN ({id_list})"
+                    )).fetchone()
 
-                    if total_students == 0:
-                        continue
-
-                    total_att = db.query(
-                        func.count(Attendance.attendance_id)
-                    ).filter(
-                        Attendance.student_id.in_(dept_student_ids)
-                    ).scalar() or 0
-
-                    present_att = db.query(
-                        func.count(Attendance.attendance_id)
-                    ).filter(
-                        Attendance.student_id.in_(dept_student_ids),
-                        Attendance.status == True
-                    ).scalar() or 0
-
+                    total_att = att_row.total or 0
+                    present_att = att_row.present or 0
                     att_pct = round(
                         (present_att / total_att) * 100, 1
                     ) if total_att > 0 else 0
 
                     at_risk = 0
-                    for sid in dept_student_ids[:50]:
+                    for sid in student_ids[:30]:
                         try:
-                            t = db.query(
-                                func.count(Attendance.attendance_id)
-                            ).filter(
-                                Attendance.student_id == sid
-                            ).scalar() or 0
-                            p = db.query(
-                                func.count(Attendance.attendance_id)
-                            ).filter(
-                                Attendance.student_id == sid,
-                                Attendance.status == True
-                            ).scalar() or 0
-                            if t > 0 and (p / t * 100) < 75:
-                                at_risk += 1
+                            row = db.execute(text(
+                                "SELECT COUNT(*) as t, "
+                                "SUM(CASE WHEN status=true THEN 1 ELSE 0 END) as p "
+                                "FROM attendance WHERE student_id=:sid"
+                            ), {"sid": sid}).fetchone()
+                            if row.t and row.t > 0:
+                                pct = (row.p or 0) / row.t * 100
+                                if pct < 75:
+                                    at_risk += 1
                         except Exception:
                             continue
+                else:
+                    att_pct = 0
+                    at_risk = 0
 
-                    dept_list.append({
-                        "department": dept_name,
-                        "attendance_percentage": att_pct,
-                        "at_risk_count": at_risk,
-                        "total_students": total_students,
-                        "status": "Good" if att_pct >= 75 else "LOW ATTENDANCE"
-                    })
-
-                    print(
-                        f"[RETRIEVER] {dept_name}: {att_pct}% att, "
-                        f"{at_risk} at-risk, {total_students} students"
-                    )
-
-                except Exception as dept_err:
-                    print(f"[RETRIEVER] Dept error: {dept_err}")
-                    _safe_rollback(db)
-                    continue
+                dept_list.append({
+                    "department": str(dept_name),
+                    "attendance_percentage": att_pct,
+                    "at_risk_count": at_risk,
+                    "total_students": total_students,
+                    "status": "Good" if att_pct >= 75 else "LOW ATTENDANCE"
+                })
+                print(f"[RETRIEVER] Loaded dept: {dept_name} "
+                      f"{att_pct}% {at_risk} at-risk")
 
             data["departments"] = sorted(
                 dept_list,
@@ -768,13 +799,10 @@ def retrieve_admin_data(db: Session) -> dict:
             data["institution"]["at_risk_count"] = sum(
                 d["at_risk_count"] for d in dept_list
             )
-            print(
-                f"[RETRIEVER] Admin dept summary: "
-                f"{len(dept_list)} departments loaded"
-            )
+            print(f"[RETRIEVER] Total departments loaded: {len(dept_list)}")
 
         except Exception as e:
-            print(f"[RETRIEVER] Department section failed: {e}")
+            print(f"[RETRIEVER] Dept raw SQL failed: {e}")
             traceback.print_exc()
             _safe_rollback(db)
 
