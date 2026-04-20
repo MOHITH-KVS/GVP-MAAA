@@ -678,25 +678,13 @@ def build_admin_fallback(context):
 # ─── Gemini call (optional enhancement) ──────────────────────────────────────
 
 def call_gemini(system_prompt: str, message: str, history: list) -> str:
-    """Calls Gemini only as an enhancement when available."""
-    if not GEMINI_AVAILABLE or not _gemini_client:
-        return None
+    """Uses the shared generator flow so Gemini and Grok both work here."""
     try:
-        parts = [system_prompt, "\n\nConversation:\n"]
-        for h in history[-4:]:
-            label = "User" if h.get("role") == "user" else "Assistant"
-            parts.append(f"{label}: {h.get('content', '')}")
-        parts.append(f"\nUser: {message}\nAssistant:")
-        prompt = "\n".join(parts)
-        response = _gemini_client.models.generate_content(
-            model="models/gemini-2.5-flash",
-            contents=prompt
-        )
-        if response and response.text and len(response.text.strip()) > 10:
-            return response.text.strip()
+        from rag.generator import call_gemini as shared_call_gemini
+        return shared_call_gemini(system_prompt, message=message, history=history)
     except Exception:
         traceback.print_exc()
-    return None
+        return None
 
 # ─── Cache ────────────────────────────────────────────────────────────────────
 

@@ -829,3 +829,17 @@ class UserActivityLog(Base):
     session_id = Column(String(120), nullable=False, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
 
+
+# -------------------------
+# GEMINI API KEY POOL MANAGER
+# -------------------------
+class GeminiKeyUsage(Base):
+    __tablename__ = "gemini_key_usage"
+
+    id = Column(Integer, primary_key=True, index=True)
+    api_key_id = Column(Integer, nullable=False, index=True)  # 1, 2, or 3
+    model = Column(String(50), nullable=False, index=True)
+    status = Column(String(20), nullable=False, index=True)  # 'success', '429_quota', '404_model', 'timeout'
+    attempt_time = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+    error_message = Column(String(500), nullable=True)
+

@@ -210,42 +210,41 @@ def node_answer_generator(state: RAGState) -> RAGState:
                 from rag.generator import (
                     format_data_for_gemini,
                     call_gemini,
-                    GEMINI_AVAILABLE,
-                    GEMINI_CLIENT,
+                    ensure_gemini_connection,
                 )
 
-                if GEMINI_AVAILABLE and GEMINI_CLIENT:
-                    context = format_data_for_gemini(data, role)
+                ensure_gemini_connection()
+                context = format_data_for_gemini(data, role)
 
-                    personas = {
-                        "student": "academic assistant for a student",
-                        "teacher": "assistant for a faculty member",
-                        "faculty": "assistant for a faculty member",
-                        "admin":   "institutional assistant for admin",
-                    }
-                    access = {
-                        "student": "Only discuss this student's own data.",
-                        "teacher": (
-                            "You have access to your class students' names and attendance. "
-                            "When asked for student lists or at-risk students, list them from "
-                            "CLASS STUDENTS section above. Do NOT provide marks or personal info beyond attendance."
-                        ),
-                        "faculty": "Class-level data only.",
-                        "admin":   "Full institutional access.",
-                    }
+                personas = {
+                    "student": "academic assistant for a student",
+                    "teacher": "assistant for a faculty member",
+                    "faculty": "assistant for a faculty member",
+                    "admin":   "institutional assistant for admin",
+                }
+                access = {
+                    "student": "Only discuss this student's own data.",
+                    "teacher": (
+                        "You have access to your class students' names and attendance. "
+                        "When asked for student lists or at-risk students, list them from "
+                        "CLASS STUDENTS section above. Do NOT provide marks or personal info beyond attendance."
+                    ),
+                    "faculty": "Class-level data only.",
+                    "admin":   "Full institutional access.",
+                }
 
-                    hist_text = "\n".join([
-                        f"{'User' if h.get('role') == 'user' else 'AI'}: "
-                        f"{h.get('content', '')}"
-                        for h in history[-4:]
-                    ])
+                hist_text = "\n".join([
+                    f"{'User' if h.get('role') == 'user' else 'AI'}: "
+                    f"{h.get('content', '')}"
+                    for h in history[-4:]
+                ])
 
-                    # Pull attendance numbers for what-if calculations
-                    att_block   = data.get("attendance", {})
-                    att_present = att_block.get("present", 0)
-                    att_total   = att_block.get("total_classes", 0)
+                # Pull attendance numbers for what-if calculations
+                att_block   = data.get("attendance", {})
+                att_present = att_block.get("present", 0)
+                att_total   = att_block.get("total_classes", 0)
 
-                    prompt = f"""You are a {personas.get(role, 'assistant')} at GVP college.
+                prompt = f"""You are a {personas.get(role, 'assistant')} at GVP college.
 {access.get(role, '')}
 
 DATA FROM DATABASE:
@@ -267,15 +266,15 @@ INSTRUCTIONS:
 
 ANSWER:"""
 
-                    answer = call_gemini(prompt)
-                    if answer and len(answer.strip()) > 5 and not is_response_incomplete(answer):
-                        state["source"] = "gemini"
-                        if cache_key and not skip_cache:
-                            set_response_cache(cache_key, answer)
-                    else:
-                        if answer and should_force_structured_fallback(question):
-                            print("[GRAPH] Incomplete Gemini list response — forcing fallback")
-                        answer = None
+                answer = call_gemini(prompt)
+                if answer and len(answer.strip()) > 5 and not is_response_incomplete(answer):
+                    state["source"] = "gemini"
+                    if cache_key and not skip_cache:
+                        set_response_cache(cache_key, answer)
+                else:
+                    if answer and should_force_structured_fallback(question):
+                        print("[GRAPH] Incomplete Gemini list response — forcing fallback")
+                    answer = None
 
             except Exception:
                 traceback.print_exc()
@@ -436,7 +435,7 @@ def run_rag_pipeline(
                 data = retrieve_teacher_data(user_id, db)
             else:
                 data = retrieve_admin_data(db)
-            answer = generate_answer(r, data, question, history, user_id=user_id)
+            answer = generate_answer(r, data, question, history, user_id=user_id, db_session=db)
             if include_meta:
                 return {"answer": answer, "source": "legacy"}
             return answer

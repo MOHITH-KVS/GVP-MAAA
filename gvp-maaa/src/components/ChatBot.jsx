@@ -4,6 +4,7 @@ import { trackAnalyticsAction } from "../hooks/useAnalytics";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import SendRoundedIcon from "@mui/icons-material/SendRounded";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
+import AttachFileRoundedIcon from "@mui/icons-material/AttachFileRounded";
 
 const RETRY_RECOMMENDED_WAIT_MS = 90 * 1000;
 
@@ -20,6 +21,7 @@ export default function ChatBot({ role }) {
   const [showRetryReadyToast, setShowRetryReadyToast] = useState(false);
   const messagesEndRef = useRef(null);
   const activeReplyIdRef = useRef(null);
+  const pdfInputRef = useRef(null);
 
   useEffect(() => {
     const timer = setInterval(() => setNowTs(Date.now()), 1000);
@@ -316,6 +318,13 @@ export default function ChatBot({ role }) {
     if (loading) return;
     const prompt = message?.userPrompt || "";
     if (!prompt) return;
+
+    const remainingMs = Math.max(0, (message?.retryRecommendedUntil || 0) - nowTs);
+    if (remainingMs <= 0) {
+      handleSend(prompt, { forceLiveAI: true, isRetry: true });
+      return;
+    }
+
     setPendingRetryMessage({
       ...message,
       retryRecommendedUntil: message?.retryRecommendedUntil || null,
@@ -336,6 +345,97 @@ export default function ChatBot({ role }) {
     }
     closeRetryDecision();
     handleSend(prompt, { forceLiveAI: true, isRetry: true });
+  };
+
+  const handlePdfButtonClick = () => {
+    if (loading) return;
+    pdfInputRef.current?.click();
+  };
+
+  const handlePdfSelect = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (file.type !== "application/pdf") {
+      const timestamp = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      setMessages((prev) => [
+        ...prev,
+        {
+          from: "ai",
+          text: "Please select a valid PDF file.",
+          timestamp,
+          id: `pdf-invalid-${Date.now()}`,
+          status: "done",
+          mode: "verified_data",
+          source: "pdf_upload",
+        },
+      ]);
+      return;
+    }
+
+    const timestamp = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    const msgId = `pdf-${Date.now()}`;
+    setMessages((prev) => [
+      ...prev,
+      {
+        from: "user",
+        text: `Uploaded PDF: ${file.name}`,
+        timestamp,
+        id: `${msgId}-user`,
+      },
+      {
+        from: "ai",
+        text: "Uploading PDF...",
+        timestamp,
+        id: msgId,
+        status: "typing",
+        mode: "verified_data",
+        source: "pdf_upload",
+      },
+    ]);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const response = await api.post("/chat/upload-pdf", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      const uploadMessage =
+        response?.data?.message ||
+        "PDF uploaded successfully. Ask your question and I will answer using this document.";
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === msgId
+            ? {
+                ...m,
+                text: uploadMessage,
+                status: "done",
+                mode: "verified_data",
+                source: "pdf_upload",
+              }
+            : m
+        )
+      );
+    } catch (error) {
+      const errMsg =
+        error?.response?.data?.message ||
+        error?.response?.data?.detail ||
+        error?.message ||
+        "PDF upload failed.";
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === msgId
+            ? {
+                ...m,
+                text: `I could not process that PDF. ${errMsg}`,
+                status: "done",
+                mode: "verified_data",
+                source: "pdf_upload",
+              }
+            : m
+        )
+      );
+    }
   };
 
   return (
@@ -503,6 +603,13 @@ export default function ChatBot({ role }) {
         {/* Input Area */}
         <div className="p-4 bg-white border-t border-gray-100 sticky bottom-0 z-10 w-full mb-2">
           <div className="flex items-end gap-3 relative max-w-4xl mx-auto rounded-3xl border border-gray-300 bg-white px-4 py-3 shadow-sm focus-within:ring-2 focus-within:ring-indigo-100 focus-within:border-indigo-400 transition-all">
+            <input
+              ref={pdfInputRef}
+              type="file"
+              accept="application/pdf,.pdf"
+              className="hidden"
+              onChange={handlePdfSelect}
+            />
             <textarea
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
@@ -512,6 +619,14 @@ export default function ChatBot({ role }) {
               className="flex-1 bg-transparent text-[15px] resize-none max-h-32 focus:outline-none disabled:opacity-50 min-h-[24px] pb-1 py-0.5 leading-snug"
               rows={1}
             />
+            <button
+              onClick={handlePdfButtonClick}
+              disabled={loading}
+              title="Upload PDF"
+              className="w-9 h-9 flex-shrink-0 bg-white text-indigo-600 border border-indigo-200 rounded-full flex items-center justify-center hover:bg-indigo-50 transition disabled:opacity-50"
+            >
+              <AttachFileRoundedIcon style={{ fontSize: 18 }} />
+            </button>
             <button
               onClick={() => handleSend()}
               disabled={loading || !inputText.trim()}

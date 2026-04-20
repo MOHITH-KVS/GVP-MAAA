@@ -8,7 +8,11 @@ Fallback: 3 API keys × 4 models — cycles until one works.
 import os
 import time
 import concurrent.futures
+import json
 import traceback
+import re
+import urllib.error
+import urllib.request
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -25,6 +29,26 @@ ALL_KEYS = [
 
 print(f"[GENERATOR] Found {len(ALL_KEYS)} API key(s)")
 
+ALL_GROK_KEYS = [
+    k.strip() for k in [
+        os.environ.get("GROK_API_KEY",   ""),
+        os.environ.get("GROK_API_KEY_2", ""),
+        os.environ.get("GROK_API_KEY_3", ""),
+    ] if k and len(k.strip()) > 20
+]
+
+print(f"[GENERATOR] Found {len(ALL_GROK_KEYS)} Grok API key(s)")
+
+ALL_OPENROUTER_KEYS = [
+    k.strip() for k in [
+        os.environ.get("OPENROUTER_API_KEY", ""),
+        os.environ.get("OPENROUTER_API_KEY_2", ""),
+        os.environ.get("OPENROUTER_API_KEY_3", ""),
+    ] if k and len(k.strip()) > 20
+]
+
+print(f"[GENERATOR] Found {len(ALL_OPENROUTER_KEYS)} OpenRouter API key(s)")
+
 SKIP_FALLBACK_MODELS = {
     # These models frequently hit free-tier quota exhaustion and add long retries.
     "gemini-2.0-flash-lite",
@@ -32,10 +56,10 @@ SKIP_FALLBACK_MODELS = {
 }
 
 FALLBACK_MODELS = [
-    # Prioritize models confirmed working by check_gemini_keys.py.
-    "gemini-flash-latest",
+    # Prefer models currently most likely to succeed on free-tier keys.
     "gemini-2.5-flash",
     "gemini-flash-lite-latest",
+    "gemini-flash-latest",
 ]
 
 GEMINI_AVAILABLE = False
@@ -43,10 +67,489 @@ GEMINI_CLIENT    = None
 GEMINI_MODEL     = None
 ACTIVE_KEY_INDEX = 0
 KEY_MODEL_CACHE  = {}
+GEMINI_LAST_CONNECT_ATTEMPT = 0.0
+GEMINI_RECONNECT_COOLDOWN_SECONDS = 8
+KEY_MODEL_BACKOFF_UNTIL = {}
+KEY_DISCOVERED_MODELS = {}
+KEY_DISCOVERY_TS = {}
+MODEL_DISCOVERY_TTL_SECONDS = 900
+
+# Quota-saver guardrails to avoid burning free-tier limits on retries/fallback loops.
+MAX_KEYS_PER_REQUEST = int(os.environ.get("GEMINI_MAX_KEYS_PER_REQUEST", "3"))
+MAX_MODELS_PER_KEY = int(os.environ.get("GEMINI_MAX_MODELS_PER_KEY", "3"))
+MAX_TOTAL_ATTEMPTS_PER_REQUEST = int(os.environ.get("GEMINI_MAX_TOTAL_ATTEMPTS", "8"))
+GEMINI_CALL_RETRY_ATTEMPTS = int(os.environ.get("GEMINI_CALL_RETRY_ATTEMPTS", "1"))
+MIN_QUOTA_BACKOFF_SECONDS = int(os.environ.get("GEMINI_MIN_QUOTA_BACKOFF_SECONDS", "20"))
+
+GROK_MAX_KEYS_PER_REQUEST = int(os.environ.get("GROK_MAX_KEYS_PER_REQUEST", "3"))
+GROK_MAX_MODELS_PER_KEY = int(os.environ.get("GROK_MAX_MODELS_PER_KEY", "3"))
+GROK_REQUEST_TIMEOUT_SECONDS = int(os.environ.get("GROK_REQUEST_TIMEOUT_SECONDS", "22"))
+GROK_MODELS = []
+for model_name in [
+    os.environ.get("GROK_MODEL", "grok-2-latest"),
+    "grok-3-mini",
+    "grok-3-beta",
+    "grok-beta",
+]:
+    model_name = str(model_name or "").strip()
+    if model_name and model_name not in GROK_MODELS:
+        GROK_MODELS.append(model_name)
+
+OPENROUTER_MAX_KEYS_PER_REQUEST = int(os.environ.get("OPENROUTER_MAX_KEYS_PER_REQUEST", "3"))
+OPENROUTER_MAX_MODELS_PER_KEY = int(os.environ.get("OPENROUTER_MAX_MODELS_PER_KEY", "3"))
+OPENROUTER_REQUEST_TIMEOUT_SECONDS = int(os.environ.get("OPENROUTER_REQUEST_TIMEOUT_SECONDS", "22"))
+OPENROUTER_MODELS = []
+for model_name in [
+    os.environ.get("OPENROUTER_MODEL", "openai/gpt-4o-mini"),
+    "meta-llama/llama-3.1-8b-instruct:free",
+    "mistralai/mistral-7b-instruct:free",
+]:
+    model_name = str(model_name or "").strip()
+    if model_name and model_name not in OPENROUTER_MODELS:
+        OPENROUTER_MODELS.append(model_name)
 
 _RESPONSE_CACHE = {}
 RESPONSE_TTL = 120  # 2 minutes (short to ensure freshness)
 SAFE_FALLBACK_RESPONSE = "I'm unable to fetch the latest data right now. Please try again in a few seconds."
+
+
+def _is_quota_error(err_msg: str) -> bool:
+    lower = str(err_msg).lower()
+    return "429" in lower or "quota" in lower or "resource_exhausted" in lower
+
+
+def _is_non_retryable_error(err_msg: str) -> bool:
+    lower = str(err_msg).lower()
+    return any(token in lower for token in ["401", "403", "permission", "invalid api key", "not found", "404"])
+
+
+def _extract_retry_delay_seconds(err_msg: str, default: int = 8) -> int:
+    msg = str(err_msg)
+    patterns = [
+        r"retry in\s+([0-9]+(?:\.[0-9]+)?)s",
+        r"'retryDelay':\s*'([0-9]+)s'",
+        r'"retryDelay":\s*"([0-9]+)s"',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, msg, flags=re.IGNORECASE)
+        if match:
+            try:
+                return max(1, int(float(match.group(1))))
+            except Exception:
+                continue
+    return default
+
+
+def _compose_prompt(base_prompt: str, message: str | None = None, history: list | None = None) -> str:
+    """Builds a single prompt string from the current context and optional chat history."""
+    parts = [str(base_prompt or "").strip()]
+    if history:
+        parts.append("\n\nConversation history:\n")
+        for item in history[-6:]:
+            role = "User" if str(item.get("role", "user")).lower() == "user" else "Assistant"
+            content = str(item.get("content") or item.get("text") or "").strip()
+            if content:
+                parts.append(f"{role}: {content}")
+    if message:
+        parts.append(f"\nUser: {message}\nAssistant:")
+    return "\n".join(part for part in parts if part).strip()
+
+
+def _extract_user_query_hint(prompt: str, message: str | None = None) -> str:
+    if message and str(message).strip():
+        return str(message).strip()
+
+    prompt_text = str(prompt or "")
+    match = re.search(r"current question:\s*(.+)", prompt_text, flags=re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+
+    lines = [line.strip() for line in prompt_text.splitlines() if line.strip()]
+    if lines:
+        return lines[-1]
+    return ""
+
+
+def _classify_query_complexity(prompt: str, message: str | None = None, history: list | None = None) -> str:
+    query_text = _extract_user_query_hint(prompt, message=message)
+    lower = query_text.lower()
+    words = [w for w in re.split(r"\s+", query_text) if w]
+
+    complex_keywords = [
+        "analyze", "analysis", "compare", "explain", "why", "how", "step by step",
+        "documentation", "document", "report", "architecture", "design", "debug",
+        "root cause", "implement", "optimize", "generate", "code", "strategy",
+        "plan", "workflow", "detailed", "in depth", "summarize",
+    ]
+
+    has_complex_keyword = any(keyword in lower for keyword in complex_keywords)
+    has_multiline = "\n" in query_text
+    has_history_depth = bool(history and len(history) >= 4)
+
+    if has_complex_keyword or has_multiline or len(words) > 22 or has_history_depth:
+        return "complex"
+
+    return "simple"
+
+
+def _is_smalltalk_query(query_text: str) -> bool:
+    text = str(query_text or "").strip().lower()
+    if not text:
+        return False
+
+    normalized = re.sub(r"[^a-z\s]", " ", text)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+
+    smalltalk_patterns = {
+        "hi",
+        "hello",
+        "hey",
+        "hii",
+        "hiii",
+        "good morning",
+        "good afternoon",
+        "good evening",
+        "good night",
+        "yo",
+        "sup",
+        "how are you",
+        "thanks",
+        "thank you",
+        "ok",
+        "okay",
+        "bye",
+        "goodbye",
+        "see you",
+    }
+
+    if normalized in smalltalk_patterns:
+        return True
+
+    return len(normalized.split()) <= 3 and normalized in {"hi there", "hello there", "hey there"}
+
+
+def _fast_smalltalk_response(query_text: str) -> str | None:
+    text = str(query_text or "").strip().lower()
+    normalized = re.sub(r"[^a-z\s]", " ", text)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+
+    if normalized in {"good morning", "good afternoon", "good evening", "good night"}:
+        return "Hello! How can I help you today with your academic questions?"
+
+    if normalized in {"how are you"}:
+        return "I am doing well. How can I help you today?"
+
+    if normalized in {"thanks", "thank you"}:
+        return "You are welcome. I am here if you need anything else."
+
+    if normalized in {"ok", "okay"}:
+        return "Great. Tell me what you want to do next."
+
+    if normalized in {"bye", "goodbye", "see you"}:
+        return "Goodbye. Have a great day."
+
+    if normalized in {
+        "hi", "hello", "hey", "hii", "hiii", "yo", "sup", "hi there", "hello there", "hey there"
+    }:
+        return "Hi! How can I help you today?"
+
+    return None
+
+
+def _is_grok_quota_error(err_msg: str) -> bool:
+    lower = str(err_msg).lower()
+    return any(token in lower for token in ["429", "quota", "rate limit", "too many requests", "resource_exhausted"])
+
+
+def _is_openrouter_quota_error(err_msg: str) -> bool:
+    lower = str(err_msg).lower()
+    return any(token in lower for token in ["429", "quota", "rate limit", "too many requests", "resource_exhausted"])
+
+
+def _call_grok_completion(prompt_text: str, db_session=None) -> str | None:
+    if not ALL_GROK_KEYS:
+        return None
+
+    endpoint = "https://api.x.ai/v1/chat/completions"
+    for key_idx, api_key in enumerate(ALL_GROK_KEYS[:GROK_MAX_KEYS_PER_REQUEST]):
+        for model in GROK_MODELS[:GROK_MAX_MODELS_PER_KEY]:
+            try:
+                payload = {
+                    "model": model,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": "You are a helpful academic assistant that answers using the provided data.",
+                        },
+                        {
+                            "role": "user",
+                            "content": prompt_text,
+                        },
+                    ],
+                    "temperature": 0.1,
+                    "max_tokens": 500,
+                }
+                request = urllib.request.Request(
+                    endpoint,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                        "Accept": "application/json",
+                    },
+                    method="POST",
+                )
+                print(f"[GROK_CALL] Trying key {key_idx+1} model {model}")
+                with urllib.request.urlopen(request, timeout=GROK_REQUEST_TIMEOUT_SECONDS) as response:
+                    body = json.loads(response.read().decode("utf-8", errors="ignore"))
+                text = ""
+                choices = body.get("choices") or []
+                if choices:
+                    first_choice = choices[0] or {}
+                    message = first_choice.get("message") or {}
+                    text = str(message.get("content") or "").strip()
+                if text:
+                    print(f"[GROK_CALL] SUCCESS: {text[:80]}")
+                    if db_session:
+                        try:
+                            log_gemini_attempt(db_session, api_key_id=key_idx + 4, model=model, status="success")
+                        except Exception as log_err:
+                            print(f"[ERROR] Failed to log Grok success: {log_err}")
+                    return text
+                print("[GROK_CALL] Empty Grok response")
+            except urllib.error.HTTPError as e:
+                error_body = ""
+                try:
+                    error_body = e.read().decode("utf-8", errors="ignore")
+                except Exception:
+                    pass
+                err_text = f"{e.code} {error_body}".strip()
+                print(f"[GROK_CALL] HTTP error key {key_idx+1} {model}: {err_text[:120]}")
+                if e.code == 429 or _is_grok_quota_error(err_text):
+                    if db_session:
+                        try:
+                            log_gemini_attempt(db_session, api_key_id=key_idx + 4, model=model, status="429_quota", error_msg=err_text[:200])
+                        except Exception as log_err:
+                            print(f"[ERROR] Failed to log Grok quota error: {log_err}")
+                    continue
+                if db_session:
+                    try:
+                        log_gemini_attempt(db_session, api_key_id=key_idx + 4, model=model, status="http_error", error_msg=err_text[:200])
+                    except Exception as log_err:
+                        print(f"[ERROR] Failed to log Grok HTTP error: {log_err}")
+                continue
+            except Exception as e:
+                err_text = str(e)
+                print(f"[GROK_CALL] Error key {key_idx+1} {model}: {err_text[:120]}")
+                if db_session:
+                    try:
+                        status = "timeout" if "timeout" in err_text.lower() else "error"
+                        log_gemini_attempt(db_session, api_key_id=key_idx + 4, model=model, status=status, error_msg=err_text[:200])
+                    except Exception as log_err:
+                        print(f"[ERROR] Failed to log Grok error: {log_err}")
+                if _is_grok_quota_error(err_text):
+                    continue
+                continue
+
+    return None
+
+
+def _call_openrouter_completion(prompt_text: str, db_session=None) -> str | None:
+    if not ALL_OPENROUTER_KEYS:
+        return None
+
+    endpoint = "https://openrouter.ai/api/v1/chat/completions"
+    for key_idx, api_key in enumerate(ALL_OPENROUTER_KEYS[:OPENROUTER_MAX_KEYS_PER_REQUEST]):
+        for model in OPENROUTER_MODELS[:OPENROUTER_MAX_MODELS_PER_KEY]:
+            try:
+                payload = {
+                    "model": model,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": "You are a helpful academic assistant that answers using the provided data.",
+                        },
+                        {
+                            "role": "user",
+                            "content": prompt_text,
+                        },
+                    ],
+                    "temperature": 0.1,
+                    "max_tokens": 500,
+                }
+                request = urllib.request.Request(
+                    endpoint,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                        "Accept": "application/json",
+                    },
+                    method="POST",
+                )
+                print(f"[OPENROUTER_CALL] Trying key {key_idx+1} model {model}")
+                with urllib.request.urlopen(request, timeout=OPENROUTER_REQUEST_TIMEOUT_SECONDS) as response:
+                    body = json.loads(response.read().decode("utf-8", errors="ignore"))
+                text = ""
+                choices = body.get("choices") or []
+                if choices:
+                    first_choice = choices[0] or {}
+                    message = first_choice.get("message") or {}
+                    text = str(message.get("content") or "").strip()
+                if text:
+                    print(f"[OPENROUTER_CALL] SUCCESS: {text[:80]}")
+                    if db_session:
+                        try:
+                            log_gemini_attempt(db_session, api_key_id=key_idx + 7, model=model, status="success")
+                        except Exception as log_err:
+                            print(f"[ERROR] Failed to log OpenRouter success: {log_err}")
+                    return text
+                print("[OPENROUTER_CALL] Empty OpenRouter response")
+            except urllib.error.HTTPError as e:
+                error_body = ""
+                try:
+                    error_body = e.read().decode("utf-8", errors="ignore")
+                except Exception:
+                    pass
+                err_text = f"{e.code} {error_body}".strip()
+                print(f"[OPENROUTER_CALL] HTTP error key {key_idx+1} {model}: {err_text[:120]}")
+                if e.code == 429 or _is_openrouter_quota_error(err_text):
+                    if db_session:
+                        try:
+                            log_gemini_attempt(db_session, api_key_id=key_idx + 7, model=model, status="429_quota", error_msg=err_text[:200])
+                        except Exception as log_err:
+                            print(f"[ERROR] Failed to log OpenRouter quota error: {log_err}")
+                    continue
+                if db_session:
+                    try:
+                        log_gemini_attempt(db_session, api_key_id=key_idx + 7, model=model, status="http_error", error_msg=err_text[:200])
+                    except Exception as log_err:
+                        print(f"[ERROR] Failed to log OpenRouter HTTP error: {log_err}")
+                continue
+            except Exception as e:
+                err_text = str(e)
+                print(f"[OPENROUTER_CALL] Error key {key_idx+1} {model}: {err_text[:120]}")
+                if db_session:
+                    try:
+                        status = "timeout" if "timeout" in err_text.lower() else "error"
+                        log_gemini_attempt(db_session, api_key_id=key_idx + 7, model=model, status=status, error_msg=err_text[:200])
+                    except Exception as log_err:
+                        print(f"[ERROR] Failed to log OpenRouter error: {log_err}")
+                if _is_openrouter_quota_error(err_text):
+                    continue
+                continue
+
+    return None
+
+
+def _mark_backoff(key_idx: int, model: str, seconds: int):
+    KEY_MODEL_BACKOFF_UNTIL[(key_idx, model)] = time.time() + max(MIN_QUOTA_BACKOFF_SECONDS, seconds)
+
+
+def _is_in_backoff(key_idx: int, model: str) -> bool:
+    until = KEY_MODEL_BACKOFF_UNTIL.get((key_idx, model), 0)
+    return time.time() < until
+
+
+def _normalize_model_name(name: str) -> str:
+    model = str(name or "").strip()
+    if model.startswith("models/"):
+        model = model.split("/", 1)[1]
+    return model
+
+
+def _supported_generate_action(model_obj) -> bool:
+    actions = getattr(model_obj, "supported_actions", None)
+    if not actions:
+        return True
+    action_text = " ".join(str(a).lower() for a in actions)
+    return "generatecontent" in action_text
+
+
+def _model_priority(model: str) -> tuple:
+    normalized = _normalize_model_name(model)
+    if normalized in FALLBACK_MODELS:
+        return (0, FALLBACK_MODELS.index(normalized), normalized)
+    if "flash-lite" in normalized:
+        return (1, 0, normalized)
+    if "flash" in normalized:
+        return (1, 1, normalized)
+    return (2, 0, normalized)
+
+
+def _discover_models_for_key(client, key_idx: int, force: bool = False):
+    now = time.time()
+    cached = KEY_DISCOVERED_MODELS.get(key_idx)
+    last_ts = KEY_DISCOVERY_TS.get(key_idx, 0)
+
+    if not force and cached and (now - last_ts) < MODEL_DISCOVERY_TTL_SECONDS:
+        return list(cached)
+
+    discovered = []
+    try:
+        for model_obj in client.models.list():
+            name = _normalize_model_name(getattr(model_obj, "name", ""))
+            if not name:
+                continue
+            lower = name.lower()
+            if "gemini" not in lower:
+                continue
+            if not _supported_generate_action(model_obj):
+                continue
+            discovered.append(name)
+    except Exception as e:
+        print(f"[GENERATOR] Model discovery failed for key {key_idx+1}: {str(e)[:80]}")
+
+    # Always keep static fallback models as safety net.
+    pool = list(dict.fromkeys(discovered + FALLBACK_MODELS))
+    pool = [m for m in pool if _normalize_model_name(m) not in SKIP_FALLBACK_MODELS]
+    pool.sort(key=_model_priority)
+
+    if not pool:
+        pool = list(FALLBACK_MODELS)
+
+    KEY_DISCOVERED_MODELS[key_idx] = list(pool)
+    KEY_DISCOVERY_TS[key_idx] = now
+    print(f"[GENERATOR] Key {key_idx+1} model pool size: {len(pool)}")
+    return list(pool)
+
+
+def get_models_for_key(client, key_idx: int):
+    return _discover_models_for_key(client, key_idx, force=False)
+
+
+def get_active_keys():
+    if MAX_KEYS_PER_REQUEST <= 0:
+        return []
+    return ALL_KEYS[:MAX_KEYS_PER_REQUEST]
+
+
+def get_request_models_for_key(client, key_idx: int):
+    base_models = get_models_for_key(client, key_idx)
+    cached_model = KEY_MODEL_CACHE.get(key_idx)
+
+    ordered = []
+    if cached_model:
+        ordered.append(cached_model)
+    ordered.extend([m for m in base_models if m != cached_model])
+
+    if MAX_MODELS_PER_KEY > 0:
+        return ordered[:MAX_MODELS_PER_KEY]
+    return ordered
+
+
+def ensure_gemini_connection(force: bool = False) -> bool:
+    """Reconnects Gemini after cooldown if currently unavailable."""
+    global GEMINI_LAST_CONNECT_ATTEMPT
+    if GEMINI_AVAILABLE and GEMINI_CLIENT and not force:
+        return True
+
+    now = time.time()
+    if not force and (now - GEMINI_LAST_CONNECT_ATTEMPT) < GEMINI_RECONNECT_COOLDOWN_SECONDS:
+        return False
+
+    GEMINI_LAST_CONNECT_ATTEMPT = now
+    return try_connect()
 
 
 def get_response_cache(key):
@@ -112,16 +615,20 @@ def is_response_incomplete(text: str) -> bool:
 
 
 def safe_gemini_call(call_fn):
-    for attempt in range(2):
+    attempts = max(1, GEMINI_CALL_RETRY_ATTEMPTS)
+    for attempt in range(attempts):
         try:
             return call_fn()
         except Exception as e:
-            print(f"[RETRY] Gemini attempt {attempt+1} failed: {e}")
-            print(f"[ERROR] {str(e)}")
+            err = str(e)
+            print(f"[RETRY] Gemini attempt {attempt+1} failed: {err}")
+            print(f"[ERROR] {err}")
+            if _is_quota_error(err) or _is_non_retryable_error(err):
+                return None
     return None
 
 
-def call_with_timeout(call_fn, timeout=14):
+def call_with_timeout(call_fn, timeout=22):
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     future = executor.submit(safe_gemini_call, call_fn)
     try:
@@ -143,127 +650,183 @@ def try_connect():
         print("[GENERATOR] google-genai not installed")
         return False
 
-    for key_idx, key in enumerate(ALL_KEYS):
-        for model in FALLBACK_MODELS:
-            try:
-                client = _genai.Client(api_key=key)
-                test = client.models.generate_content(
-                    model=model,
-                    contents="Say OK"
-                )
-                if test and test.text:
-                    GEMINI_CLIENT    = client
-                    GEMINI_MODEL     = model
-                    ACTIVE_KEY_INDEX = key_idx
-                    GEMINI_AVAILABLE = True
-                    KEY_MODEL_CACHE[key_idx] = model
-                    print(f"[GENERATOR] Connected: key {key_idx+1}, model {model}")
-                    return True
-            except Exception as e:
-                err = str(e)
-                if "429" in err or "quota" in err.lower():
-                    print(f"[GENERATOR] Key {key_idx+1} {model}: quota exhausted")
-                    continue
-                elif "404" in err or "not found" in err.lower():
-                    print(f"[GENERATOR] Key {key_idx+1} {model}: model not available")
-                    continue
-                else:
-                    print(f"[GENERATOR] Key {key_idx+1} {model}: {err[:50]}")
-                    continue
+    for key_idx, key in enumerate(get_active_keys()):
+        try:
+            client = _genai.Client(api_key=key)
+            models_for_key = get_request_models_for_key(client, key_idx)
+            model = models_for_key[0] if models_for_key else FALLBACK_MODELS[0]
+
+            GEMINI_CLIENT = client
+            GEMINI_MODEL = model
+            ACTIVE_KEY_INDEX = key_idx
+            GEMINI_AVAILABLE = True
+            KEY_MODEL_CACHE[key_idx] = model
+            print(f"[GENERATOR] Prepared: key {key_idx+1}, model {model}")
+            return True
+        except Exception as e:
+            print(f"[GENERATOR] Key {key_idx+1} init failed: {str(e)[:80]}")
+            continue
+    GEMINI_AVAILABLE = False
     return False
 
 # Initial connection attempt
 try_connect()
 
 
-def call_gemini(prompt: str) -> str:
+def call_gemini(
+    prompt: str,
+    message: str | None = None,
+    history: list | None = None,
+    db_session=None,
+) -> str:
     """
-    Calls Gemini with automatic failover across all keys and models.
-    Updates global state (GEMINI_CLIENT, GEMINI_MODEL) on successful switch.
+    Routes by query complexity and executes provider failover.
+    Simple queries prefer Grok; complex queries prefer Gemini/OpenRouter.
     """
     global GEMINI_CLIENT, GEMINI_MODEL, GEMINI_AVAILABLE, ACTIVE_KEY_INDEX, ALL_KEYS, KEY_MODEL_CACHE
+
+    effective_prompt = _compose_prompt(prompt, message=message, history=history)
+    query_class = _classify_query_complexity(prompt, message=message, history=history)
+    query_hint = _extract_user_query_hint(prompt, message=message)
+
+    if _is_smalltalk_query(query_hint):
+        quick_reply = _fast_smalltalk_response(query_hint)
+        if quick_reply:
+            print("[GEMINI_CALL] Fast local small-talk response")
+            return quick_reply
+
+    provider_sequence = ["grok", "gemini", "openrouter"] if query_class == "simple" else ["gemini", "openrouter", "grok"]
 
     print(
         f"[GEMINI_CALL] client={GEMINI_CLIENT is not None} "
         f"model={GEMINI_MODEL} "
-        f"keys={len(ALL_KEYS)}"
+        f"keys={len(ALL_KEYS)} "
+        f"query_class={query_class} "
+        f"provider_sequence={provider_sequence}"
     )
 
-    if not ALL_KEYS:
-        print("[GEMINI_CALL] No keys available")
+    def _call_gemini_completion() -> str | None:
+        if not ALL_KEYS:
+            return None
+
+        try:
+            from google import genai as _genai
+        except ImportError:
+            _genai = None
+
+        if _genai is None:
+            return None
+
+        gemini_reply = None
+        total_attempts = 0
+        for key_idx, key in enumerate(get_active_keys()):
+            if total_attempts >= MAX_TOTAL_ATTEMPTS_PER_REQUEST:
+                break
+            client = _genai.Client(api_key=key)
+            preferred_models = get_request_models_for_key(client, key_idx)
+
+            for model in preferred_models:
+                if total_attempts >= MAX_TOTAL_ATTEMPTS_PER_REQUEST:
+                    break
+                try:
+                    if _is_in_backoff(key_idx, model):
+                        print(f"[GEMINI_CALL] Skipping key {key_idx+1} model {model} (cooldown)")
+                        continue
+
+                    total_attempts += 1
+
+                    print(f"[GEMINI_CALL] Trying key {key_idx+1} model {model}")
+                    print("[LLM] Calling Gemini...")
+                    response = call_with_timeout(
+                        lambda: client.models.generate_content(
+                            model=model,
+                            contents=effective_prompt,
+                            config={
+                                "temperature": 0.1,
+                                "max_output_tokens": 500
+                            }
+                        ),
+                        timeout=22,
+                    )
+                    print(f"[GEMINI_CALL] Response: {str(response)[:100]}")
+
+                    if response and response.text:
+                        text = response.text.strip()
+                        print(f"[GEMINI_CALL] SUCCESS: {text[:80]}")
+                        print("[LLM] Success")
+
+                        if db_session:
+                            try:
+                                log_gemini_attempt(db_session, api_key_id=key_idx + 1, model=model, status="success")
+                            except Exception as log_err:
+                                print(f"[ERROR] Failed to log success: {log_err}")
+
+                        if key_idx != ACTIVE_KEY_INDEX or model != GEMINI_MODEL:
+                            print(f"[GENERATOR] Failover to key {key_idx+1}, model {model}")
+                            ACTIVE_KEY_INDEX = key_idx
+                            GEMINI_MODEL     = model
+                            GEMINI_CLIENT    = client
+                            GEMINI_AVAILABLE = True
+                        KEY_MODEL_CACHE[key_idx] = model
+                        gemini_reply = text
+                        break
+                    else:
+                        print("[GEMINI_CALL] Empty response.text")
+                except Exception as e:
+                    err = str(e)
+                    print(f"[GEMINI_CALL] Error key {key_idx+1} {model}: {err[:100]}")
+                    if _is_quota_error(err):
+                        delay = _extract_retry_delay_seconds(err, default=8)
+                        _mark_backoff(key_idx, model, delay)
+                        if db_session:
+                            try:
+                                log_gemini_attempt(db_session, api_key_id=key_idx + 1, model=model, status="429_quota", error_msg=err[:200])
+                            except Exception as log_err:
+                                print(f"[ERROR] Failed to log quota error: {log_err}")
+                        continue
+                    status = "timeout" if "timeout" in err.lower() else "404_model" if "404" in err or "not found" in err.lower() else "error"
+                    if db_session:
+                        try:
+                            log_gemini_attempt(db_session, api_key_id=key_idx + 1, model=model, status=status, error_msg=err[:200])
+                        except Exception as log_err:
+                            print(f"[ERROR] Failed to log error: {log_err}")
+                    continue
+
+            if gemini_reply:
+                return gemini_reply
+
         return None
 
-    try:
-        from google import genai as _genai
-    except ImportError:
-        return None
+    provider_calls = {
+        "grok": lambda: _call_grok_completion(effective_prompt, db_session=db_session),
+        "gemini": _call_gemini_completion,
+        "openrouter": lambda: _call_openrouter_completion(effective_prompt, db_session=db_session),
+    }
 
-    for key_idx, key in enumerate(ALL_KEYS):
-        preferred_models = []
-        cached_model = KEY_MODEL_CACHE.get(key_idx)
-        if cached_model:
-            preferred_models.append(cached_model)
-        preferred_models.extend([m for m in FALLBACK_MODELS if m != cached_model])
+    for provider in provider_sequence:
+        print(f"[GEMINI_CALL] Trying provider={provider}")
+        reply = provider_calls[provider]()
+        if not reply:
+            continue
 
-        for model in preferred_models:
-            try:
-                print(f"[GEMINI_CALL] Trying key {key_idx+1} model {model}")
-                client = _genai.Client(api_key=key)
-                print("[LLM] Calling Gemini...")
-                response = call_with_timeout(
-                    lambda: client.models.generate_content(
-                        model=model,
-                        contents=prompt,
-                        config={
-                            "temperature": 0.1,
-                            "max_output_tokens": 500
-                        }
-                    ),
-                    timeout=14,
-                )
-                print(f"[GEMINI_CALL] Response: {str(response)[:100]}")
+        if is_response_incomplete(reply):
+            print(f"[GEMINI_CALL] Provider={provider} returned incomplete response, escalating")
+            continue
 
-                if response and response.text:
-                    text = response.text.strip()
-                    print(f"[GEMINI_CALL] SUCCESS: {text[:80]}")
-                    print("[LLM] Success")
-
-                    # Update global pointer if we switched
-                    if key_idx != ACTIVE_KEY_INDEX or model != GEMINI_MODEL:
-                        print(f"[GENERATOR] Failover to key {key_idx+1}, model {model}")
-                        ACTIVE_KEY_INDEX = key_idx
-                        GEMINI_MODEL     = model
-                        GEMINI_CLIENT    = client
-                        GEMINI_AVAILABLE = True
-                    KEY_MODEL_CACHE[key_idx] = model
-                    return text
-                else:
-                    print("[GEMINI_CALL] Empty response.text")
-            except Exception as e:
-                err = str(e)
-                print(f"[GEMINI_CALL] Error key {key_idx+1} {model}: {err[:100]}")
-                if "429" in err or "quota" in err.lower():
-                    continue
-                else:
-                    continue
+        return reply
 
     print("[GEMINI_CALL] All attempts failed")
-    GEMINI_AVAILABLE = False
+    GEMINI_AVAILABLE = bool(GEMINI_CLIENT and GEMINI_MODEL)
     return None
-
 
 def call_gemini_with_memory(
     system_context: str,
     user_question: str,
     history: list,
-    role: str
+    role: str,
+    db_session=None
 ) -> str:
-    """Calls Gemini with full conversation memory."""
-    if not ALL_KEYS:
-        return None
-
-    from google import genai as _genai
-
+    """Calls the shared AI provider flow with conversation memory preserved."""
     history_text = ""
     if history:
         history_text = "\n\nPREVIOUS CONVERSATION:\n"
@@ -282,41 +845,11 @@ something from the conversation history (like "yes",
 "tell me more", "what about that"), use the history
 to understand what they mean.
 
+
 Provide a COMPLETE answer. Do not cut off mid-sentence.
 Write complete paragraphs. Maximum 6 sentences."""
 
-    for key_idx, key in enumerate(ALL_KEYS):
-        for model in FALLBACK_MODELS:
-            try:
-                client = _genai.Client(api_key=key)
-                print("[LLM] Calling Gemini...")
-                response = call_with_timeout(
-                    lambda: client.models.generate_content(
-                        model=model,
-                        contents=full_prompt,
-                        config={
-                            "temperature": 0.1,
-                            "max_output_tokens": 500,
-                            "top_p": 0.8
-                        }
-                    ),
-                    timeout=14,
-                )
-                if response and response.text:
-                    text = response.text.strip()
-                    if len(text) > 10 and not is_response_incomplete(text):
-                        print("[LLM] Success")
-                        if key_idx != ACTIVE_KEY_INDEX or model != GEMINI_MODEL:
-                            print(f"[GENERATOR] Failover to key {key_idx+1}, model {model}")
-                        return text
-            except Exception as e:
-                err = str(e)
-                if "429" in err or "quota" in err.lower():
-                    continue
-                continue
-
-    return None
-
+    return call_gemini(full_prompt, db_session=db_session)
 
 # ── Context formatter (A in RAG) ─────────────────────────────────
 
@@ -665,12 +1198,14 @@ def generate_answer(
     retrieved_data: dict,
     user_question: str,
     conversation_history: list,
-    user_id: int | None = None
+    user_id: int | None = None,
+    db_session=None
 ) -> str:
     """
     Core RAG generation: formats context → builds prompt → calls Gemini.
     Analytical / complex queries are first routed to the LangChain chain;
     simple queries go directly to Gemini; rule-based fallback if all fail.
+    Logs all API attempts to database if db_session provided.
     """
     total_start = time.time()
     cache_key = None
@@ -793,8 +1328,9 @@ INSTRUCTIONS FOR YOUR ANSWER:
 
 ANSWER:"""
 
-        if not GEMINI_AVAILABLE or not GEMINI_CLIENT:
-            print("[GENERATOR] Gemini not available, using fallback")
+        ensure_gemini_connection()
+        if not ALL_KEYS:
+            print("[GENERATOR] Gemini keys unavailable, using fallback")
             fallback_answer = build_fallback(role, retrieved_data, user_question)
             return fallback_answer or SAFE_FALLBACK_RESPONSE
 
@@ -805,6 +1341,7 @@ ANSWER:"""
             user_question=user_question,
             history=conversation_history,
             role=role,
+            db_session=db_session,
         )
 
         if answer:
@@ -1012,3 +1549,49 @@ def build_fallback(role: str, data: dict, question: str) -> str:
 
     except Exception:
         return with_notice("Please check your dashboard for the latest information.")
+
+
+# ── API Key Pool Logging Helper ──────────────────────────────────
+
+def log_gemini_attempt(db_session, api_key_id: int, model: str, status: str, error_msg: str = None):
+    """
+    Logs a Gemini API call attempt to the database for monitoring quota/key health.
+    
+    Args:
+        db_session: SQLAlchemy session
+        api_key_id: Key number (1, 2, or 3)
+        model: Model name (e.g. "gemini-2.5-flash")
+        status: Outcome ('success', '429_quota', '404_model', 'timeout')
+        error_msg: Optional error message
+    """
+    try:
+        from models import GeminiKeyUsage
+        
+        usage = GeminiKeyUsage(
+            api_key_id=api_key_id,
+            model=model,
+            status=status,
+            error_message=error_msg
+        )
+        db_session.add(usage)
+        db_session.commit()
+        print(f"[LOG] Gemini key_id={api_key_id} model={model} status={status}")
+    except Exception as e:
+        print(f"[ERROR] Failed to log Gemini attempt: {str(e)}")
+
+
+def get_gemini_key_status_snapshot(db_session) -> dict:
+    """
+    Returns current Gemini API key pool health status.
+    
+    Returns:
+        dict: Key status by key_id with working models, quota info, etc.
+    """
+    try:
+        from rag.key_pool_manager import KeyPoolManager
+        
+        manager = KeyPoolManager(db_session)
+        return manager.get_key_status()
+    except Exception as e:
+        print(f"[ERROR] Failed to get key status: {str(e)}")
+        return {}
