@@ -12,6 +12,10 @@ export default function ChatBot({ role }) {
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState("");
   const [loading, setLoading] = useState(false);
+  const [pdfUploading, setPdfUploading] = useState(false);
+  const [analyzingPdfQuestion, setAnalyzingPdfQuestion] = useState(false);
+  const [hasUploadedPdf, setHasUploadedPdf] = useState(false);
+  const [uploadJustFinished, setUploadJustFinished] = useState(false);
   const [streaming, setStreaming] = useState(false);
   const [suggested, setSuggested] = useState([]);
   const [copiedIndex, setCopiedIndex] = useState(null);
@@ -22,10 +26,20 @@ export default function ChatBot({ role }) {
   const messagesEndRef = useRef(null);
   const activeReplyIdRef = useRef(null);
   const pdfInputRef = useRef(null);
+  const uploadReadyTimerRef = useRef(null);
+  const chatLocked = loading || streaming || pdfUploading;
 
   useEffect(() => {
     const timer = setInterval(() => setNowTs(Date.now()), 1000);
     return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (uploadReadyTimerRef.current) {
+        clearTimeout(uploadReadyTimerRef.current);
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -69,6 +83,7 @@ export default function ChatBot({ role }) {
   }, [messages, loading]);
 
   const handleSend = async (overrideText, options = {}) => {
+    if (chatLocked) return;
     const forceLiveAI = Boolean(options.forceLiveAI);
     const isRetry = Boolean(options.isRetry);
     const textToSend = overrideText || inputText.trim();
@@ -86,15 +101,25 @@ export default function ChatBot({ role }) {
     const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const replyId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     activeReplyIdRef.current = replyId;
+    const pdfKeywords = [
+      "pdf", "document", "file", "uploaded",
+      "explain", "summarize", "what does it say",
+      "according to", "in the document", "the report",
+      "project", "technologies", "technology", "tech stack",
+      "team members", "members"
+    ];
+    const lowerText = String(textToSend || "").toLowerCase();
+    const isPdfQuestion = hasUploadedPdf && pdfKeywords.some((kw) => lowerText.includes(kw));
+    setAnalyzingPdfQuestion(isPdfQuestion);
     const newMessages = [
       ...messages,
       { from: "user", text: textToSend, timestamp, id: `${replyId}-user` },
       {
         from: "ai",
-        text: "Fetching latest data...",
+        text: isPdfQuestion ? "Analyzing PDF..." : "Fetching latest data...",
         timestamp,
         id: replyId,
-        status: "fetching",
+        status: isPdfQuestion ? "analyzing" : "fetching",
         userPrompt: textToSend,
       }
     ];
@@ -157,19 +182,21 @@ export default function ChatBot({ role }) {
         let fullText = '';
         let hasFirstChunk = false;
 
-        setMessages(prev => prev.map(m => (
-          m.id === replyId
-            ? {
-                ...m,
-                text: 'Typing...',
-                status: 'typing',
-                mode: responseMode,
-                source: responseSource,
-                userPrompt: m.userPrompt,
-              }
-            : m
-        )));
-        setStreaming(true);
+        if (!isPdfQuestion) {
+          setMessages(prev => prev.map(m => (
+            m.id === replyId
+              ? {
+                  ...m,
+                  text: 'Typing...',
+                  status: 'typing',
+                  mode: responseMode,
+                  source: responseSource,
+                  userPrompt: m.userPrompt,
+                }
+              : m
+          )));
+          setStreaming(true);
+        }
 
         while (true) {
           const { done, value } = await reader.read();
@@ -265,11 +292,13 @@ export default function ChatBot({ role }) {
     } finally {
       setLoading(false);
       setStreaming(false);
+      setAnalyzingPdfQuestion(false);
       activeReplyIdRef.current = null;
     }
   };
 
   const handleKeyDown = (e) => {
+    if (pdfUploading) return;
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -315,7 +344,7 @@ export default function ChatBot({ role }) {
   };
 
   const handleRetryAI = (message) => {
-    if (loading) return;
+    if (chatLocked) return;
     const prompt = message?.userPrompt || "";
     if (!prompt) return;
 
@@ -348,7 +377,7 @@ export default function ChatBot({ role }) {
   };
 
   const handlePdfButtonClick = () => {
-    if (loading) return;
+    if (chatLocked) return;
     pdfInputRef.current?.click();
   };
 
@@ -375,6 +404,8 @@ export default function ChatBot({ role }) {
 
     const timestamp = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     const msgId = `pdf-${Date.now()}`;
+    setUploadJustFinished(false);
+    setPdfUploading(true);
     setMessages((prev) => [
       ...prev,
       {
@@ -388,7 +419,7 @@ export default function ChatBot({ role }) {
         text: "Uploading PDF...",
         timestamp,
         id: msgId,
-        status: "typing",
+        status: "uploading",
         mode: "verified_data",
         source: "pdf_upload",
       },
@@ -400,7 +431,9 @@ export default function ChatBot({ role }) {
       const response = await api.post("/chat/upload-pdf", formData, {
         headers: { "Content-Type": "multipart/form-data" },
       });
+      setHasUploadedPdf(Boolean(response?.data?.has_pdf));
       const uploadMessage =
+        response?.data?.summary ||
         response?.data?.message ||
         "PDF uploaded successfully. Ask your question and I will answer using this document.";
       setMessages((prev) =>
@@ -416,7 +449,15 @@ export default function ChatBot({ role }) {
             : m
         )
       );
+      setUploadJustFinished(true);
+      if (uploadReadyTimerRef.current) {
+        clearTimeout(uploadReadyTimerRef.current);
+      }
+      uploadReadyTimerRef.current = setTimeout(() => {
+        setUploadJustFinished(false);
+      }, 1600);
     } catch (error) {
+      setHasUploadedPdf(false);
       const errMsg =
         error?.response?.data?.message ||
         error?.response?.data?.detail ||
@@ -435,6 +476,9 @@ export default function ChatBot({ role }) {
             : m
         )
       );
+      setUploadJustFinished(false);
+    } finally {
+      setPdfUploading(false);
     }
   };
 
@@ -483,6 +527,7 @@ export default function ChatBot({ role }) {
                       <button
                         key={idx}
                         onClick={() => handleSend(s)}
+                        disabled={chatLocked}
                         className="text-sm bg-white text-gray-700 border border-gray-200 px-4 py-3 rounded-xl hover:border-indigo-300 hover:shadow-md hover:-translate-y-0.5 transition-all w-full leading-snug group"
                       >
                         <span className="flex items-center justify-between">
@@ -509,7 +554,7 @@ export default function ChatBot({ role }) {
                 )}
                 
                 <div className="flex flex-col group max-w-[85%]">
-                  {m.from === "ai" && m.status !== "typing" && (
+                  {m.from === "ai" && m.status !== "typing" && m.status !== "uploading" && m.status !== "analyzing" && (
                     <div className="mb-1.5 flex items-center gap-2">
                       <span
                         className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${getModeBadge(m.mode).className}`}
@@ -527,15 +572,24 @@ export default function ChatBot({ role }) {
                           : "bg-gray-100 text-gray-800 border border-gray-200 rounded-2xl rounded-tl-sm"
                     }`}
                   >
-                    {m.status === 'typing' ? (
-                      <div className="flex items-center gap-2 min-w-[90px]">
-                        <span className="text-sm text-gray-500">Typing...</span>
-                        <span className="inline-flex items-center gap-1.5">
-                          <span className="w-2 h-2 bg-indigo-400 rounded-full animate-[bounce_1.4s_infinite_ease-in-out_both] [animation-delay:-0.32s]"></span>
-                          <span className="w-2 h-2 bg-indigo-400 rounded-full animate-[bounce_1.4s_infinite_ease-in-out_both] [animation-delay:-0.16s]"></span>
-                          <span className="w-2 h-2 bg-indigo-400 rounded-full animate-[bounce_1.4s_infinite_ease-in-out_both]"></span>
-                        </span>
-                      </div>
+                    {m.status === 'typing' || m.status === 'uploading' ? (
+                      m.status === 'uploading' ? (
+                        <div className="min-w-[180px]">
+                          <span className="text-sm text-gray-500">Uploading PDF...</span>
+                          <div className="mt-2 h-1.5 w-full rounded-full bg-indigo-100 overflow-hidden">
+                            <div className="upload-progress-fill h-full rounded-full bg-indigo-500"></div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 min-w-[90px]">
+                          <span className="text-sm text-gray-500">Typing...</span>
+                          <span className="inline-flex items-center gap-1.5">
+                            <span className="w-2 h-2 bg-indigo-400 rounded-full animate-[bounce_1.4s_infinite_ease-in-out_both] [animation-delay:-0.32s]"></span>
+                            <span className="w-2 h-2 bg-indigo-400 rounded-full animate-[bounce_1.4s_infinite_ease-in-out_both] [animation-delay:-0.16s]"></span>
+                            <span className="w-2 h-2 bg-indigo-400 rounded-full animate-[bounce_1.4s_infinite_ease-in-out_both]"></span>
+                          </span>
+                        </div>
+                      )
                     ) : (
                       m.text
                     )}
@@ -581,7 +635,7 @@ export default function ChatBot({ role }) {
               </div>
             ))}
 
-            {loading && !streaming && (
+            {loading && !streaming && !analyzingPdfQuestion && (
               <div className="flex justify-start w-full fade-in">
                  <div className="w-8 h-8 rounded-full bg-indigo-50 border border-indigo-100 flex-shrink-0 flex items-center justify-center text-indigo-500 mr-3 mt-1 shadow-sm">
                     <AutoAwesomeIcon style={{ fontSize: 14 }} />
@@ -614,14 +668,14 @@ export default function ChatBot({ role }) {
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Ask anything about your academics..."
-              disabled={loading}
+              placeholder={pdfUploading ? "Uploading PDF... please wait" : "Ask anything about your academics..."}
+              disabled={chatLocked}
               className="flex-1 bg-transparent text-[15px] resize-none max-h-32 focus:outline-none disabled:opacity-50 min-h-[24px] pb-1 py-0.5 leading-snug"
               rows={1}
             />
             <button
               onClick={handlePdfButtonClick}
-              disabled={loading}
+              disabled={chatLocked}
               title="Upload PDF"
               className="w-9 h-9 flex-shrink-0 bg-white text-indigo-600 border border-indigo-200 rounded-full flex items-center justify-center hover:bg-indigo-50 transition disabled:opacity-50"
             >
@@ -629,12 +683,22 @@ export default function ChatBot({ role }) {
             </button>
             <button
               onClick={() => handleSend()}
-              disabled={loading || !inputText.trim()}
+              disabled={chatLocked || !inputText.trim()}
               className="w-9 h-9 flex-shrink-0 bg-indigo-600 text-white rounded-full flex items-center justify-center hover:bg-indigo-700 transition disabled:opacity-50 disabled:bg-gray-200 disabled:text-gray-400 shadow-sm disabled:shadow-none"
             >
               <SendRoundedIcon style={{ fontSize: 18 }} className={inputText.trim() ? "translate-x-0.5" : ""} />
             </button>
           </div>
+          {pdfUploading && (
+            <p className="text-center text-[11px] text-indigo-500 mt-2">
+              Uploading your PDF. You can ask questions once upload completes.
+            </p>
+          )}
+          {!pdfUploading && uploadJustFinished && (
+            <p className="text-center text-[11px] text-emerald-600 mt-2">
+              PDF uploaded. Ask your question to start analysis.
+            </p>
+          )}
           <p className="text-center text-[11px] text-gray-400 mt-3 hidden md:block">
             AI Assistant can make mistakes. Verify important academic information.
           </p>
@@ -647,9 +711,18 @@ export default function ChatBot({ role }) {
         .fade-in {
           animation: fadeIn 0.3s ease-out forwards;
         }
+        .upload-progress-fill {
+          width: 45%;
+          animation: uploadSweep 1.1s ease-in-out infinite;
+        }
         @keyframes fadeIn {
           from { opacity: 0; transform: translateY(5px); }
           to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes uploadSweep {
+          0% { transform: translateX(-120%); }
+          50% { transform: translateX(40%); }
+          100% { transform: translateX(220%); }
         }
       `}} />
 

@@ -27,3 +27,17 @@ Thumbs.db
 # editor folders
 .vscode/
 .idea/
+
+# Python virtual environment
+venv/
+env/
+ENV/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# environment variables
+.env

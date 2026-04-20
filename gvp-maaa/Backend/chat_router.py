@@ -15,6 +15,10 @@ from auth import get_current_user
 from database import get_db
 router = APIRouter(prefix="/chat", tags=["RAG Chatbot"])
 
+# Store uploaded PDFs in memory per session
+# Key: user_id, Value: {path, filename}
+_PDF_STORE = {}
+
 
 def map_response_mode(source: str) -> str:
     src = (source or "").lower()
@@ -552,50 +556,55 @@ async def upload_pdf(
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    tmp_path = None
     try:
         if isinstance(current_user, dict):
-            user_id = int(current_user.get("user_id", 0) or 0)
+            user_id = (
+                current_user.get("id") or
+                current_user.get("user_id") or 1
+            )
         else:
-            user_id = int(getattr(current_user, "user_id", 0) or 0)
+            user_id = (
+                getattr(current_user, 'id', None) or
+                getattr(current_user, 'user_id', None) or 1
+            )
 
-        if user_id <= 0:
-            return {"message": "Authentication required.", "filename": "", "uploaded": False}
+        user_id = int(user_id)
 
-        if file.content_type and "pdf" not in file.content_type.lower():
-            return {"message": "Only PDF files are supported.", "filename": file.filename or "", "uploaded": False}
-
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+        import tempfile
+        with tempfile.NamedTemporaryFile(
+            delete=False, suffix=".pdf"
+        ) as tmp:
             content = await file.read()
             tmp.write(content)
             tmp_path = tmp.name
 
-        from rag.pdf_processor import extract_text_from_pdf, set_pdf_context_for_user
+        # Remove previous uploaded PDF for this user, if any.
+        old_pdf = _PDF_STORE.get(user_id, {})
+        old_path = old_pdf.get("path")
+        if old_path and os.path.exists(old_path):
+            try:
+                os.unlink(old_path)
+            except Exception:
+                pass
 
-        text = extract_text_from_pdf(tmp_path)
-        if not text or text.startswith("Could not"):
-            return {
-                "message": "Could not read the PDF file.",
-                "filename": file.filename or "",
-                "uploaded": False,
-            }
-
-        set_pdf_context_for_user(user_id, text, file.filename or "")
+        # Store PDF path for follow-up questions
+        _PDF_STORE[user_id] = {
+            "path": tmp_path,
+            "filename": file.filename
+        }
 
         return {
-            "message": "PDF uploaded successfully. Ask your question and I will answer using this document.",
-            "filename": file.filename or "",
-            "uploaded": True,
+            "message": "PDF uploaded successfully. Ask your question to analyze this document.",
+            "filename": file.filename,
+            "has_pdf": True
         }
     except Exception as e:
         traceback.print_exc()
-        return {"message": f"Error: {e}", "filename": "", "uploaded": False}
-    finally:
-        if tmp_path and os.path.exists(tmp_path):
-            try:
-                os.unlink(tmp_path)
-            except Exception:
-                pass
+        return {
+            "message": f"Error uploading PDF: {str(e)}",
+            "filename": "",
+            "has_pdf": False
+        }
 
 @router.post("/message")
 async def chat_message(
@@ -673,32 +682,42 @@ async def chat_message(
 
         history = normalize_history(request.history or [])
 
+        # Check if user has an uploaded PDF and question
+        # is about the PDF
+        user_id_for_pdf = int(user_id)
+        if user_id_for_pdf in _PDF_STORE:
+            pdf_keywords = [
+                "pdf", "document", "file", "uploaded",
+                "explain", "summarize", "what does it say",
+                "according to", "in the document", "the report",
+                "project", "technologies", "technology", "tech stack",
+                "team members", "members"
+            ]
+            if any(kw in query.lower() for kw in pdf_keywords):
+                from rag.pdf_processor import answer_pdf_question
+                pdf_info = _PDF_STORE[user_id_for_pdf]
+                pdf_answer = answer_pdf_question(
+                    pdf_info["path"],
+                    query,
+                    role
+                )
+                if pdf_answer:
+                    return {
+                        "reply": pdf_answer,
+                        "role": role,
+                        "allowed": True,
+                        "source": "pdf"
+                    }
+
         # ── Run LangGraph RAG pipeline ──────────────────────────
         role_lower = str(role).lower()
         reply_source = "unknown"
         try:
-            question_for_pipeline = request.message
-            try:
-                from rag.pdf_processor import get_pdf_context_for_user
-                pdf_context = get_pdf_context_for_user(int(user_id))
-                pdf_text = str(pdf_context.get("text") or "").strip()
-                pdf_filename = str(pdf_context.get("filename") or "uploaded PDF")
-                if pdf_text:
-                    question_for_pipeline = (
-                        f"User has uploaded a PDF named '{pdf_filename}'. "
-                        "Use the following PDF content when answering the user question. "
-                        "If the question is unrelated to this PDF, answer normally.\n\n"
-                        f"PDF CONTENT:\n{pdf_text[:4000]}\n\n"
-                        f"USER QUESTION:\n{request.message}"
-                    )
-            except Exception:
-                pass
-
             from rag.graph_pipeline import run_rag_pipeline
             pipeline_result = run_rag_pipeline(
                 user_id=int(user_id),
                 role=role_lower,
-                question=question_for_pipeline,
+                question=request.message,
                 history=history[-6:],
                 db=db,
                 include_meta=True,
