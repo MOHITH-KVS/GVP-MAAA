@@ -10,6 +10,7 @@ import AddAlertRoundedIcon from "@mui/icons-material/AddAlertRounded";
 import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 
 const RETRY_RECOMMENDED_WAIT_MS = 90 * 1000;
+const RETRY_ELIGIBLE_SOURCES = new Set(["fallback", "error"]);
 
 const makeThreadId = () => {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -50,6 +51,11 @@ export default function ChatBot({ role }) {
     message: "",
   });
   const [threadId, setThreadId] = useState(() => {
+  const isRetryEligibleSource = (source) => {
+    const normalized = String(source || "").toLowerCase();
+    return RETRY_ELIGIBLE_SOURCES.has(normalized);
+  };
+
     try {
       const storedThreadId = localStorage.getItem(getThreadStorageKey(role));
       return storedThreadId || makeThreadId();
@@ -490,7 +496,8 @@ export default function ChatBot({ role }) {
           status: "done",
           mode: "verified_data",
           source: "pdf_upload",
-        },
+                retryRecommendedUntil: isRetryEligibleSource(data.source || responseSource)
+                  ? Date.now() + RETRY_RECOMMENDED_WAIT_MS
       ]);
       return;
     }
@@ -538,7 +545,8 @@ export default function ChatBot({ role }) {
                 status: "done",
                 mode: "verified_data",
                 source: "pdf_upload",
-              }
+                retryRecommendedUntil: isRetryEligibleSource(responseSource)
+                  ? Date.now() + RETRY_RECOMMENDED_WAIT_MS
             : m
         )
       );
@@ -565,7 +573,8 @@ export default function ChatBot({ role }) {
                 status: "done",
                 mode: "verified_data",
                 source: "pdf_upload",
-              }
+                retryRecommendedUntil: isRetryEligibleSource(responseSource)
+                  ? Date.now() + RETRY_RECOMMENDED_WAIT_MS
             : m
         )
       );
@@ -858,7 +867,7 @@ export default function ChatBot({ role }) {
                       {m.timestamp}
                     </span>
                   )}
-                  {m.from === "ai" && String(m.mode || "").toLowerCase() === "verified_data" && !!m.userPrompt && (
+                  {m.from === "ai" && !!m.userPrompt && isRetryEligibleSource(m.source) && (
                     <div className="mt-2 flex items-center justify-end gap-2">
                       {Math.max(0, (m.retryRecommendedUntil || 0) - nowTs) > 0 ? (
                         <span className="text-[11px] text-amber-600">
