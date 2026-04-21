@@ -157,3 +157,4 @@ cd "C:\Users\my pc\OneDrive\Desktop\GVP-MAAA\gvp-maaa\Backend"
 [CHAT] role=student user_id=... msg=what is my machine learning attendance
 [GENERATOR] Calling Gemini for: what is my machine learning attendance
 [GENERATOR] Gemini replied: Your Machine Learning attendance is...
+
