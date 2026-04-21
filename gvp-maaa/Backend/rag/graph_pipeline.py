@@ -1,38 +1,188 @@
 """
 rag/graph_pipeline.py — LangGraph stateful multi-step RAG pipeline.
 
-4 nodes, each with one responsibility:
-  1. access_guard       — blocks unauthorised queries
-  2. data_retriever     — fetches DB data + classifies query type
-  3. answer_generator   — routes to LangChain chain → Gemini → fallback
-  4. response_formatter — cleans / validates the final answer
+6 nodes, each with one responsibility:
+    1. access_guard            — blocks unauthorised queries
+    2. data_retriever          — fetches DB data + classifies query type
+    3. memory_manager          — loads/stores per-user conversation summaries
+    4. answer_generator        — routes to LangChain chain → Gemini → fallback
+    5. proactive_insight_gen   — adds one short follow-up insight
+    6. response_formatter      — cleans / validates the final answer
 
 State flows through all nodes via RAGState TypedDict.
+Runtime-only dependencies, such as the SQLAlchemy session, are provided via
+LangGraph runtime context so persistence can remain PostgreSQL-backed.
 """
 
 import traceback
+from datetime import datetime
 from typing import TypedDict, Optional, List, Dict, Any
 
 from langgraph.graph import StateGraph, END
+from langgraph.runtime import Runtime
+
+try:
+        from langgraph.checkpoint.postgres import PostgresSaver
+except Exception:
+        PostgresSaver = None
+
+try:
+        from langgraph.checkpoint.memory import MemorySaver
+except Exception:
+        MemorySaver = None
+
+from database import DATABASE_URL
 
 
 # ── Shared state schema ──────────────────────────────────────────
 
-class RAGState(TypedDict):
+class GraphContext(TypedDict):
+    db: Any
+
+
+class RAGState(TypedDict, total=False):
     # Inputs
     user_id:  int
     role:     str
     question: str
     history:  List[Dict]
-    db:       Any
+    thread_id: str
     force_live_ai: bool
     # Node outputs
     access_granted:  bool
     denial_message:  str
     query_type:      str   # "simple" | "analytical"
     retrieved_data:  Dict
+    memory_context:  str
+    conversation_summaries: List[Dict[str, Any]]
     answer:          str
     source:          str   # "langchain" | "gemini" | "fallback" | "error"
+    proactive_insight: str
+    summary_entry: str
+
+
+def _normalize_thread_id(role: str, user_id: int, thread_id: str | None = None) -> str:
+    normalized = str(thread_id or "").strip()
+    if normalized:
+        return normalized
+    return f"{str(role).lower()}_{user_id}"
+
+
+def _normalize_conversation_summaries(raw_summaries: Any) -> List[Dict[str, Any]]:
+    summaries: List[Dict[str, Any]] = []
+    for item in raw_summaries or []:
+        if isinstance(item, dict):
+            summary = str(item.get("summary") or item.get("text") or "").strip()
+            if not summary:
+                continue
+            summaries.append({
+                "summary": summary,
+                "question": str(item.get("question") or "").strip(),
+                "answer": str(item.get("answer") or "").strip(),
+                "source": str(item.get("source") or "").strip(),
+                "insight": str(item.get("insight") or "").strip(),
+                "created_at": str(item.get("created_at") or "").strip(),
+            })
+        elif isinstance(item, str) and item.strip():
+            summaries.append({"summary": item.strip()})
+    return summaries[-20:]
+
+
+def _format_recent_summaries(summaries: List[Dict[str, Any]]) -> str:
+    recent = summaries[-3:]
+    if not recent:
+        return "No prior conversation summaries."
+    lines = ["Recent conversation summaries:"]
+    for index, item in enumerate(recent, start=1):
+        lines.append(f"{index}. {item.get('summary', '').strip()}")
+    return "\n".join(lines)
+
+
+def _condense_text(text: str, limit: int = 220) -> str:
+    cleaned = " ".join(str(text or "").split()).strip()
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[: limit - 3].rstrip() + "..."
+
+
+def _build_turn_summary(
+    question: str,
+    answer: str,
+    source: str,
+    insight: str,
+) -> str:
+    parts: List[str] = []
+    question_text = _condense_text(question, 120)
+    answer_text = _condense_text(answer, 180)
+    insight_text = _condense_text(insight, 120)
+    if question_text:
+        parts.append(f"Q: {question_text}")
+    if answer_text:
+        parts.append(f"A: {answer_text}")
+    if insight_text:
+        parts.append(f"Insight: {insight_text}")
+    if source:
+        parts.append(f"Source: {source}")
+    return " | ".join(parts)
+
+
+def _load_memory_records(db, thread_id: str, limit: int = 3) -> List[Dict[str, Any]]:
+    try:
+        from models import ConversationMemory
+
+        rows = (
+            db.query(ConversationMemory)
+            .filter(ConversationMemory.thread_id == thread_id)
+            .order_by(ConversationMemory.created_at.desc(), ConversationMemory.id.desc())
+            .limit(limit)
+            .all()
+        )
+        records: List[Dict[str, Any]] = []
+        for row in reversed(rows):
+            records.append({
+                "summary": str(getattr(row, "summary", "") or "").strip(),
+                "question": str(getattr(row, "question", "") or "").strip(),
+                "answer": str(getattr(row, "answer", "") or "").strip(),
+                "source": str(getattr(row, "source", "") or "").strip(),
+                "insight": str(getattr(row, "insight", "") or "").strip(),
+                "created_at": row.created_at.isoformat() if getattr(row, "created_at", None) else "",
+            })
+        return records
+    except Exception:
+        traceback.print_exc()
+        return []
+
+
+def _save_memory_record(
+    db,
+    *,
+    thread_id: str,
+    user_id: int,
+    role: str,
+    question: str,
+    answer: str,
+    source: str,
+    insight: str,
+    summary: str,
+) -> None:
+    try:
+        from models import ConversationMemory
+
+        record = ConversationMemory(
+            thread_id=thread_id,
+            user_id=user_id,
+            role=role,
+            question=question,
+            answer=answer,
+            source=source,
+            insight=insight,
+            summary=summary,
+        )
+        db.add(record)
+        db.commit()
+    except Exception:
+        db.rollback()
+        traceback.print_exc()
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -82,12 +232,12 @@ def node_access_guard(state: RAGState) -> RAGState:
 # NODE 2 — DATA RETRIEVER
 # ══════════════════════════════════════════════════════════════════
 
-def node_data_retriever(state: RAGState) -> RAGState:
+def node_data_retriever(state: RAGState, runtime: Runtime[GraphContext]) -> RAGState:
     """Fetches all DB data for the role and classifies the query type."""
     try:
         role    = state["role"].lower()
         user_id = state["user_id"]
-        db      = state["db"]
+        db      = runtime.context.get("db")
 
         from rag.retriever import (
             retrieve_student_data,
@@ -123,11 +273,31 @@ def node_data_retriever(state: RAGState) -> RAGState:
         return state
 
 
+def node_memory_manager(state: RAGState, runtime: Runtime[GraphContext]) -> RAGState:
+    """Loads the last three conversation summaries for the active thread."""
+    try:
+        db = runtime.context.get("db")
+        thread_id = _normalize_thread_id(state["role"], state["user_id"], state.get("thread_id"))
+        state["thread_id"] = thread_id
+
+        summaries = _load_memory_records(db, thread_id, limit=3) if db else []
+        state["conversation_summaries"] = summaries
+        state["memory_context"] = _format_recent_summaries(summaries)
+        print(f"[GRAPH] Memory loaded for {thread_id}: {len(summaries)} summary item(s)")
+        return state
+    except Exception:
+        traceback.print_exc()
+        state["conversation_summaries"] = []
+        state["memory_context"] = "No prior conversation summaries."
+        state["thread_id"] = _normalize_thread_id(state["role"], state["user_id"], state.get("thread_id"))
+        return state
+
+
 # ══════════════════════════════════════════════════════════════════
 # NODE 3 — ANSWER GENERATOR
 # ══════════════════════════════════════════════════════════════════
 
-def node_answer_generator(state: RAGState) -> RAGState:
+def node_answer_generator(state: RAGState, runtime: Runtime[GraphContext]) -> RAGState:
     """
     Tries three answer strategies in order:
       1. LangChain analytical chain   (for analytical queries)
@@ -142,6 +312,8 @@ def node_answer_generator(state: RAGState) -> RAGState:
         query_type = state["query_type"]
         user_id    = state["user_id"]
         force_live_ai = bool(state.get("force_live_ai", False))
+        db_session = runtime.context.get("db")
+        memory_context = state.get("memory_context", "No prior conversation summaries.")
 
         from rag.generator import (
             build_response_cache_key,
@@ -247,6 +419,9 @@ def node_answer_generator(state: RAGState) -> RAGState:
                 prompt = f"""You are a {personas.get(role, 'assistant')} at GVP college.
 {access.get(role, '')}
 
+RECENT CONVERSATION MEMORY:
+{memory_context}
+
 DATA FROM DATABASE:
 {context}
 
@@ -266,7 +441,7 @@ INSTRUCTIONS:
 
 ANSWER:"""
 
-                answer = call_gemini(prompt)
+                answer = call_gemini(prompt, db_session=db_session)
                 if answer and len(answer.strip()) > 5 and not is_response_incomplete(answer):
                     state["source"] = "gemini"
                     if cache_key and not skip_cache:
@@ -310,7 +485,7 @@ ANSWER:"""
 # NODE 4 — RESPONSE FORMATTER
 # ══════════════════════════════════════════════════════════════════
 
-def node_response_formatter(state: RAGState) -> RAGState:
+def node_response_formatter(state: RAGState, runtime: Runtime[GraphContext]) -> RAGState:
     """
     Final clean-up: ensures the answer is a proper string,
     not empty, and not a raw Python dict/object dump.
@@ -323,7 +498,6 @@ def node_response_formatter(state: RAGState) -> RAGState:
                 "denial_message",
                 "You don't have access to that information."
             )
-            return state
 
         answer = state.get("answer", "")
 
@@ -343,9 +517,99 @@ def node_response_formatter(state: RAGState) -> RAGState:
             return state
 
         state["answer"] = answer.strip()
+
+        proactive_insight = str(state.get("proactive_insight", "")).strip()
+        if proactive_insight and state.get("source") != "fallback":
+            if proactive_insight not in state["answer"]:
+                state["answer"] = f"{state['answer']}\n\nProactive insight: {proactive_insight}"
+
+        summaries = _normalize_conversation_summaries(state.get("conversation_summaries", []))
+        summary_entry = _build_turn_summary(
+            state.get("question", ""),
+            state.get("answer", ""),
+            state.get("source", ""),
+            proactive_insight,
+        )
+        if summary_entry:
+            summaries.append({
+                "summary": summary_entry,
+                "question": str(state.get("question", "")).strip(),
+                "answer": _condense_text(state.get("answer", ""), 260),
+                "source": str(state.get("source", "")).strip(),
+                "insight": proactive_insight,
+                "created_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+            })
+        state["conversation_summaries"] = summaries[-20:]
+        state["summary_entry"] = summary_entry
+
+        db = runtime.context.get("db")
+        if db and summary_entry:
+            _save_memory_record(
+                db,
+                thread_id=state.get("thread_id") or _normalize_thread_id(state["role"], state["user_id"], None),
+                user_id=state["user_id"],
+                role=state["role"],
+                question=str(state.get("question", "")).strip(),
+                answer=str(state.get("answer", "")).strip(),
+                source=str(state.get("source", "")).strip(),
+                insight=proactive_insight,
+                summary=summary_entry,
+            )
         return state
 
     except Exception:
+        return state
+
+
+def node_proactive_insight_generator(state: RAGState, runtime: Runtime[GraphContext]) -> RAGState:
+    """Adds one short proactive insight after the main answer."""
+    try:
+        if state.get("source") == "fallback":
+            state["proactive_insight"] = ""
+            return state
+
+        answer = str(state.get("answer", "")).strip()
+        if not answer:
+            state["proactive_insight"] = ""
+            return state
+
+        db_session = runtime.context.get("db")
+        role = state["role"].lower()
+        memory_context = state.get("memory_context", "No prior conversation summaries.")
+        data_context = format_data_for_gemini(state.get("retrieved_data", {}), role)
+
+        insight_prompt = f"""Return exactly one short proactive insight for this academic user.
+Maximum 100 tokens. Do not repeat the answer. Keep it actionable.
+If no useful follow-up exists, return an empty string.
+
+QUESTION:
+{state.get('question', '')}
+
+ANSWER:
+{answer}
+
+RECENT MEMORY:
+{memory_context}
+
+DATA CONTEXT:
+{data_context}
+
+PROACTIVE INSIGHT:"""
+
+        from rag.generator import call_gemini, format_data_for_gemini
+
+        insight = call_gemini(
+            insight_prompt,
+            db_session=db_session,
+            max_output_tokens=100,
+            provider_sequence=["gemini"],
+        )
+        state["proactive_insight"] = _condense_text(insight or "", 220)
+        return state
+
+    except Exception:
+        traceback.print_exc()
+        state["proactive_insight"] = ""
         return state
 
 
@@ -365,11 +629,13 @@ def route_after_access(state: RAGState) -> str:
 # ══════════════════════════════════════════════════════════════════
 
 def build_rag_graph():
-    workflow = StateGraph(RAGState)
+    workflow = StateGraph(RAGState, context_schema=GraphContext)
 
     workflow.add_node("access_guard",        node_access_guard)
     workflow.add_node("data_retriever",      node_data_retriever)
+    workflow.add_node("memory_manager",      node_memory_manager)
     workflow.add_node("answer_generator",    node_answer_generator)
+    workflow.add_node("proactive_insight_generator", node_proactive_insight_generator)
     workflow.add_node("response_formatter",  node_response_formatter)
 
     workflow.set_entry_point("access_guard")
@@ -383,11 +649,25 @@ def build_rag_graph():
         }
     )
 
-    workflow.add_edge("data_retriever",     "answer_generator")
-    workflow.add_edge("answer_generator",   "response_formatter")
+    workflow.add_edge("data_retriever",     "memory_manager")
+    workflow.add_edge("memory_manager",     "answer_generator")
+    workflow.add_edge("answer_generator",   "proactive_insight_generator")
+    workflow.add_edge("proactive_insight_generator", "response_formatter")
     workflow.add_edge("response_formatter", END)
 
-    compiled = workflow.compile()
+    checkpointer = None
+    if PostgresSaver is not None:
+        try:
+            checkpointer = PostgresSaver.from_conn_string(DATABASE_URL)
+            print("[GRAPH] PostgreSQL checkpointer enabled")
+        except Exception:
+            traceback.print_exc()
+            checkpointer = None
+    elif MemorySaver is not None:
+        checkpointer = MemorySaver()
+        print("[GRAPH] Falling back to in-memory checkpointer")
+
+    compiled = workflow.compile(checkpointer=checkpointer) if checkpointer else workflow.compile()
     print("[GRAPH] LangGraph RAG pipeline compiled")
     return compiled
 
@@ -413,6 +693,7 @@ def run_rag_pipeline(
     db,
     include_meta: bool = False,
     force_live_ai: bool = False,
+    thread_id: str | None = None,
 ):
     """
     Main entry point called by chat_router.
@@ -445,7 +726,7 @@ def run_rag_pipeline(
             "role":           role,
             "question":       question,
             "history":        history,
-            "db":             db,
+            "thread_id":      _normalize_thread_id(role, user_id, thread_id),
             "force_live_ai":  force_live_ai,
             "access_granted": True,
             "denial_message": "",
@@ -453,9 +734,17 @@ def run_rag_pipeline(
             "retrieved_data": {},
             "answer":         "",
             "source":         "",
+            "memory_context": "",
+            "conversation_summaries": [],
+            "proactive_insight": "",
+            "summary_entry": "",
         }
 
-        result = RAG_GRAPH.invoke(initial_state)
+        result = RAG_GRAPH.invoke(
+            initial_state,
+            config={"configurable": {"thread_id": initial_state["thread_id"]}},
+            context={"db": db},
+        )
         answer = result.get("answer", "Please check your dashboard.")
         source = result.get("source", "unknown")
         if include_meta:

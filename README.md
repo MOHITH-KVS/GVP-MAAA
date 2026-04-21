@@ -158,3 +158,24 @@ cd "C:\Users\my pc\OneDrive\Desktop\GVP-MAAA\gvp-maaa\Backend"
 [GENERATOR] Calling Gemini for: what is my machine learning attendance
 [GENERATOR] Gemini replied: Your Machine Learning attendance is...
 
+
+Agent 1: Access Guard
+Role: Security and authorization
+Decision: Allow or deny the query based on role
+Autonomous: Yes — it decides routing independently
+
+Agent 2: Data Retriever  
+Role: Information gathering from PostgreSQL
+Decision: What data to fetch based on role and intent
+Autonomous: Yes — fetches different data per role
+
+Agent 3: Answer Generator
+Role: Reasoning and response generation
+Decision: Use Gemini or LangChain based on query type
+Autonomous: Yes — routes between two AI backends
+
+Agent 4: Response Formatter
+Role: Output quality control
+Decision: Clean, validate and format the answer
+Autonomous: Yes — ensures response quality
+

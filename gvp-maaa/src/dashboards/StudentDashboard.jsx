@@ -148,8 +148,22 @@ export default function StudentDashboard() {
 
     const fetchAlerts = async () => {
       try {
-        const res = await api.get("/student/alerts");
-        const nextAlerts = Array.isArray(res.data) ? sortAlertsByCreatedAtDesc(res.data) : [];
+        const [res, proactiveRes] = await Promise.all([
+          api.get("/student/alerts"),
+          api.get("/chat/alert-notifications"),
+        ]);
+        const systemAlerts = Array.isArray(res.data) ? res.data : [];
+        const proactiveAlertsRaw = Array.isArray(proactiveRes.data) ? proactiveRes.data : [];
+        const proactiveAlerts = proactiveAlertsRaw.map((item) => ({
+          id: `proactive-${item.id || Date.now()}`,
+          title: item.title || "Proactive Alert",
+          message: item.message || "Rule-triggered alert",
+          type: item.type || "proactive",
+          created_at: item.created_at || new Date().toISOString(),
+          drive_id: null,
+          is_read: true,
+        }));
+        const nextAlerts = sortAlertsByCreatedAtDesc([...proactiveAlerts, ...systemAlerts]);
         if (isMounted) {
           setAlerts(nextAlerts);
         }

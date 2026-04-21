@@ -88,12 +88,29 @@ export default function AdminDashboard() {
 
     const fetchAdminAlerts = async () => {
       try {
-        const response = await api.get("/api/admin/alerts");
+        const [response, proactiveRes] = await Promise.all([
+          api.get("/api/admin/alerts"),
+          api.get("/chat/alert-notifications"),
+        ]);
         if (!isMounted) {
           return;
         }
 
-        setAlerts(Array.isArray(response.data) ? response.data : []);
+        const adminAlerts = Array.isArray(response.data) ? response.data : [];
+        const proactiveAlertsRaw = Array.isArray(proactiveRes.data) ? proactiveRes.data : [];
+        const proactiveAlerts = proactiveAlertsRaw.map((item) => ({
+          id: `proactive-${item.id || Date.now()}`,
+          title: item.title || "Proactive Alert",
+          message: item.message || "Rule-triggered alert",
+          type: item.type || "proactive",
+          created_at: item.created_at || new Date().toISOString(),
+          is_read: true,
+        }));
+
+        const merged = [...proactiveAlerts, ...adminAlerts].sort(
+          (left, right) => new Date(right.created_at || 0) - new Date(left.created_at || 0)
+        );
+        setAlerts(merged);
       } catch (error) {
         console.error("Error fetching admin alerts", error);
       }

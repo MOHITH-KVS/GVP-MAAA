@@ -152,8 +152,24 @@ export default function TeacherDashboard() {
 
     const fetchAlerts = async () => {
       try {
-        const res = await api.get("/faculty/alerts");
-        const nextAlerts = Array.isArray(res.data) ? sortAlertsByCreatedAtDesc(res.data) : [];
+        const [res, proactiveRes] = await Promise.all([
+          api.get("/faculty/alerts"),
+          api.get("/chat/alert-notifications"),
+        ]);
+        const facultyAlerts = Array.isArray(res.data) ? res.data : [];
+        const proactiveAlertsRaw = Array.isArray(proactiveRes.data) ? proactiveRes.data : [];
+        const proactiveAlerts = proactiveAlertsRaw.map((item) => ({
+          id: `proactive-${item.id || Date.now()}`,
+          title: item.title || "Proactive Alert",
+          message: item.message || "Rule-triggered alert",
+          type: item.type || "proactive",
+          created_at: item.created_at || new Date().toISOString(),
+          is_read: true,
+          file_name: null,
+          file_path: null,
+          file_type: null,
+        }));
+        const nextAlerts = sortAlertsByCreatedAtDesc([...proactiveAlerts, ...facultyAlerts]);
         if (isMounted) {
           setAlerts(nextAlerts);
         }

@@ -5,8 +5,20 @@ import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import SendRoundedIcon from "@mui/icons-material/SendRounded";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import AttachFileRoundedIcon from "@mui/icons-material/AttachFileRounded";
+import NotificationsRoundedIcon from "@mui/icons-material/NotificationsRounded";
+import AddAlertRoundedIcon from "@mui/icons-material/AddAlertRounded";
+import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 
 const RETRY_RECOMMENDED_WAIT_MS = 90 * 1000;
+
+const makeThreadId = () => {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `chat-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+};
+
+const getThreadStorageKey = (role) => `gvp-maaa-chat-thread:${String(role || "student").toLowerCase()}`;
 
 export default function ChatBot({ role }) {
   const [messages, setMessages] = useState([]);
@@ -23,11 +35,70 @@ export default function ChatBot({ role }) {
   const [pendingRetryMessage, setPendingRetryMessage] = useState(null);
   const [nowTs, setNowTs] = useState(Date.now());
   const [showRetryReadyToast, setShowRetryReadyToast] = useState(false);
+  const [alertNotifications, setAlertNotifications] = useState([]);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [showSetAlert, setShowSetAlert] = useState(false);
+  const [savingRule, setSavingRule] = useState(false);
+  const [rulesLoading, setRulesLoading] = useState(false);
+  const [historyTab, setHistoryTab] = useState("add");
+  const [alertRules, setAlertRules] = useState([]);
+  const [editingRuleId, setEditingRuleId] = useState(null);
+  const [ruleForm, setRuleForm] = useState({
+    type: "attendance",
+    condition: "lt",
+    threshold: 75,
+    message: "",
+  });
+  const [threadId, setThreadId] = useState(() => {
+    try {
+      const storedThreadId = localStorage.getItem(getThreadStorageKey(role));
+      return storedThreadId || makeThreadId();
+    } catch (error) {
+      return makeThreadId();
+    }
+  });
   const messagesEndRef = useRef(null);
   const activeReplyIdRef = useRef(null);
   const pdfInputRef = useRef(null);
   const uploadReadyTimerRef = useRef(null);
   const chatLocked = loading || streaming || pdfUploading;
+  const unreadAlertCount = alertNotifications.filter((n) => !n.is_read).length;
+
+  const metricOptionsByRole = {
+    student: [
+      { value: "attendance", label: "Attendance %" },
+      { value: "cgpa", label: "CGPA" },
+      { value: "avg_marks", label: "Average Marks" },
+      { value: "pending_assignments", label: "Pending Assignments" },
+    ],
+    faculty: [
+      { value: "class_attendance", label: "Class Attendance %" },
+      { value: "pending_submissions", label: "Pending Submissions" },
+    ],
+    admin: [
+      { value: "institution_attendance", label: "Institution Attendance %" },
+      { value: "at_risk_students", label: "At-Risk Students Count" },
+    ],
+  };
+
+  const roleMetrics = metricOptionsByRole[role] || metricOptionsByRole.student;
+
+  useEffect(() => {
+    const storageKey = getThreadStorageKey(role);
+    try {
+      const storedThreadId = localStorage.getItem(storageKey);
+      if (storedThreadId) {
+        setThreadId(storedThreadId);
+        return;
+      }
+
+      const nextThreadId = makeThreadId();
+      localStorage.setItem(storageKey, nextThreadId);
+      setThreadId(nextThreadId);
+    } catch (error) {
+      setThreadId(makeThreadId());
+    }
+  }, [role]);
 
   useEffect(() => {
     const timer = setInterval(() => setNowTs(Date.now()), 1000);
@@ -74,6 +145,27 @@ export default function ChatBot({ role }) {
       isMounted = false;
     };
   }, [role]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const fetchNotifications = async () => {
+      try {
+        const res = await api.get("/chat/alert-notifications");
+        if (!isMounted) return;
+        setAlertNotifications(Array.isArray(res.data) ? res.data : []);
+      } catch (err) {
+        console.error("Failed to fetch chat alert notifications", err);
+      }
+    };
+
+    fetchNotifications();
+    const intervalId = setInterval(fetchNotifications, 15000);
+    return () => {
+      isMounted = false;
+      clearInterval(intervalId);
+    };
+  }, []);
 
   // Scroll to bottom when messages update
   useEffect(() => {
@@ -137,6 +229,7 @@ export default function ChatBot({ role }) {
         },
         body: JSON.stringify({
           message: textToSend,
+          thread_id: threadId,
           force_live_ai: forceLiveAI,
           history: messages.slice(-6).map(m => ({
             role: m.from === 'user' ? 'user' : 'assistant',
@@ -482,6 +575,114 @@ export default function ChatBot({ role }) {
     }
   };
 
+  const openNotificationsPanel = async () => {
+    setShowNotifications((prev) => !prev);
+    try {
+      await api.post("/chat/alert-notifications/mark-all-read");
+      setAlertNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
+    } catch (err) {
+      console.error("Failed to mark notifications as read", err);
+    }
+  };
+
+  const saveAlertRule = async () => {
+    try {
+      setSavingRule(true);
+      if (editingRuleId) {
+        await api.patch(`/chat/alert-rules/${editingRuleId}`, {
+          type: ruleForm.type,
+          condition: ruleForm.condition,
+          threshold: Number(ruleForm.threshold || 0),
+          message: String(ruleForm.message || "").trim(),
+        });
+      } else {
+        await api.post("/chat/alert-rules", {
+          type: ruleForm.type,
+          condition: ruleForm.condition,
+          threshold: Number(ruleForm.threshold || 0),
+          message: String(ruleForm.message || "").trim(),
+        });
+      }
+
+      const timestamp = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      setMessages((prev) => [
+        ...prev,
+        {
+          from: "ai",
+          text: editingRuleId
+            ? "Alert rule updated successfully."
+            : "Alert rule saved. I will notify you when this condition is triggered.",
+          timestamp,
+          id: `rule-saved-${Date.now()}`,
+          status: "done",
+          mode: "verified_data",
+          source: "rule_setup",
+        },
+      ]);
+      setEditingRuleId(null);
+      setRuleForm((prev) => ({ ...prev, message: "" }));
+      await loadAlertRules();
+      setHistoryTab("history");
+    } catch (err) {
+      console.error("Failed to save alert rule", err);
+    } finally {
+      setSavingRule(false);
+    }
+  };
+
+  const loadAlertRules = async () => {
+    try {
+      setRulesLoading(true);
+      const res = await api.get("/chat/alert-rules");
+      setAlertRules(Array.isArray(res.data) ? res.data : []);
+    } catch (err) {
+      console.error("Failed to fetch alert rules", err);
+    } finally {
+      setRulesLoading(false);
+    }
+  };
+
+  const openSetAlertModal = async () => {
+    setShowSetAlert(true);
+    setHistoryTab("add");
+    setEditingRuleId(null);
+    await loadAlertRules();
+  };
+
+  const handleEditRule = (rule) => {
+    setEditingRuleId(rule.id);
+    setHistoryTab("add");
+    setRuleForm({
+      type: rule.type || roleMetrics[0]?.value || "attendance",
+      condition: rule.condition || "lt",
+      threshold: rule.threshold ?? 0,
+      message: rule.message || "",
+    });
+  };
+
+  const handleDeleteRule = async (ruleId) => {
+    try {
+      await api.delete(`/chat/alert-rules/${ruleId}`);
+      setAlertRules((prev) => prev.filter((r) => r.id !== ruleId));
+    } catch (err) {
+      console.error("Failed to delete alert rule", err);
+    }
+  };
+
+  const handleToggleRuleActive = async (rule) => {
+    try {
+      const nextActive = !Boolean(rule.active);
+      await api.patch(`/chat/alert-rules/${rule.id}`, { active: nextActive });
+      setAlertRules((prev) =>
+        prev.map((item) =>
+          item.id === rule.id ? { ...item, active: nextActive } : item
+        )
+      );
+    } catch (err) {
+      console.error("Failed to toggle alert rule status", err);
+    }
+  };
+
   return (
     <div className="w-full h-full flex flex-col items-center bg-[#f9fafb]">
       
@@ -499,9 +700,56 @@ export default function ChatBot({ role }) {
               <p className="text-xs text-gray-500 font-medium tracking-wide uppercase">
                 {role === 'faculty' ? 'teacher' : role} Mode
               </p>
+              <p className="text-[11px] text-gray-400 mt-0.5">
+                The transcript below is the chat history. A new thread is created automatically when needed.
+              </p>
             </div>
           </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={openSetAlertModal}
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition"
+            >
+              <AddAlertRoundedIcon style={{ fontSize: 16 }} />
+              Set Alert
+            </button>
+            <button
+              onClick={openNotificationsPanel}
+              className="relative w-10 h-10 rounded-full border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 transition"
+              title="Notifications"
+            >
+              <NotificationsRoundedIcon style={{ fontSize: 20 }} />
+              {unreadAlertCount > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[10px] font-bold flex items-center justify-center">
+                  {unreadAlertCount > 99 ? "99+" : unreadAlertCount}
+                </span>
+              )}
+            </button>
+          </div>
         </div>
+
+        {showNotifications && (
+          <div className="absolute right-6 top-20 z-20 w-[350px] max-w-[95vw] rounded-xl border border-gray-200 bg-white shadow-xl p-3">
+            <div className="flex items-center justify-between pb-2 border-b border-gray-100">
+              <p className="text-sm font-semibold text-gray-800">Alert Notifications</p>
+              <button onClick={() => setShowNotifications(false)} className="p-1 text-gray-500 hover:text-gray-700">
+                <CloseRoundedIcon style={{ fontSize: 16 }} />
+              </button>
+            </div>
+            <div className="max-h-72 overflow-y-auto py-2 space-y-2">
+              {alertNotifications.length === 0 && (
+                <p className="text-xs text-gray-500 px-1 py-2">No alert notifications yet.</p>
+              )}
+              {alertNotifications.map((note) => (
+                <div key={note.id} className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                  <p className="text-xs font-semibold text-gray-700">{note.title || "Proactive Alert"}</p>
+                  <p className="text-xs text-gray-600 mt-1">{note.message}</p>
+                  <p className="text-[10px] text-gray-400 mt-1">{note.created_at ? new Date(note.created_at).toLocaleString() : ""}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Messages Area */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
@@ -758,6 +1006,146 @@ export default function ChatBot({ role }) {
       {showRetryReadyToast && (
         <div className="fixed bottom-6 right-6 z-[1001] rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-medium text-emerald-700 shadow-lg">
           Thanks for waiting. Retry AI is ready.
+        </div>
+      )}
+
+      {showSetAlert && (
+        <div className="fixed inset-0 z-[1002] flex items-center justify-center bg-black/35 px-4">
+          <div className="w-full max-w-md rounded-xl bg-white shadow-xl border border-gray-200 p-5">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-semibold text-gray-900">Set Proactive Alert</h3>
+              <button onClick={() => setShowSetAlert(false)} className="p-1 text-gray-500 hover:text-gray-700">
+                <CloseRoundedIcon style={{ fontSize: 18 }} />
+              </button>
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-2 rounded-lg bg-gray-100 p-1">
+              <button
+                onClick={() => setHistoryTab("add")}
+                className={`text-xs font-semibold rounded-md py-2 ${historyTab === "add" ? "bg-white text-indigo-700 shadow-sm" : "text-gray-600"}`}
+              >
+                Add Alert
+              </button>
+              <button
+                onClick={async () => {
+                  setHistoryTab("history");
+                  await loadAlertRules();
+                }}
+                className={`text-xs font-semibold rounded-md py-2 ${historyTab === "history" ? "bg-white text-indigo-700 shadow-sm" : "text-gray-600"}`}
+              >
+                History
+              </button>
+            </div>
+
+            {historyTab === "add" && (
+            <div className="mt-4 space-y-3">
+              <div>
+                <label className="text-xs font-semibold text-gray-600">Metric</label>
+                <select
+                  className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                  value={ruleForm.type}
+                  onChange={(e) => setRuleForm((prev) => ({ ...prev, type: e.target.value }))}
+                >
+                  {roleMetrics.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-gray-600">Condition</label>
+                  <select
+                    className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                    value={ruleForm.condition}
+                    onChange={(e) => setRuleForm((prev) => ({ ...prev, condition: e.target.value }))}
+                  >
+                    <option value="lt">Below</option>
+                    <option value="gt">Above</option>
+                    <option value="eq">Equal To</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-gray-600">Threshold</label>
+                  <input
+                    type="number"
+                    className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                    value={ruleForm.threshold}
+                    onChange={(e) => setRuleForm((prev) => ({ ...prev, threshold: e.target.value }))}
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-600">Custom Message (optional)</label>
+                <textarea
+                  rows={2}
+                  className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                  placeholder="Example: Notify me if class attendance falls below 70%"
+                  value={ruleForm.message}
+                  onChange={(e) => setRuleForm((prev) => ({ ...prev, message: e.target.value }))}
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  onClick={() => {
+                    setShowSetAlert(false);
+                    setEditingRuleId(null);
+                  }}
+                  className="px-3 py-2 text-sm rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={saveAlertRule}
+                  disabled={savingRule}
+                  className="px-3 py-2 text-sm rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-60"
+                >
+                  {savingRule ? "Saving..." : editingRuleId ? "Update Alert" : "Save Alert"}
+                </button>
+              </div>
+            </div>
+            )}
+
+            {historyTab === "history" && (
+              <div className="mt-4 space-y-2 max-h-72 overflow-y-auto pr-1">
+                {rulesLoading && <p className="text-xs text-gray-500">Loading alert history...</p>}
+                {!rulesLoading && alertRules.length === 0 && (
+                  <p className="text-xs text-gray-500">No alert rules set yet.</p>
+                )}
+                {alertRules.map((rule) => (
+                  <div key={rule.id} className="rounded-lg border border-gray-200 p-3 bg-gray-50">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-xs font-semibold text-gray-700">
+                        {(rule.type || "metric").replace(/_/g, " ")} {rule.condition === "gt" ? "above" : rule.condition === "eq" ? "equal to" : "below"} {rule.threshold}
+                      </p>
+                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${rule.active ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-gray-100 text-gray-600 border-gray-300"}`}>
+                        {rule.active ? "Active" : "Disabled"}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-gray-500 mt-1">{rule.message || "No custom message"}</p>
+                    <div className="mt-2 flex justify-end gap-2">
+                      <button
+                        onClick={() => handleToggleRuleActive(rule)}
+                        className={`px-2 py-1 text-[11px] rounded border bg-white ${rule.active ? "border-amber-200 text-amber-700 hover:bg-amber-50" : "border-emerald-200 text-emerald-700 hover:bg-emerald-50"}`}
+                      >
+                        {rule.active ? "Disable" : "Enable"}
+                      </button>
+                      <button
+                        onClick={() => handleEditRule(rule)}
+                        className="px-2 py-1 text-[11px] rounded border border-indigo-200 text-indigo-700 bg-white hover:bg-indigo-50"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => handleDeleteRule(rule.id)}
+                        className="px-2 py-1 text-[11px] rounded border border-red-200 text-red-700 bg-white hover:bg-red-50"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>

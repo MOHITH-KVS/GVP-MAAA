@@ -15,6 +15,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from dotenv import load_dotenv
+from rag.alert_rules_engine import add_alert_rule, check_alert_rules
 
 load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env", override=True)
 
@@ -614,6 +615,42 @@ def is_response_incomplete(text: str) -> bool:
     return False
 
 
+def _extract_alert_rule_and_clean(answer_text: str) -> tuple[str, dict | None]:
+    """Extracts ALERT_RULE metadata from model output and removes it from user-facing text."""
+    if not answer_text:
+        return "", None
+
+    pattern = re.compile(
+        r"ALERT_RULE:\s*type\s*=\s*([a-zA-Z_]+)\s+threshold\s*=\s*([0-9]+)",
+        flags=re.IGNORECASE,
+    )
+    match = pattern.search(answer_text)
+    if not match:
+        return answer_text, None
+
+    rule_type = str(match.group(1) or "").strip().lower()
+    threshold = int(match.group(2))
+    cleaned = pattern.sub("", answer_text, count=1)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+
+    rule = {
+        "type": rule_type,
+        "threshold": threshold,
+        "message": f"Alert me if {rule_type} drops below {threshold}",
+        "active": True,
+    }
+    return cleaned, rule
+
+
+def _prepend_triggered_alerts(answer_text: str, triggered_alerts: list[str]) -> str:
+    if not triggered_alerts:
+        return answer_text
+    alert_msg = "\n".join(triggered_alerts).strip()
+    if not answer_text:
+        return alert_msg
+    return f"{alert_msg}\n\n{answer_text}"
+
+
 def safe_gemini_call(call_fn):
     attempts = max(1, GEMINI_CALL_RETRY_ATTEMPTS)
     for attempt in range(attempts):
@@ -678,6 +715,8 @@ def call_gemini(
     message: str | None = None,
     history: list | None = None,
     db_session=None,
+    max_output_tokens: int = 500,
+    provider_sequence: list[str] | None = None,
 ) -> str:
     """
     Routes by query complexity and executes provider failover.
@@ -695,7 +734,11 @@ def call_gemini(
             print("[GEMINI_CALL] Fast local small-talk response")
             return quick_reply
 
-    provider_sequence = ["grok", "gemini", "openrouter"] if query_class == "simple" else ["gemini", "openrouter", "grok"]
+    provider_sequence = provider_sequence or (
+        ["grok", "gemini", "openrouter"]
+        if query_class == "simple"
+        else ["gemini", "openrouter", "grok"]
+    )
 
     print(
         f"[GEMINI_CALL] client={GEMINI_CLIENT is not None} "
@@ -743,7 +786,7 @@ def call_gemini(
                             contents=effective_prompt,
                             config={
                                 "temperature": 0.1,
-                                "max_output_tokens": 500
+                                "max_output_tokens": max_output_tokens,
                             }
                         ),
                         timeout=22,
@@ -1212,6 +1255,11 @@ def generate_answer(
     skip_cache = False
     try:
         print(f"[REQUEST] user={user_id} query='{user_question}'")
+
+        profile = retrieved_data.get("profile", {}) if isinstance(retrieved_data, dict) else {}
+        rule_user_id = int(profile.get("student_id") or user_id or 0)
+        triggered_alerts = check_alert_rules(rule_user_id, retrieved_data) if rule_user_id > 0 else []
+
         cache_key = build_response_cache_key(user_id, user_question)
         skip_cache = should_skip_response_cache(user_question)
         if cache_key and not skip_cache:
@@ -1219,7 +1267,7 @@ def generate_answer(
             if cached:
                 print("[CACHE] Response cache hit")
                 print("[CACHE] Hit -> instant response")
-                return cached
+                return _prepend_triggered_alerts(cached, triggered_alerts)
             print("[CACHE] Miss -> calling Gemini")
 
         # ── 1. Try LangChain for analytical/complex queries ────────────
@@ -1237,7 +1285,7 @@ def generate_answer(
                 if chain_answer and len(chain_answer) > 10:
                     if cache_key and not skip_cache and not is_response_incomplete(chain_answer):
                         set_response_cache(cache_key, chain_answer)
-                    return chain_answer
+                    return _prepend_triggered_alerts(chain_answer, triggered_alerts)
                 print("[GENERATOR] Chain returned nothing — falling through to Gemini")
         except Exception as _ce:
             print(f"[GENERATOR] Chain import/run error: {_ce}")
@@ -1325,6 +1373,9 @@ INSTRUCTIONS FOR YOUR ANSWER:
 8. For resource/event questions, list actual items from the data
 9. For subject-specific questions (e.g. "ML attendance"),
    find that subject in the per-subject data above and answer specifically
+10. If user says "alert me when X" or "remind me if Y", extract the rule and include exactly one line:
+    ALERT_RULE: type=attendance threshold=75
+    The system will store this rule.
 
 ANSWER:"""
 
@@ -1345,6 +1396,10 @@ ANSWER:"""
         )
 
         if answer:
+            answer, parsed_rule = _extract_alert_rule_and_clean(answer)
+            if parsed_rule and rule_user_id > 0:
+                add_alert_rule(rule_user_id, parsed_rule)
+                print(f"[ALERT_RULE] Stored rule for user {rule_user_id}: {parsed_rule}")
             print(f"[GENERATOR] Gemini LIVE — replied: {answer}")
             print("[LLM] Success")
             if is_response_incomplete(answer):
@@ -1353,20 +1408,20 @@ ANSWER:"""
             elif cache_key and not skip_cache:
                 set_response_cache(cache_key, answer)
             if answer:
-                return answer
+                return _prepend_triggered_alerts(answer, triggered_alerts)
 
         print("[GENERATOR] No Gemini response, using fallback")
         if cache_key and not skip_cache:
             cached = get_response_cache(cache_key)
             if cached:
                 print("[CACHE] Response cache hit")
-                return cached
+                return _prepend_triggered_alerts(cached, triggered_alerts)
         fallback_answer = build_fallback(role, retrieved_data, user_question)
         if not fallback_answer:
             fallback_answer = SAFE_FALLBACK_RESPONSE
         if cache_key and not skip_cache:
             set_response_cache(cache_key, fallback_answer)
-        return fallback_answer
+        return _prepend_triggered_alerts(fallback_answer, triggered_alerts)
 
     except Exception as e:
         print(f"[ERROR] {str(e)}")
@@ -1377,7 +1432,7 @@ ANSWER:"""
             fallback_answer = SAFE_FALLBACK_RESPONSE
         if cache_key and not skip_cache:
             set_response_cache(cache_key, fallback_answer)
-        return fallback_answer
+        return _prepend_triggered_alerts(fallback_answer, triggered_alerts)
     finally:
         print(f"[TOTAL TIME] {time.time() - total_start:.2f}s")
 

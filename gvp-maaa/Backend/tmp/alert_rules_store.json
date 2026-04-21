@@ -1,0 +1,18 @@
+{
+  "rules": {
+    "140": [
+      {
+        "id": "rule-1776733377359",
+        "role": "student",
+        "type": "attendance",
+        "condition": "lt",
+        "threshold": 75.0,
+        "message": "",
+        "active": true,
+        "created_at": "2026-04-21T06:32:57Z",
+        "last_triggered_at": ""
+      }
+    ]
+  },
+  "notifications": {}
+}

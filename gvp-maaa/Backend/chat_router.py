@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Dict
 import traceback
 import time
 import tempfile
@@ -14,6 +14,8 @@ from sqlalchemy import func, or_, case
 from auth import get_current_user
 from database import get_db
 router = APIRouter(prefix="/chat", tags=["RAG Chatbot"])
+
+AI_DAILY_RESPONSE_LIMIT = 3
 
 # Store uploaded PDFs in memory per session
 # Key: user_id, Value: {path, filename}
@@ -38,6 +40,7 @@ def infer_mode_from_text(reply_text: str) -> Optional[str]:
 class ChatRequest(BaseModel):
     message: str
     history: Optional[List[Any]] = []
+    thread_id: Optional[str] = None
 
     class Config:
         extra = "allow"
@@ -67,6 +70,220 @@ def normalize_history(raw_history):
 def chunk_text(text: str, chunk_size: int = 40):
     for index in range(0, len(text), chunk_size):
         yield text[index:index + chunk_size]
+
+
+def _get_daily_ai_usage_count(db: Session, user_id: int) -> int:
+    try:
+        from models import UserActivityLog
+        count = db.query(func.count(UserActivityLog.id)).filter(
+            UserActivityLog.user_id == int(user_id),
+            UserActivityLog.action == "chat_ai_response",
+            func.date(UserActivityLog.created_at) == date.today(),
+        ).scalar()
+        return int(count or 0)
+    except Exception:
+        return 0
+
+
+def _record_daily_ai_usage(db: Session, user_id: int, role: str) -> None:
+    try:
+        from models import UserActivityLog
+
+        usage_event = UserActivityLog(
+            user_id=int(user_id),
+            role=str(role or "student"),
+            department=None,
+            year=None,
+            section=None,
+            page="/chat/message",
+            action="chat_ai_response",
+            session_id=f"chat-ai-{date.today().isoformat()}",
+        )
+        db.add(usage_event)
+        db.commit()
+    except Exception:
+        db.rollback()
+
+
+def _metric_aliases_for_role(role: str) -> Dict[str, str]:
+    role = _normalize_role(role)
+    if role == "faculty":
+        return {
+            "class attendance": "class_attendance",
+            "attendance": "class_attendance",
+            "pending submissions": "pending_submissions",
+            "pending submission": "pending_submissions",
+        }
+    if role == "admin":
+        return {
+            "institution attendance": "institution_attendance",
+            "overall attendance": "institution_attendance",
+            "attendance": "institution_attendance",
+            "at risk students": "at_risk_students",
+            "risk students": "at_risk_students",
+            "at-risk students": "at_risk_students",
+        }
+    return {
+        "attendance": "attendance",
+        "cgpa": "cgpa",
+        "marks": "avg_marks",
+        "average marks": "avg_marks",
+        "pending assignments": "pending_assignments",
+        "pending assignment": "pending_assignments",
+    }
+
+
+def _words_to_number(tokens: List[str]) -> Optional[float]:
+    units = {
+        "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4,
+        "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
+        "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13,
+        "fourteen": 14, "fifteen": 15, "sixteen": 16, "seventeen": 17,
+        "eighteen": 18, "nineteen": 19,
+    }
+    tens = {
+        "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50,
+        "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90,
+    }
+
+    if not tokens:
+        return None
+
+    total = 0
+    current = 0
+    consumed = False
+    for token in tokens:
+        word = token.strip().lower()
+        if word in units:
+            current += units[word]
+            consumed = True
+            continue
+        if word in tens:
+            current += tens[word]
+            consumed = True
+            continue
+        if word == "hundred":
+            if current == 0:
+                current = 1
+            current *= 100
+            consumed = True
+            continue
+        if word in {"and", "percent", "percentage", "%"}:
+            continue
+        break
+
+    if not consumed:
+        return None
+    total += current
+    return float(total)
+
+
+def _extract_threshold(text: str) -> Optional[float]:
+    number_match = re.search(r"(-?\d+(?:\.\d+)?)", text)
+    if number_match:
+        return float(number_match.group(1))
+
+    normalized = re.sub(r"[^a-z\s-]", " ", text.lower())
+    normalized = normalized.replace("-", " ")
+    words = [w for w in normalized.split() if w]
+
+    # Prefer numbers that appear after comparative tokens.
+    comparative_tokens = {"below", "under", "above", "over", "equal", "equals", "than", "to"}
+    for idx, word in enumerate(words):
+        if word in comparative_tokens:
+            value = _words_to_number(words[idx + 1: idx + 7])
+            if value is not None:
+                return value
+
+    # Fallback: first parseable word-number sequence in text.
+    for idx in range(len(words)):
+        value = _words_to_number(words[idx: idx + 6])
+        if value is not None:
+            return value
+
+    return None
+
+
+def _parse_alert_rules_from_message(message: str, role: str) -> List[dict]:
+    text = str(message or "").strip().lower()
+    if not text:
+        return []
+
+    trigger_tokens = ["alert me", "set alert", "remind me", "notify me"]
+    if not any(token in text for token in trigger_tokens):
+        return []
+
+    aliases = _metric_aliases_for_role(role)
+    clauses = re.split(r"\b(?:and|also)\b|,", text)
+    rules = []
+
+    # Track defaults from full text so short clauses can inherit.
+    default_condition = "lt"
+    if any(token in text for token in ["above", "greater than", "more than", "higher than", ">"]):
+        default_condition = "gt"
+    elif any(token in text for token in ["equal", "equals", "="]):
+        default_condition = "eq"
+
+    for clause in clauses:
+        clause_text = clause.strip()
+        if not clause_text:
+            continue
+
+        metric = None
+        for key in sorted(aliases.keys(), key=len, reverse=True):
+            if key in clause_text:
+                metric = aliases[key]
+                break
+        if not metric:
+            continue
+
+        condition = default_condition
+        if any(token in clause_text for token in ["below", "under", "less than", "lower than", "<"]):
+            condition = "lt"
+        elif any(token in clause_text for token in ["above", "greater than", "more than", "higher than", ">"]):
+            condition = "gt"
+        elif any(token in clause_text for token in ["equal", "equals", "="]):
+            condition = "eq"
+
+        threshold = _extract_threshold(clause_text)
+        if threshold is None:
+            continue
+
+        rules.append({
+            "type": metric,
+            "condition": condition,
+            "threshold": threshold,
+            "message": str(message or "").strip(),
+            "active": True,
+        })
+
+    # Fallback to single-rule behavior if split clauses yielded nothing.
+    if not rules:
+        metric = None
+        for key in sorted(aliases.keys(), key=len, reverse=True):
+            if key in text:
+                metric = aliases[key]
+                break
+        if metric is not None:
+            threshold = _extract_threshold(text)
+            if threshold is not None:
+                rules.append({
+                    "type": metric,
+                    "condition": default_condition,
+                    "threshold": threshold,
+                    "message": str(message or "").strip(),
+                    "active": True,
+                })
+
+    unique = []
+    seen = set()
+    for rule in rules:
+        key = (rule["type"], rule["condition"], float(rule["threshold"]))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(rule)
+    return unique
 
 
 def _format_display_name(raw_name: str) -> str:
@@ -629,6 +846,48 @@ async def chat_message(
         print(f"[REQUEST] user={user_id} query='{query}'")
         print(f"[CHAT] role={role} user_id={user_id} msg={request.message[:60]}")
 
+        # ── Natural-language alert rule creation path ────────────
+        parsed_rules = _parse_alert_rules_from_message(query, str(role or "student"))
+        if parsed_rules:
+            from rag.alert_rules_engine import add_alert_rule
+
+            normalized_role = _normalize_role(str(role or "student"))
+            saved_items = []
+            for parsed_rule in parsed_rules:
+                parsed_rule["role"] = normalized_role
+                add_alert_rule(int(user_id), parsed_rule)
+                cond_label = {
+                    "lt": "below",
+                    "gt": "above",
+                    "eq": "equal to",
+                }.get(str(parsed_rule.get("condition")), "below")
+                saved_items.append(
+                    f"{str(parsed_rule.get('type', '')).replace('_', ' ')} {cond_label} {parsed_rule.get('threshold')}"
+                )
+
+            if len(saved_items) == 1:
+                confirmation = (
+                    f"Alert set successfully. I will notify you when {saved_items[0]}."
+                )
+            else:
+                confirmation = (
+                    "Multiple alerts set successfully:\n- "
+                    + "\n- ".join(saved_items)
+                )
+
+            def stream_alert_confirmation():
+                for chunk in chunk_text(confirmation):
+                    yield chunk
+
+            return StreamingResponse(
+                stream_alert_confirmation(),
+                media_type="text/plain; charset=utf-8",
+                headers={
+                    "X-Response-Mode": "verified_data",
+                    "X-Response-Source": "alert_rule",
+                },
+            )
+
         # ── Fast path for greetings/courtesy messages ─────────────
         display_name = resolve_user_display_name(current_user, db)
         quick_reply = get_fast_smalltalk_reply(query, display_name=display_name)
@@ -709,6 +968,29 @@ async def chat_message(
                         "source": "pdf"
                     }
 
+        # ── AI daily usage guard (applies only to expensive AI calls) ──
+        ai_used_today = _get_daily_ai_usage_count(db, int(user_id))
+        ai_remaining_before = max(0, AI_DAILY_RESPONSE_LIMIT - ai_used_today)
+
+        if ai_remaining_before <= 0:
+            limit_text = (
+                "You have reached your daily AI limit (3/3). "
+                "AI responses are paused for today. "
+                "You can still ask related to your marks, attendance, assignments, and other dashboard data."
+            )
+
+            return StreamingResponse(
+                chunk_text(limit_text),
+                media_type="text/plain; charset=utf-8",
+                headers={
+                    "X-Response-Mode": "verified_data",
+                    "X-Response-Source": "ai_limit",
+                    "X-AI-Limit-Remaining": "0",
+                    "X-AI-Limit": str(AI_DAILY_RESPONSE_LIMIT),
+                    "X-AI-Limit-Status": "exceeded",
+                },
+            )
+
         # ── Run LangGraph RAG pipeline ──────────────────────────
         role_lower = str(role).lower()
         reply_source = "unknown"
@@ -722,6 +1004,7 @@ async def chat_message(
                 db=db,
                 include_meta=True,
                 force_live_ai=force_live_ai,
+                thread_id=str(request_payload.get("thread_id") or "").strip() or None,
             )
             if isinstance(pipeline_result, dict):
                 reply = pipeline_result.get("answer")
@@ -737,6 +1020,31 @@ async def chat_message(
             reply = ("I couldn't find specific data for that. "
                      "Please check your dashboard.")
             reply_source = "error"
+
+        ai_reply_sources = {"gemini", "langchain"}
+        ai_limit_status = "not_used"
+        ai_remaining_after = ai_remaining_before
+
+        if str(reply_source or "").lower() in ai_reply_sources:
+            _record_daily_ai_usage(db, int(user_id), str(role))
+            ai_remaining_after = max(0, ai_remaining_before - 1)
+
+            if ai_remaining_after <= 0:
+                ai_limit_status = "reached"
+                reply = (
+                    f"{str(reply).strip()}\n\n"
+                    "AI limit update: You have completed your AI limit for today (3/3). "
+                    "You can still ask related to your marks, attendance, assignments, and dashboard data."
+                )
+            elif ai_remaining_after == 1:
+                ai_limit_status = "warning"
+                reply = (
+                    f"{str(reply).strip()}\n\n"
+                    "Warning: You have 1 AI response left for today. "
+                    "You can always continue with marks/attendance/dashboard queries."
+                )
+            else:
+                ai_limit_status = "ok"
 
         response_mode = map_response_mode(reply_source)
         inferred_mode = infer_mode_from_text(str(reply))
@@ -758,6 +1066,9 @@ async def chat_message(
             headers={
                 "X-Response-Mode": response_mode,
                 "X-Response-Source": reply_source,
+                "X-AI-Limit-Remaining": str(ai_remaining_after),
+                "X-AI-Limit": str(AI_DAILY_RESPONSE_LIMIT),
+                "X-AI-Limit-Status": ai_limit_status,
             }
         )
 
@@ -834,3 +1145,222 @@ async def get_gemini_status(db: Session = Depends(get_db)):
             "error": str(e),
             "message": "Unable to fetch Gemini status"
         }
+
+
+class AlertRuleCreateRequest(BaseModel):
+    type: str
+    condition: str = "lt"  # lt | gt | eq
+    threshold: float
+    message: Optional[str] = ""
+
+
+class AlertRuleUpdateRequest(BaseModel):
+    type: Optional[str] = None
+    condition: Optional[str] = None
+    threshold: Optional[float] = None
+    message: Optional[str] = None
+    active: Optional[bool] = None
+
+
+def _normalize_role(raw_role: str) -> str:
+    role = str(raw_role or "student").strip().lower()
+    if role == "teacher":
+        return "faculty"
+    return role
+
+
+def _compute_role_metrics(user_id: int, role: str, db: Session) -> Dict[str, float]:
+    from models import Attendance, Assignment, AssignmentSubmission, Student, Mark
+
+    role = _normalize_role(role)
+    metrics: Dict[str, float] = {}
+
+    if role == "student":
+        total_rows = db.query(Attendance).filter(Attendance.student_id == user_id).count()
+        present_rows = db.query(Attendance).filter(
+            Attendance.student_id == user_id,
+            Attendance.status == True,
+        ).count()
+        attendance_pct = (present_rows / total_rows * 100.0) if total_rows > 0 else 100.0
+
+        student = db.query(Student).filter(Student.student_id == user_id).first()
+        cgpa = float(student.cgpa) if student and student.cgpa is not None else 0.0
+
+        marks_avg = db.query(func.avg(Mark.total)).filter(Mark.student_id == user_id).scalar()
+        avg_marks = float(marks_avg) if marks_avg is not None else 0.0
+
+        pending_assignments = (
+            db.query(Assignment)
+            .filter(
+                Assignment.year == (student.year if student else -1),
+                Assignment.section == (student.section if student else ""),
+                Assignment.is_active == True,
+            )
+            .count()
+        )
+        submitted_assignment_ids = {
+            sid for (sid,) in db.query(AssignmentSubmission.assignment_id).filter(
+                AssignmentSubmission.student_id == user_id,
+                AssignmentSubmission.is_submitted == True,
+            ).all()
+        }
+        pending_count = max(0, int(pending_assignments) - len(submitted_assignment_ids))
+
+        metrics = {
+            "attendance": attendance_pct,
+            "cgpa": cgpa,
+            "avg_marks": avg_marks,
+            "pending_assignments": float(pending_count),
+        }
+        return metrics
+
+    if role == "faculty":
+        total_rows = db.query(Attendance).filter(Attendance.faculty_id == user_id).count()
+        present_rows = db.query(Attendance).filter(
+            Attendance.faculty_id == user_id,
+            Attendance.status == True,
+        ).count()
+        class_attendance_pct = (present_rows / total_rows * 100.0) if total_rows > 0 else 100.0
+
+        assignments = db.query(Assignment).filter(
+            Assignment.faculty_id == user_id,
+            Assignment.is_active == True,
+        ).all()
+        pending_submissions = 0
+        for assignment in assignments:
+            total_students = db.query(Student).filter(
+                Student.year == assignment.year,
+                Student.section == assignment.section,
+                Student.is_deleted == False,
+            ).count()
+            submitted = db.query(AssignmentSubmission).filter(
+                AssignmentSubmission.assignment_id == assignment.id,
+                AssignmentSubmission.is_submitted == True,
+            ).count()
+            pending_submissions += max(0, total_students - submitted)
+
+        metrics = {
+            "class_attendance": class_attendance_pct,
+            "pending_submissions": float(pending_submissions),
+        }
+        return metrics
+
+    # admin
+    total_rows = db.query(Attendance).count()
+    present_rows = db.query(Attendance).filter(Attendance.status == True).count()
+    institution_attendance_pct = (present_rows / total_rows * 100.0) if total_rows > 0 else 100.0
+
+    student_ids = [sid for (sid,) in db.query(Student.student_id).filter(Student.is_deleted == False).all()]
+    at_risk_count = 0
+    for sid in student_ids:
+        sid_total = db.query(Attendance).filter(Attendance.student_id == sid).count()
+        if sid_total <= 0:
+            continue
+        sid_present = db.query(Attendance).filter(
+            Attendance.student_id == sid,
+            Attendance.status == True,
+        ).count()
+        sid_pct = sid_present / sid_total * 100.0
+        if sid_pct < 75.0:
+            at_risk_count += 1
+
+    metrics = {
+        "institution_attendance": institution_attendance_pct,
+        "at_risk_students": float(at_risk_count),
+    }
+    return metrics
+
+
+@router.post("/alert-rules")
+async def create_alert_rule(
+    payload: AlertRuleCreateRequest,
+    current_user=Depends(get_current_user),
+):
+    from rag.alert_rules_engine import add_alert_rule
+
+    role = _normalize_role(current_user.get("role", "student"))
+    user_id = int(current_user.get("user_id", 0) or 0)
+    if user_id <= 0:
+        raise HTTPException(status_code=400, detail="Invalid user")
+
+    rule = {
+        "role": role,
+        "type": str(payload.type or "").strip().lower(),
+        "condition": str(payload.condition or "lt").strip().lower(),
+        "threshold": float(payload.threshold),
+        "message": str(payload.message or "").strip(),
+        "active": True,
+    }
+    add_alert_rule(user_id, rule)
+    return {"ok": True, "message": "Alert rule saved successfully"}
+
+
+@router.get("/alert-rules")
+async def get_alert_rules(current_user=Depends(get_current_user)):
+    from rag.alert_rules_engine import list_alert_rules
+
+    user_id = int(current_user.get("user_id", 0) or 0)
+    if user_id <= 0:
+        raise HTTPException(status_code=400, detail="Invalid user")
+    return list_alert_rules(user_id)
+
+
+@router.patch("/alert-rules/{rule_id}")
+async def patch_alert_rule(
+    rule_id: str,
+    payload: AlertRuleUpdateRequest,
+    current_user=Depends(get_current_user),
+):
+    from rag.alert_rules_engine import update_alert_rule
+
+    user_id = int(current_user.get("user_id", 0) or 0)
+    if user_id <= 0:
+        raise HTTPException(status_code=400, detail="Invalid user")
+
+    updates = payload.dict(exclude_none=True)
+    ok = update_alert_rule(user_id=user_id, rule_id=rule_id, updates=updates)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Alert rule not found")
+    return {"ok": True, "message": "Alert rule updated"}
+
+
+@router.delete("/alert-rules/{rule_id}")
+async def remove_alert_rule(rule_id: str, current_user=Depends(get_current_user)):
+    from rag.alert_rules_engine import delete_alert_rule
+
+    user_id = int(current_user.get("user_id", 0) or 0)
+    if user_id <= 0:
+        raise HTTPException(status_code=400, detail="Invalid user")
+
+    ok = delete_alert_rule(user_id=user_id, rule_id=rule_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Alert rule not found")
+    return {"ok": True, "message": "Alert rule deleted"}
+
+
+@router.get("/alert-notifications")
+async def get_alert_notifications(
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    from rag.alert_rules_engine import evaluate_alert_rules, get_alert_notifications
+
+    user_id = int(current_user.get("user_id", 0) or 0)
+    role = _normalize_role(current_user.get("role", "student"))
+    if user_id <= 0:
+        raise HTTPException(status_code=400, detail="Invalid user")
+
+    metrics = _compute_role_metrics(user_id=user_id, role=role, db=db)
+    evaluate_alert_rules(user_id=user_id, role=role, metrics=metrics)
+    return get_alert_notifications(user_id)
+
+
+@router.post("/alert-notifications/mark-all-read")
+async def mark_chat_alerts_read(current_user=Depends(get_current_user)):
+    from rag.alert_rules_engine import mark_all_notifications_read
+
+    user_id = int(current_user.get("user_id", 0) or 0)
+    if user_id <= 0:
+        raise HTTPException(status_code=400, detail="Invalid user")
+    updated = mark_all_notifications_read(user_id)
+    return {"ok": True, "updated": updated}

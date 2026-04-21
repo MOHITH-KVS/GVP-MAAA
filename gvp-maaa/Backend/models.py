@@ -830,6 +830,21 @@ class UserActivityLog(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
 
 
+class ConversationMemory(Base):
+    __tablename__ = "conversation_memory"
+
+    id = Column(Integer, primary_key=True, index=True)
+    thread_id = Column(String(120), nullable=False, index=True)
+    user_id = Column(Integer, nullable=False, index=True)
+    role = Column(String(30), nullable=False, index=True)
+    question = Column(Text, nullable=True)
+    answer = Column(Text, nullable=True)
+    source = Column(String(50), nullable=True)
+    insight = Column(Text, nullable=True)
+    summary = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+
+
 # -------------------------
 # GEMINI API KEY POOL MANAGER
 # -------------------------
