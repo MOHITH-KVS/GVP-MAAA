@@ -465,14 +465,14 @@ def get_fast_standard_reply(message: str, user_id: int, role: str, db: Session) 
             assignment_ids = [a.id for a in class_assignments]
             submitted_rows = db.query(AssignmentSubmission.assignment_id).filter(
                 AssignmentSubmission.student_id == user_id,
-                AssignmentSubmission.assignment_id.in_(assignment_ids),
                 or_(
                     AssignmentSubmission.is_submitted == True,
                     func.lower(func.coalesce(AssignmentSubmission.status, "")).in_(
                         ["submitted", "done", "completed"]
                     ),
                 ),
-            ).all()
+                AssignmentSubmission.assignment_id.in_(assignment_ids),
+            ).distinct().all()
 
             submitted_ids = {row[0] for row in submitted_rows}
             pending = [a for a in class_assignments if a.id not in submitted_ids]
@@ -544,12 +544,17 @@ def get_fast_standard_reply(message: str, user_id: int, role: str, db: Session) 
             )
 
         if asks_drive_count or asks_apply_drives:
+            open_count = db.query(func.count(PlacementDrive.id)).filter(
+                func.lower(func.coalesce(PlacementDrive.status, "open")) == "open"
+            ).scalar() or 0
+
+            if asks_drive_count and not asks_apply_drives:
+                return f"There are currently {open_count} open placement drive(s)."
+
             open_drives = db.query(PlacementDrive).filter(
                 func.lower(func.coalesce(PlacementDrive.status, "open")) == "open"
             ).order_by(PlacementDrive.registration_deadline.asc().nulls_last()).limit(10).all()
 
-            if asks_drive_count and not asks_apply_drives:
-                return f"There are currently {len(open_drives)} open placement drive(s)."
             if not open_drives:
                 return "There are no open placement drives to apply right now."
 
@@ -615,27 +620,41 @@ def get_fast_standard_reply(message: str, user_id: int, role: str, db: Session) 
             if not my_assignments:
                 return "You have no active assignments right now."
 
-            pending_total = 0
-            for a in my_assignments:
-                cls_students = db.query(Student.student_id).filter(
-                    Student.year == a.year,
-                    Student.section == a.section,
-                ).all()
-                cls_ids = [r[0] for r in cls_students]
-                if not cls_ids:
-                    continue
+            class_pairs = {(a.year, a.section) for a in my_assignments if a.year is not None and a.section}
+            student_rows = db.query(Student.student_id, Student.year, Student.section).filter(
+                or_(*[(Student.year == year_value) & (Student.section == section_value) for year_value, section_value in class_pairs])
+            ).all() if class_pairs else []
 
-                submitted = db.query(func.count(AssignmentSubmission.id)).filter(
-                    AssignmentSubmission.assignment_id == a.id,
-                    AssignmentSubmission.student_id.in_(cls_ids),
+            class_students = {}
+            all_class_student_ids = []
+            for sid, year_value, section_value in student_rows:
+                class_students.setdefault((year_value, section_value), []).append(sid)
+                all_class_student_ids.append(sid)
+
+            submission_counts = {}
+            if all_class_student_ids:
+                submission_rows = db.query(
+                    AssignmentSubmission.assignment_id,
+                    func.count(AssignmentSubmission.id),
+                ).filter(
+                    AssignmentSubmission.assignment_id.in_([a.id for a in my_assignments]),
+                    AssignmentSubmission.student_id.in_(all_class_student_ids),
                     or_(
                         AssignmentSubmission.is_submitted == True,
-                        func.lower(func.coalesce(AssignmentSubmission.status, "")).in_(
-                            ["submitted", "done", "completed"]
-                        ),
+                        func.lower(func.coalesce(AssignmentSubmission.status, "")).in_([
+                            "submitted", "done", "completed"
+                        ]),
                     ),
-                ).scalar() or 0
-                pending_total += max(len(cls_ids) - int(submitted), 0)
+                ).group_by(AssignmentSubmission.assignment_id).all()
+                submission_counts = {assignment_id: int(count or 0) for assignment_id, count in submission_rows}
+
+            pending_total = 0
+            for a in my_assignments:
+                cls_ids = class_students.get((a.year, a.section), [])
+                if not cls_ids:
+                    continue
+                submitted = submission_counts.get(a.id, 0)
+                pending_total += max(len(cls_ids) - submitted, 0)
 
             return (
                 f"You have {len(my_assignments)} active assignment(s) with "

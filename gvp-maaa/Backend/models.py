@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Numeric, ForeignKey, Text, Boolean, DateTime, Date, UniqueConstraint, JSON, Float
+from sqlalchemy import Column, Integer, String, Numeric, ForeignKey, Text, Boolean, DateTime, Date, UniqueConstraint, JSON, Float, Index
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
@@ -145,6 +145,11 @@ class PlacementProgress(Base):
 class PlacementDrive(Base):
     __tablename__ = "placement_drives"
 
+    __table_args__ = (
+        Index("ix_placement_drives_status_deadline", "status", "registration_deadline"),
+        Index("ix_placement_drives_created_by_status", "created_by", "status"),
+    )
+
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String(255), nullable=True)
     company_id = Column(Integer, ForeignKey("companies.id", ondelete="CASCADE"), nullable=True)
@@ -170,6 +175,11 @@ class PlacementDrive(Base):
 
 class StudentDrive(Base):
     __tablename__ = "student_drives"
+
+    __table_args__ = (
+        Index("ix_student_drives_student_drive", "student_id", "drive_id"),
+        Index("ix_student_drives_student_status", "student_id", "status"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     student_id = Column(Integer, ForeignKey("students.student_id", ondelete="CASCADE"), nullable=False)
@@ -206,6 +216,13 @@ class DriveFacultyMap(Base):
 class DriveApplication(Base):
     __tablename__ = "drive_applications"
 
+    __table_args__ = (
+        Index("ix_drive_applications_drive_student", "drive_id", "student_id"),
+        Index("ix_drive_applications_student_status", "student_id", "application_status"),
+        Index("ix_drive_applications_drive_status", "drive_id", "application_status"),
+        UniqueConstraint("drive_id", "student_id", name="unique_drive_application"),
+    )
+
     id = Column(Integer, primary_key=True, index=True)
     drive_id = Column(Integer, ForeignKey("placement_drives.id", ondelete="CASCADE"), nullable=False)
     student_id = Column(Integer, ForeignKey("students.student_id", ondelete="CASCADE"), nullable=False)
@@ -215,11 +232,6 @@ class DriveApplication(Base):
     final_status = Column(String(30), default="pending")
     updated_by = Column(Integer, ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-
-    __table_args__ = (
-        UniqueConstraint("drive_id", "student_id", name="unique_drive_application"),
-    )
-
 
 class DriveAuditLog(Base):
     __tablename__ = "drive_audit_logs"
@@ -458,6 +470,11 @@ class AlertRecipient(Base):
 class FacultySubject(Base):
     __tablename__ = "faculty_subjects"
 
+    __table_args__ = (
+        Index("ix_faculty_subjects_faculty_active", "faculty_id", "is_active"),
+        Index("ix_faculty_subjects_subject_year_section", "subject_id", "year", "section"),
+    )
+
     id = Column(Integer, primary_key=True, index=True)
 
     faculty_id = Column(Integer, ForeignKey("faculty.faculty_id"))
@@ -491,6 +508,9 @@ class Attendance(Base):
     __tablename__ = "attendance"
 
     __table_args__ = (
+        Index("ix_attendance_student_date_status", "student_id", "attendance_date", "status"),
+        Index("ix_attendance_subject_date", "subject_id", "attendance_date"),
+        Index("ix_attendance_faculty_date", "faculty_id", "attendance_date"),
         UniqueConstraint(
             "student_id",
             "subject_id",
@@ -543,6 +563,12 @@ class FacultyMonthlyAttendanceAlert(Base):
 class Assignment(Base):
     __tablename__ = "assignments"
 
+    __table_args__ = (
+        Index("ix_assignments_year_section_active_due", "year", "section", "is_active", "due_date"),
+        Index("ix_assignments_faculty_active", "faculty_id", "is_active"),
+        Index("ix_assignments_subject_active", "subject_id", "is_active"),
+    )
+
     id = Column(Integer, primary_key=True, index=True)
     
     # Assignment Basic Info
@@ -575,6 +601,13 @@ class Assignment(Base):
 class AssignmentSubmission(Base):
     __tablename__ = "assignment_submissions"
 
+    __table_args__ = (
+        Index("ix_assignment_submissions_student_assignment", "student_id", "assignment_id"),
+        Index("ix_assignment_submissions_assignment_status", "assignment_id", "is_submitted"),
+        Index("ix_assignment_submissions_student_status", "student_id", "is_submitted"),
+        UniqueConstraint("assignment_id", "student_id", name="unique_submission"),
+    )
+
     id = Column(Integer, primary_key=True, index=True)
 
     assignment_id = Column(Integer, ForeignKey("assignments.id"))
@@ -590,10 +623,6 @@ class AssignmentSubmission(Base):
     is_late = Column(Boolean, default=False)
     is_submitted = Column(Boolean, default=True)
     status = Column(String(20), default="pending")
-
-    __table_args__ = (
-        UniqueConstraint("assignment_id", "student_id", name="unique_submission"),
-    )
 
 class AssignmentDeadlineAlert(Base):
     __tablename__ = "assignment_deadline_alerts"
@@ -633,6 +662,12 @@ class ResourceAccess(Base):
 class Event(Base):
     __tablename__ = "events"
 
+    __table_args__ = (
+        Index("ix_events_status_date", "status", "event_date"),
+        Index("ix_events_year_section_date", "year", "section", "event_date"),
+        Index("ix_events_created_by_date", "created_by", "event_date"),
+    )
+
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
@@ -658,6 +693,11 @@ class Event(Base):
 class EventAttendance(Base):
     __tablename__ = "event_attendance"
 
+    __table_args__ = (
+        Index("ix_event_attendance_event_status", "event_id", "status"),
+        Index("ix_event_attendance_student_event", "student_id", "event_id"),
+    )
+
     id = Column(Integer, primary_key=True, index=True)
     event_id = Column(Integer, ForeignKey("events.id", ondelete="CASCADE"), nullable=False)
     student_id = Column(Integer, ForeignKey("students.student_id", ondelete="CASCADE"), nullable=False)
@@ -672,6 +712,12 @@ class EventAttendance(Base):
 
 class EventRegistration(Base):
     __tablename__ = "event_registrations"
+
+    __table_args__ = (
+        Index("ix_event_registrations_event_student", "event_id", "student_id"),
+        Index("ix_event_registrations_student_attendance", "student_id", "attendance"),
+        Index("ix_event_registrations_event_attendance", "event_id", "attendance"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     event_id = Column(Integer, ForeignKey("events.id", ondelete="CASCADE"), nullable=False)
@@ -689,6 +735,11 @@ class EventRegistration(Base):
 
 class ExternalEventSubmission(Base):
     __tablename__ = "external_event_submissions"
+
+    __table_args__ = (
+        Index("ix_external_event_submissions_student_status", "student_id", "status"),
+        Index("ix_external_event_submissions_student_date", "student_id", "event_date"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     student_id = Column(Integer, ForeignKey("students.student_id", ondelete="CASCADE"), nullable=False)
@@ -711,6 +762,13 @@ class ExternalEventSubmission(Base):
 # -------------------------
 class Mark(Base):
     __tablename__ = "marks"
+
+    __table_args__ = (
+        Index("ix_marks_student_subject_exam", "student_id", "subject_id", "exam"),
+        Index("ix_marks_student_created_at", "student_id", "created_at"),
+        Index("ix_marks_faculty_subject", "faculty_id", "subject_id"),
+        Index("ix_marks_year_section", "year", "section"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     student_id = Column(Integer, ForeignKey("students.student_id"))

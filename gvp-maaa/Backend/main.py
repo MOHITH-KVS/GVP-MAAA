@@ -1418,11 +1418,15 @@ def _to_float(value) -> float:
 
 
 def _compute_attendance_percentage(db: Session, student_id: int) -> float:
-    rows = db.query(Attendance.status).filter(Attendance.student_id == student_id).all()
-    total = len(rows)
+    total, present = db.query(
+        func.count(Attendance.attendance_id),
+        func.sum(case((Attendance.status == True, 1), else_=0)),
+    ).filter(Attendance.student_id == student_id).one()
+
+    total = int(total or 0)
+    present = int(present or 0)
     if total == 0:
         return 0.0
-    present = sum(1 for row in rows if bool(row.status))
     return round((present / total) * 100, 2)
 
 
@@ -1584,9 +1588,15 @@ def _build_student_tasks(db: Session, student_id: int):
     attendance_pct = _compute_attendance_percentage(db, student_id)
     marks_score = _compute_marks_score(db, student_id)
 
-    submissions = db.query(AssignmentSubmission).filter(AssignmentSubmission.student_id == student_id).all()
+    submissions = db.query(AssignmentSubmission.assignment_id).filter(
+        AssignmentSubmission.student_id == student_id,
+        or_(
+            AssignmentSubmission.is_submitted == True,
+            func.lower(func.coalesce(AssignmentSubmission.status, "")).in_(["submitted", "done", "completed"]),
+        ),
+    ).distinct().all()
     submitted_assignment_ids = {
-        s.assignment_id for s in submissions if bool(s.is_submitted) or (s.status and s.status.lower() == "submitted")
+        assignment_id for (assignment_id,) in submissions
     }
 
     assignments = (
@@ -1942,21 +1952,38 @@ def admin_overview(
         else:
             total_teachers = db.query(Faculty).count()
 
-        student_rows = student_query.all()
+        attendance_summary_sq = (
+            db.query(
+                Attendance.student_id.label("student_id"),
+                func.count(Attendance.attendance_id).label("total"),
+                func.sum(case((Attendance.status == True, 1), else_=0)).label("present"),
+            )
+            .group_by(Attendance.student_id)
+            .subquery()
+        )
+
+        student_rows = (
+            student_query.outerjoin(attendance_summary_sq, attendance_summary_sq.c.student_id == Student.student_id)
+            .with_entities(
+                Student.student_id,
+                Student.cgpa,
+                func.coalesce(attendance_summary_sq.c.total, 0).label("attendance_total"),
+                func.coalesce(attendance_summary_sq.c.present, 0).label("attendance_present"),
+            )
+            .all()
+        )
+
         at_risk_students = 0
         attendance_percentages = []
         low_attendance_count = 0
 
-        for student in student_rows:
-            total = db.query(Attendance).filter(Attendance.student_id == student.student_id).count()
-            present = db.query(Attendance).filter(
-                Attendance.student_id == student.student_id,
-                Attendance.status == True
-            ).count()
+        for student_id, cgpa, total, present in student_rows:
+            total = int(total or 0)
+            present = int(present or 0)
             percentage = round((present / total) * 100, 2) if total > 0 else 0.0
             if total > 0:
                 attendance_percentages.append(percentage)
-            student_cgpa = float(student.cgpa) if student.cgpa is not None else 0.0
+            student_cgpa = float(cgpa) if cgpa is not None else 0.0
             if percentage < attendance_threshold or student_cgpa < cgpa_threshold:
                 at_risk_students += 1
             if percentage < attendance_threshold:
@@ -2080,8 +2107,8 @@ def admin_overview(
                 "action": "Fix Timetable"
             })
 
-        filtered_student_ids = [student.student_id for student in student_rows]
-        attendance_student_ids = set(id for (id,) in db.query(Attendance.student_id).filter(Attendance.student_id.in_(filtered_student_ids)).distinct().all()) if filtered_student_ids else set()
+        filtered_student_ids = [student_id for student_id, *_ in student_rows]
+        attendance_student_ids = {student_id for student_id, _, total, _ in student_rows if int(total or 0) > 0}
         marks_student_ids = set(id for (id,) in db.query(Mark.student_id).filter(Mark.student_id.in_(filtered_student_ids)).distinct().all()) if filtered_student_ids else set()
         students_with_both = len(attendance_student_ids & marks_student_ids)
 
@@ -13826,16 +13853,19 @@ def get_faculty_overview(
     # ===============================
     # STEP 7: ATTENDANCE RISK ANALYSIS
     # ===============================
-    att_query = db.query(Attendance.student_id, Attendance.status).filter(
+    att_query = db.query(
+        Attendance.student_id,
+        func.count(Attendance.attendance_id),
+        func.sum(case((Attendance.status == True, 1), else_=0)),
+    ).filter(
         Attendance.student_id.in_(student_ids),
         Attendance.subject_id == subject_id
-    ).all()
+    ).group_by(Attendance.student_id).all()
     
     att_counts = { sid: {"present": 0, "total": 0} for sid in student_ids }
-    for a in att_query:
-        att_counts[a.student_id]["total"] += 1
-        if a.status:
-            att_counts[a.student_id]["present"] += 1
+    for sid, total, present in att_query:
+        att_counts[sid]["total"] = int(total or 0)
+        att_counts[sid]["present"] = int(present or 0)
             
     attendance_data = []
     threshold = get_setting("attendance_threshold") or 75

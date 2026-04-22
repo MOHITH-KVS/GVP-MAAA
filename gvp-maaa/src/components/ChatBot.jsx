@@ -51,11 +51,6 @@ export default function ChatBot({ role }) {
     message: "",
   });
   const [threadId, setThreadId] = useState(() => {
-  const isRetryEligibleSource = (source) => {
-    const normalized = String(source || "").toLowerCase();
-    return RETRY_ELIGIBLE_SOURCES.has(normalized);
-  };
-
     try {
       const storedThreadId = localStorage.getItem(getThreadStorageKey(role));
       return storedThreadId || makeThreadId();
@@ -63,6 +58,10 @@ export default function ChatBot({ role }) {
       return makeThreadId();
     }
   });
+  const isRetryEligibleSource = (source) => {
+    const normalized = String(source || "").toLowerCase();
+    return RETRY_ELIGIBLE_SOURCES.has(normalized);
+  };
   const messagesEndRef = useRef(null);
   const activeReplyIdRef = useRef(null);
   const pdfInputRef = useRef(null);
@@ -496,8 +495,9 @@ export default function ChatBot({ role }) {
           status: "done",
           mode: "verified_data",
           source: "pdf_upload",
-                retryRecommendedUntil: isRetryEligibleSource(data.source || responseSource)
-                  ? Date.now() + RETRY_RECOMMENDED_WAIT_MS
+          retryRecommendedUntil: null,
+          userPrompt: null,
+        },
       ]);
       return;
     }
@@ -545,8 +545,9 @@ export default function ChatBot({ role }) {
                 status: "done",
                 mode: "verified_data",
                 source: "pdf_upload",
-                retryRecommendedUntil: isRetryEligibleSource(responseSource)
-                  ? Date.now() + RETRY_RECOMMENDED_WAIT_MS
+                retryRecommendedUntil: null,
+                userPrompt: m.userPrompt,
+              }
             : m
         )
       );
@@ -573,8 +574,9 @@ export default function ChatBot({ role }) {
                 status: "done",
                 mode: "verified_data",
                 source: "pdf_upload",
-                retryRecommendedUntil: isRetryEligibleSource(responseSource)
-                  ? Date.now() + RETRY_RECOMMENDED_WAIT_MS
+                retryRecommendedUntil: null,
+                userPrompt: m.userPrompt,
+              }
             : m
         )
       );
