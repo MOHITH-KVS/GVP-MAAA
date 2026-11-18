@@ -139,7 +139,7 @@ cd "C:\Users\my pc\OneDrive\Desktop\GVP-MAAA\gvp-maaa\Backend"
 venv\Scripts\activate
 localhost
 http://127.0.0.1:8000/
-uvicorn main:app --reload
+ok 
 uvicorn main:app
 
 http://127.0.0.1:8000/docs
